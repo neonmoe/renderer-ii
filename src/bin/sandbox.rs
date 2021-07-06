@@ -1,14 +1,56 @@
 use log::LevelFilter;
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
+use std::thread;
+use std::time::Duration;
 
 use logger::Logger;
 static LOGGER: Logger = Logger;
 
+#[derive(thiserror::Error, Debug)]
+enum SandboxError {
+    #[error("sdl error: {0}")]
+    Sdl(String),
+}
+
 #[profiling::function]
-fn main() {
+fn main() -> anyhow::Result<()> {
     log::set_logger(&LOGGER)
         .map(|()| log::set_max_level(LevelFilter::Trace))
         .unwrap();
-    log::info!("Hello, world!");
+
+    let sdl_context = sdl2::init().map_err(|err| SandboxError::Sdl(err))?;
+    let video_subsystem = sdl_context.video().map_err(|err| SandboxError::Sdl(err))?;
+    let window = video_subsystem
+        .window("neonvk sandbox", 800, 600)
+        .position_centered()
+        .vulkan()
+        .build()?;
+
+    let _renderer = neonvk::Renderer::create(&window)?;
+
+    let mut event_pump = sdl_context
+        .event_pump()
+        .map_err(|err| SandboxError::Sdl(err))?;
+    'running: loop {
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => break 'running,
+                // TODO: Handle swapchain recreation on resize
+                _ => {}
+            }
+        }
+
+        // TODO: Render something
+
+        thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+    }
+
+    Ok(())
 }
 
 mod logger {

@@ -6,4 +6,12 @@ edition = "2018"
 [dependencies]
 log = { version = "^0.4.0" }
 profiling = { version = "^1.0.0" }
-sdl2 = { version = "^0.34.0", features = ["static-link", "bundled"] }
+thiserror = { version = "^1.0.0" }
+ash = { version = "^0.32.0" }
+ash-window = { version = "^0.6.0" }
+raw-window-handle = { version = "^0.3.0" }
+
+# TODO: Move anyhow and sdl2 to dev deps
+# Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.
+sdl2 = { version = "^0.34.0", features = ["static-link", "bundled", "raw-window-handle"] }
+anyhow = { version = "^1.0.0" }
