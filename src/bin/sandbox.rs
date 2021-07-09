@@ -16,7 +16,7 @@ enum SandboxError {
 #[profiling::function]
 fn main() -> anyhow::Result<()> {
     log::set_logger(&LOGGER)
-        .map(|()| log::set_max_level(LevelFilter::Trace))
+        .map(|()| log::set_max_level(LevelFilter::Debug))
         .unwrap();
 
     let sdl_context = sdl2::init().map_err(|err| SandboxError::Sdl(err))?;
@@ -27,7 +27,8 @@ fn main() -> anyhow::Result<()> {
         .vulkan()
         .build()?;
 
-    let _renderer = neonvk::Renderer::create(&window)?;
+    let foundation = neonvk::Foundation::new(&window)?;
+    let _renderer = neonvk::Renderer::new(&foundation)?;
 
     let mut event_pump = sdl_context
         .event_pump()

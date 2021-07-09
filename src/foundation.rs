@@ -1,0 +1,120 @@
+//! A Vulkan renderer for 3D games. The mission statement will
+//! probably narrow down over time.
+
+use crate::{debug_utils, Error};
+use ash::version::EntryV1_0;
+use ash::{vk, Entry, Instance};
+use raw_window_handle::HasRawWindowHandle;
+use std::ffi::CStr;
+use std::os::raw::c_char;
+
+/// Holds the Vulkan functions, instance and surface. Should only be
+/// created once, after window creation.
+pub struct Foundation {
+    pub entry: Entry,
+    pub instance: Instance,
+    pub surface: vk::SurfaceKHR,
+    debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
+}
+
+impl Drop for Foundation {
+    fn drop(&mut self) {
+        if let Some(debug_utils_messenger) = self.debug_utils_messenger.take() {
+            debug_utils::destroy_debug_utils_messenger(
+                &self.entry,
+                &self.instance,
+                debug_utils_messenger,
+            );
+        }
+    }
+}
+
+impl Foundation {
+    pub fn new(window: &dyn HasRawWindowHandle) -> Result<Foundation, Error> {
+        let entry = unsafe { Entry::new().unwrap() };
+        let app_info = vk::ApplicationInfo {
+            p_application_name: cstr!("neonvk-sandbox"),
+            application_version: vk::make_version(0, 1, 0),
+            api_version: vk::make_version(1, 0, 0),
+            ..Default::default()
+        };
+
+        let mut layers = Vec::with_capacity(1);
+        if is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
+            layers.push(cstr!("VK_LAYER_KHRONOS_validation"));
+        }
+
+        let mut extensions = ash_window::enumerate_required_extensions(window)
+            .map_err(|err| Error::WindowRequiredExtensions(err))?
+            .into_iter()
+            .map(|cs| cs.as_ptr())
+            .collect::<Vec<*const c_char>>();
+        let debug_utils_available = is_extension_supported(&entry, "VK_EXT_debug_utils");
+        if debug_utils_available {
+            extensions.push(cstr!("VK_EXT_debug_utils"));
+        }
+
+        if log::log_enabled!(log::Level::Debug) {
+            let cstr_to_str =
+                |str_ptr: &*const c_char| unsafe { CStr::from_ptr(*str_ptr) }.to_string_lossy();
+            log::debug!(
+                "Requested extensions: {:#?}",
+                extensions.iter().map(cstr_to_str).collect::<Vec<_>>()
+            );
+            log::debug!(
+                "Requested layers: {:#?}",
+                layers.iter().map(cstr_to_str).collect::<Vec<_>>()
+            );
+        }
+
+        let create_info = vk::InstanceCreateInfo {
+            p_application_info: &app_info,
+            enabled_layer_count: layers.len() as u32,
+            pp_enabled_layer_names: layers.as_ptr(),
+            enabled_extension_count: extensions.len() as u32,
+            pp_enabled_extension_names: extensions.as_ptr(),
+            ..Default::default()
+        };
+        // TODO: Can use allocator
+        let instance = unsafe { entry.create_instance(&create_info, None) }?;
+        // TODO: Can use allocator
+        let surface = unsafe { ash_window::create_surface(&entry, &instance, window, None) }
+            .map_err(|err| Error::VulkanSurfaceCreation(err))?;
+
+        let debug_utils_messenger = if debug_utils_available {
+            debug_utils::create_debug_utils_messenger(&entry, &instance).ok()
+        } else {
+            None
+        };
+
+        Ok(Foundation {
+            entry,
+            instance,
+            surface,
+            debug_utils_messenger,
+        })
+    }
+}
+
+fn is_validation_layer_supported(entry: &Entry, target_layer_name: &str) -> bool {
+    match entry.enumerate_instance_layer_properties() {
+        Err(_) => false,
+        Ok(layers) => layers.iter().any(|layer_properties| {
+            let layer_name_slice = &layer_properties.layer_name[..];
+            let layer_name = unsafe { CStr::from_ptr(layer_name_slice.as_ptr()) }.to_string_lossy();
+            layer_name == target_layer_name
+        }),
+    }
+}
+
+fn is_extension_supported(entry: &Entry, target_extension_name: &str) -> bool {
+    match entry.enumerate_instance_extension_properties() {
+        Err(_) => false,
+        Ok(extensions) => extensions.iter().any(|extension_properties| {
+            let extension_name_slice = &extension_properties.extension_name[..];
+            let extension_name =
+                unsafe { CStr::from_ptr(extension_name_slice.as_ptr()) }.to_string_lossy();
+            extension_name == target_extension_name
+        }),
+    }
+}
