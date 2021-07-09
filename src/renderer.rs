@@ -1,5 +1,6 @@
 use crate::{Error, Foundation};
-use ash::version::InstanceV1_0;
+use ash::extensions::khr;
+use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::{vk, Device};
 
 pub struct Renderer<'a> {
@@ -8,12 +9,28 @@ pub struct Renderer<'a> {
     _foundation: &'a Foundation,
     /// A list of all viable PhysicalDevices, can be used to populate
     /// e.g. a GPU selection list.
+    #[allow(dead_code)]
     physical_devices: Vec<vk::PhysicalDevice>,
+    #[allow(dead_code)]
     device: Device,
+    #[allow(dead_code)]
+    queue: vk::Queue,
 }
 
 impl Renderer<'_> {
     pub fn new(foundation: &Foundation) -> Result<Renderer<'_>, Error> {
+        let surface_ext = khr::Surface::new(&foundation.entry, &foundation.instance);
+        let queue_family_supports_surface = |pd: vk::PhysicalDevice, index: u32| {
+            let support = unsafe {
+                surface_ext.get_physical_device_surface_support(pd, index, foundation.surface)
+            };
+            if let Ok(true) = support {
+                true
+            } else {
+                false
+            }
+        };
+
         let all_physical_devices = unsafe { foundation.instance.enumerate_physical_devices() }
             .map_err(|err| Error::VulkanEnumeratePhysicalDevices(err))?;
         let physical_devices_and_indices = all_physical_devices
@@ -24,10 +41,21 @@ impl Renderer<'_> {
                         .instance
                         .get_physical_device_queue_family_properties(physical_device)
                 };
-                let graphics_family_index = queue_families.iter().position(|queue_family| {
-                    queue_family.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-                })?;
-                Some((physical_device, graphics_family_index as u32))
+                let filter_queue_family = |(i, props): (usize, &vk::QueueFamilyProperties)| {
+                    let (index, properties) = (i as u32, props);
+                    if !properties.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                        None
+                    } else if !queue_family_supports_surface(physical_device, index) {
+                        None
+                    } else {
+                        Some(index)
+                    }
+                };
+                let graphics_capable_queue_family_index = queue_families
+                    .iter()
+                    .enumerate()
+                    .find_map(filter_queue_family)?;
+                Some((physical_device, graphics_capable_queue_family_index as u32))
             })
             .collect::<Vec<(vk::PhysicalDevice, u32)>>();
         let (physical_device, graphics_family_index) = physical_devices_and_indices
@@ -65,11 +93,15 @@ impl Renderer<'_> {
                 .create_device(physical_device, &device_create_info, allocation_callbacks)
                 .map_err(|err| Error::VulkanDeviceCreation(err))
         }?;
+        let queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
+
+        // Next up: setup swapchain?
 
         Ok(Renderer {
             _foundation: foundation,
             physical_devices,
             device,
+            queue,
         })
     }
 }

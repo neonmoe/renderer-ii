@@ -11,7 +11,7 @@ pub enum Error {
     VulkanSurfaceCreation(#[source] vk::Result),
     #[error("could not list physical devices")]
     VulkanEnumeratePhysicalDevices(#[source] vk::Result),
-    #[error("no physical device with a graphics queue (i.e. a GPU) found")]
+    #[error("could not find a GPU that can render to the screen")]
     VulkanPhysicalDeviceMissing,
     #[error("vulkan logical device creation failed")]
     VulkanDeviceCreation(#[source] vk::Result),
