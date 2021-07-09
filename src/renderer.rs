@@ -7,10 +7,6 @@ pub struct Renderer<'a> {
     /// Held by Renderer to ensure that the Devices are dropped before
     /// the Instance.
     _foundation: &'a Foundation,
-    /// A list of all viable PhysicalDevices, can be used to populate
-    /// e.g. a GPU selection list.
-    #[allow(dead_code)]
-    physical_devices: Vec<vk::PhysicalDevice>,
     #[allow(dead_code)]
     device: Device,
     #[allow(dead_code)]
@@ -33,7 +29,7 @@ impl Renderer<'_> {
 
         let all_physical_devices = unsafe { foundation.instance.enumerate_physical_devices() }
             .map_err(|err| Error::VulkanEnumeratePhysicalDevices(err))?;
-        let physical_devices_and_indices = all_physical_devices
+        let physical_devices = all_physical_devices
             .into_iter()
             .filter_map(|physical_device| {
                 let queue_families = unsafe {
@@ -41,40 +37,48 @@ impl Renderer<'_> {
                         .instance
                         .get_physical_device_queue_family_properties(physical_device)
                 };
-                let filter_queue_family = |(i, props): (usize, &vk::QueueFamilyProperties)| {
-                    let (index, properties) = (i as u32, props);
-                    if !properties.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-                        None
-                    } else if !queue_family_supports_surface(physical_device, index) {
-                        None
-                    } else {
-                        Some(index)
+                let mut graphics_queue_family = None;
+                let mut surface_queue_family = None;
+                for (index, queue_family) in queue_families.into_iter().enumerate() {
+                    if queue_family.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                        graphics_queue_family = Some(index as u32);
                     }
-                };
-                let graphics_capable_queue_family_index = queue_families
-                    .iter()
-                    .enumerate()
-                    .find_map(filter_queue_family)?;
-                Some((physical_device, graphics_capable_queue_family_index as u32))
+                    if queue_family_supports_surface(physical_device, index as u32) {
+                        surface_queue_family = Some(index as u32);
+                    }
+                    if graphics_queue_family == surface_queue_family {
+                        // If there's a queue which supports both, prefer that one.
+                        break;
+                    }
+                }
+                if let (Some(graphics_queue_family), Some(surface_queue_family)) =
+                    (graphics_queue_family, surface_queue_family)
+                {
+                    Some((physical_device, graphics_queue_family, surface_queue_family))
+                } else {
+                    None
+                }
             })
-            .collect::<Vec<(vk::PhysicalDevice, u32)>>();
-        let (physical_device, graphics_family_index) = physical_devices_and_indices
-            .iter()
-            .next()
-            .map(|(pd, idx)| (*pd, *idx))
-            .ok_or(Error::VulkanPhysicalDeviceMissing)?;
-        let physical_devices = physical_devices_and_indices
+            .collect::<Vec<(vk::PhysicalDevice, u32, u32)>>();
+        log::debug!("Suitable physical devices: {:#?}", physical_devices);
+
+        // Just pick the first one for now. Not sure what kind of a
+        // situation would yield multiple physical devices capable of
+        // presenting to the surface.
+        let (physical_device, graphics_family_index, surface_family_index) = physical_devices
             .into_iter()
-            .map(|(pd, _)| pd)
-            .collect();
+            .next()
+            .ok_or(Error::VulkanPhysicalDeviceMissing)?;
 
         let queue_priorities = &[1.0];
+        // TODO: always create two infos or prefer to make one with queue_count if they're the same?
         let queue_create_infos = &[vk::DeviceQueueCreateInfo {
             queue_family_index: graphics_family_index,
             queue_count: queue_priorities.len() as u32,
             p_queue_priorities: queue_priorities.as_ptr(),
             ..Default::default()
         }];
+
         let physical_device_features = &[vk::PhysicalDeviceFeatures {
             ..Default::default()
         }];
@@ -99,7 +103,6 @@ impl Renderer<'_> {
 
         Ok(Renderer {
             _foundation: foundation,
-            physical_devices,
             device,
             queue,
         })
