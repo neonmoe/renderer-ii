@@ -15,4 +15,8 @@ pub enum Error {
     VulkanPhysicalDeviceMissing,
     #[error("vulkan logical device creation failed")]
     VulkanDeviceCreation(#[source] vk::Result),
+    #[error("physical device surface query failed")]
+    VulkanPhysicalDeviceSurfaceQuery(#[source] vk::Result),
+    #[error("vulkan swapchain creation failed")]
+    VulkanSwapchainCreation(#[source] vk::Result),
 }

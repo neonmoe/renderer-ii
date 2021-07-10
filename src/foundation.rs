@@ -58,11 +58,11 @@ impl Foundation {
             let cstr_to_str =
                 |str_ptr: &*const c_char| unsafe { CStr::from_ptr(*str_ptr) }.to_string_lossy();
             log::debug!(
-                "Requested extensions: {:#?}",
+                "Requested instance extensions: {:#?}",
                 extensions.iter().map(cstr_to_str).collect::<Vec<_>>()
             );
             log::debug!(
-                "Requested layers: {:#?}",
+                "Requested instance layers: {:#?}",
                 layers.iter().map(cstr_to_str).collect::<Vec<_>>()
             );
         }

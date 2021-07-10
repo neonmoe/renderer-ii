@@ -16,7 +16,7 @@ enum SandboxError {
 #[profiling::function]
 fn main() -> anyhow::Result<()> {
     log::set_logger(&LOGGER)
-        .map(|()| log::set_max_level(LevelFilter::Debug))
+        .map(|()| log::set_max_level(LevelFilter::Trace))
         .unwrap();
 
     let sdl_context = sdl2::init().map_err(|err| SandboxError::Sdl(err))?;
@@ -24,11 +24,14 @@ fn main() -> anyhow::Result<()> {
     let window = video_subsystem
         .window("neonvk sandbox", 800, 600)
         .position_centered()
+        .resizable()
+        .allow_highdpi()
         .vulkan()
         .build()?;
+    let (width, height) = window.vulkan_drawable_size();
 
     let foundation = neonvk::Foundation::new(&window)?;
-    let _renderer = neonvk::Renderer::new(&foundation)?;
+    let _renderer = neonvk::Renderer::new(&foundation, width, height, None, None)?;
 
     let mut event_pump = sdl_context
         .event_pump()
@@ -81,14 +84,16 @@ mod logger {
                 } else {
                     ("", "")
                 };
-                eprintln!(
-                    "{}[{}:{}] {}{}",
-                    color_code,
-                    record.file().unwrap_or(""),
-                    record.line().unwrap_or(0),
-                    message,
-                    color_end,
-                );
+                if record.level() < Level::Trace {
+                    eprintln!(
+                        "{}[{}:{}] {}{}",
+                        color_code,
+                        record.file().unwrap_or(""),
+                        record.line().unwrap_or(0),
+                        message,
+                        color_end,
+                    );
+                }
                 if record.level() == Level::Error {
                     thread::spawn(move || {
                         if let Some(title_len) = message.char_indices().position(|(_, c)| c == ':')
