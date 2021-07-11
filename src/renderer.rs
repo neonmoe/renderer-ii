@@ -258,10 +258,11 @@ impl Renderer<'_> {
             surface_family_index,
         )?;
 
-        let shader = shaders::include_spirv!("shaders/triangle.frag");
+        let shader_vert = shaders::include_spirv!("shaders/triangle.vert");
+        let shader_frag = shaders::include_spirv!("shaders/triangle.frag");
         log::debug!(
-            "Loaded triangle.frag, it's {} bytes. TODO: the graphics pipeline itself.",
-            shader.len()
+            "Loaded triangle vert and frag shaders, they're {} and {} bytes. TODO: the graphics pipeline itself.",
+            shader_vert.len(), shader_frag.len()
         );
 
         Ok(Renderer {
