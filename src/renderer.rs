@@ -171,42 +171,39 @@ impl Renderer<'_> {
             })
             .collect::<Vec<(String, [u8; 16])>>();
 
-        let queue_priorities = &[1.0, 1.0];
-        let make_queue_create_info = |index: u32, count: u32| vk::DeviceQueueCreateInfo {
-            queue_family_index: index,
-            queue_count: count,
-            p_queue_priorities: queue_priorities.as_ptr(),
-            ..Default::default()
-        };
+        let queue_priorities = [1.0, 1.0];
         let queue_create_infos = if graphics_family_index == surface_family_index {
-            vec![make_queue_create_info(graphics_family_index, 2)]
+            vec![vk::DeviceQueueCreateInfo::builder()
+                .queue_family_index(graphics_family_index)
+                .queue_priorities(&queue_priorities)
+                .build()]
         } else {
             vec![
-                make_queue_create_info(graphics_family_index, 1),
-                make_queue_create_info(surface_family_index, 1),
+                vk::DeviceQueueCreateInfo::builder()
+                    .queue_family_index(graphics_family_index)
+                    .queue_priorities(&queue_priorities[0..1])
+                    .build(),
+                vk::DeviceQueueCreateInfo::builder()
+                    .queue_family_index(surface_family_index)
+                    .queue_priorities(&queue_priorities[1..2])
+                    .build(),
             ]
         };
-        let physical_device_features = &[vk::PhysicalDeviceFeatures {
-            ..Default::default()
-        }];
-        let extensions = &[cstr!("VK_KHR_swapchain")];
+        let physical_device_features = vk::PhysicalDeviceFeatures::default();
+        let extensions = &[cstr!("VK_KHR_swapchain").as_ptr()];
         if log::log_enabled!(log::Level::Debug) {
             let cstr_to_str =
                 |str_ptr: &*const c_char| unsafe { CStr::from_ptr(*str_ptr) }.to_string_lossy();
             log::debug!(
-                "Requested device extensions: {:#?}",
+                "Requested device extensions: {:?}",
                 extensions.iter().map(cstr_to_str).collect::<Vec<_>>()
             );
         }
 
-        let device_create_info = vk::DeviceCreateInfo {
-            p_queue_create_infos: queue_create_infos.as_ptr(),
-            queue_create_info_count: queue_create_infos.len() as u32,
-            p_enabled_features: physical_device_features.as_ptr(),
-            pp_enabled_extension_names: extensions.as_ptr(),
-            enabled_extension_count: extensions.len() as u32,
-            ..Default::default()
-        };
+        let device_create_info = vk::DeviceCreateInfo::builder()
+            .queue_create_infos(&queue_create_infos)
+            .enabled_features(&physical_device_features)
+            .enabled_extension_names(extensions);
         // TODO: Can use allocator
         let allocation_callbacks = None;
         let device = unsafe {
@@ -230,13 +227,13 @@ impl Renderer<'_> {
             let graphics_name_info = vk::DebugUtilsObjectNameInfoEXT {
                 object_type: vk::ObjectType::QUEUE,
                 object_handle: graphics_queue.as_raw(),
-                p_object_name: cstr!("Graphics Queue"),
+                p_object_name: cstr!("Graphics Queue").as_ptr(),
                 ..Default::default()
             };
             let surface_name_info = vk::DebugUtilsObjectNameInfoEXT {
                 object_type: vk::ObjectType::QUEUE,
                 object_handle: surface_queue.as_raw(),
-                p_object_name: cstr!("Surface Presentation Queue"),
+                p_object_name: cstr!("Surface Presentation Queue").as_ptr(),
                 ..Default::default()
             };
             unsafe {
@@ -258,12 +255,30 @@ impl Renderer<'_> {
             surface_family_index,
         )?;
 
-        let shader_vert = shaders::include_spirv!("shaders/triangle.vert");
-        let shader_frag = shaders::include_spirv!("shaders/triangle.frag");
-        log::debug!(
-            "Loaded triangle vert and frag shaders, they're {} and {} bytes. TODO: the graphics pipeline itself.",
-            shader_vert.len(), shader_frag.len()
-        );
+        let vert_spirv = shaders::include_spirv!("shaders/triangle.vert");
+        let frag_spirv = shaders::include_spirv!("shaders/triangle.frag");
+        let vert_shader_module_create_info = vk::ShaderModuleCreateInfo::builder().code(vert_spirv);
+        let frag_shader_module_create_info = vk::ShaderModuleCreateInfo::builder().code(frag_spirv);
+        // TODO: Can use allocator
+        let vert_shader_module =
+            unsafe { device.create_shader_module(&vert_shader_module_create_info, None) }
+                .map_err(|err| Error::VulkanShaderModuleCreation(err))?;
+        // TODO: Can use allocator
+        let frag_shader_module =
+            unsafe { device.create_shader_module(&frag_shader_module_create_info, None) }
+                .map_err(|err| Error::VulkanShaderModuleCreation(err))?;
+        let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
+            .stage(vk::ShaderStageFlags::VERTEX)
+            .module(vert_shader_module)
+            .name(cstr!("main"));
+        let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
+            .stage(vk::ShaderStageFlags::FRAGMENT)
+            .module(frag_shader_module)
+            .name(cstr!("main"));
+        let shader_stages = [vert_shader_stage_create_info, frag_shader_stage_create_info];
+
+        unsafe { device.destroy_shader_module(vert_shader_module, None) };
+        unsafe { device.destroy_shader_module(frag_shader_module, None) };
 
         Ok(Renderer {
             foundation,

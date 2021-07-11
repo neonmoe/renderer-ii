@@ -41,16 +41,14 @@ impl Drop for Foundation {
 impl Foundation {
     pub fn new(window: &dyn HasRawWindowHandle) -> Result<Foundation, Error> {
         let entry = unsafe { Entry::new().unwrap() };
-        let app_info = vk::ApplicationInfo {
-            p_application_name: cstr!("neonvk-sandbox"),
-            application_version: vk::make_version(0, 1, 0),
-            api_version: vk::make_version(1, 0, 0),
-            ..Default::default()
-        };
+        let app_info = vk::ApplicationInfo::builder()
+            .application_name(cstr!("neonvk-sandbox"))
+            .application_version(vk::make_version(0, 1, 0))
+            .api_version(vk::make_version(1, 0, 0));
 
         let mut layers = Vec::with_capacity(1);
         if is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
-            layers.push(cstr!("VK_LAYER_KHRONOS_validation"));
+            layers.push(cstr!("VK_LAYER_KHRONOS_validation").as_ptr());
         }
 
         let mut extensions = ash_window::enumerate_required_extensions(window)
@@ -60,30 +58,26 @@ impl Foundation {
             .collect::<Vec<*const c_char>>();
         let debug_utils_available = is_extension_supported(&entry, "VK_EXT_debug_utils");
         if debug_utils_available {
-            extensions.push(cstr!("VK_EXT_debug_utils"));
+            extensions.push(cstr!("VK_EXT_debug_utils").as_ptr());
         }
 
         if log::log_enabled!(log::Level::Debug) {
             let cstr_to_str =
                 |str_ptr: &*const c_char| unsafe { CStr::from_ptr(*str_ptr) }.to_string_lossy();
             log::debug!(
-                "Requested instance extensions: {:#?}",
+                "Requested instance extensions: {:?}",
                 extensions.iter().map(cstr_to_str).collect::<Vec<_>>()
             );
             log::debug!(
-                "Requested instance layers: {:#?}",
+                "Requested instance layers: {:?}",
                 layers.iter().map(cstr_to_str).collect::<Vec<_>>()
             );
         }
 
-        let create_info = vk::InstanceCreateInfo {
-            p_application_info: &app_info,
-            enabled_layer_count: layers.len() as u32,
-            pp_enabled_layer_names: layers.as_ptr(),
-            enabled_extension_count: extensions.len() as u32,
-            pp_enabled_extension_names: extensions.as_ptr(),
-            ..Default::default()
-        };
+        let create_info = vk::InstanceCreateInfo::builder()
+            .application_info(&app_info)
+            .enabled_layer_names(&layers)
+            .enabled_extension_names(&extensions);
         // TODO: Can use allocator
         let instance = unsafe { entry.create_instance(&create_info, None) }?;
         // TODO: Can use allocator

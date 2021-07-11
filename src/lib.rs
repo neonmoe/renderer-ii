@@ -4,7 +4,6 @@
 macro_rules! cstr {
     ($string:literal) => {
         unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(concat!($string, "\0").as_bytes()) }
-            .as_ptr()
     };
 }
 

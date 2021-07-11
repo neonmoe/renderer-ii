@@ -23,4 +23,6 @@ pub enum Error {
     VulkanGetSwapchainImages(#[source] vk::Result),
     #[error("swapchain image view creation failed")]
     VulkanSwapchainImageViewCreation(#[source] vk::Result),
+    #[error("could not create shader module")]
+    VulkanShaderModuleCreation(#[source] vk::Result),
 }

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use syn::LitStr;
 
 struct Shader {
-    bytes: Vec<u8>,
+    bytes: Vec<u32>,
     source_path: PathBuf,
 }
 
@@ -18,7 +18,7 @@ impl ToTokens for Shader {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         let mut byte_stream = proc_macro2::TokenStream::new();
         for byte in &self.bytes {
-            byte_stream.append(Literal::u8_suffixed(*byte));
+            byte_stream.append(Literal::u32_suffixed(*byte));
             byte_stream.append(Punct::new(',', Spacing::Alone));
         }
         tokens.append(Group::new(Delimiter::Bracket, byte_stream));
@@ -32,7 +32,7 @@ pub fn include_spirv(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     let shader_path_string = shader.source_path.to_string_lossy();
     let result = quote::quote!({
         const FILE_DEPENDENCY_MARKER: &str = include_str!(#shader_path_string);
-        static BYTES: &[u8] = &#shader;
+        static BYTES: &[u32] = &#shader;
         BYTES
     });
     proc_macro::TokenStream::from(result)
@@ -87,7 +87,7 @@ fn compile_shader(shader_path: &str) -> Shader {
 
     match compiler.compile_into_spirv(&source, shader_kind, shader_path, "main", Some(&options)) {
         Ok(compilation_artifact) => Shader {
-            bytes: compilation_artifact.as_binary_u8().to_vec(),
+            bytes: compilation_artifact.as_binary().to_vec(),
             source_path: full_shader_path,
         },
         Err(err) => panic!("{}", err.to_string().trim()),
