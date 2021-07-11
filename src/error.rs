@@ -19,4 +19,8 @@ pub enum Error {
     VulkanPhysicalDeviceSurfaceQuery(#[source] vk::Result),
     #[error("vulkan swapchain creation failed")]
     VulkanSwapchainCreation(#[source] vk::Result),
+    #[error("could not get swapchain images")]
+    VulkanGetSwapchainImages(#[source] vk::Result),
+    #[error("swapchain image view creation failed")]
+    VulkanSwapchainImageViewCreation(#[source] vk::Result),
 }

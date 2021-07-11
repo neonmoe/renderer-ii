@@ -1,6 +1,7 @@
 use crate::{Error, Foundation};
-use ash::extensions::khr;
+use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
+use ash::vk::Handle;
 use ash::{vk, Device, Instance};
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -19,6 +20,7 @@ pub struct Renderer<'a> {
 
     device: Device,
     swapchain: vk::SwapchainKHR,
+    swapchain_image_views: Vec<vk::ImageView>,
     graphics_queue: vk::Queue,
     graphics_family_index: u32,
     surface_queue: vk::Queue,
@@ -27,9 +29,17 @@ pub struct Renderer<'a> {
 
 impl Drop for Renderer<'_> {
     fn drop(&mut self) {
+        for image_view in &self.swapchain_image_views {
+            // TODO: Can use allocator
+            unsafe { self.device.destroy_image_view(*image_view, None) };
+        }
+
         let swapchain_ext = khr::Swapchain::new(&self.foundation.instance, &self.device);
         // TODO: Can use allocator
         unsafe { swapchain_ext.destroy_swapchain(self.swapchain, None) };
+
+        // TODO: Can use allocator
+        unsafe { self.device.destroy_device(None) };
     }
 }
 
@@ -215,8 +225,29 @@ impl Renderer<'_> {
             graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
             surface_queue = unsafe { device.get_device_queue(surface_family_index, 0) };
         }
+        if foundation.debug_utils_available {
+            let debug_utils_ext = ext::DebugUtils::new(&foundation.entry, &foundation.instance);
+            let graphics_name_info = vk::DebugUtilsObjectNameInfoEXT {
+                object_type: vk::ObjectType::QUEUE,
+                object_handle: graphics_queue.as_raw(),
+                p_object_name: cstr!("Graphics Queue"),
+                ..Default::default()
+            };
+            let surface_name_info = vk::DebugUtilsObjectNameInfoEXT {
+                object_type: vk::ObjectType::QUEUE,
+                object_handle: surface_queue.as_raw(),
+                p_object_name: cstr!("Surface Presentation Queue"),
+                ..Default::default()
+            };
+            unsafe {
+                let _ = debug_utils_ext
+                    .debug_utils_set_object_name(device.handle(), &graphics_name_info);
+                let _ = debug_utils_ext
+                    .debug_utils_set_object_name(device.handle(), &surface_name_info);
+            }
+        }
 
-        let swapchain = create_swapchain(
+        let (swapchain, swapchain_image_views) = create_swapchain_and_image_views(
             foundation,
             initial_width,
             initial_height,
@@ -227,11 +258,18 @@ impl Renderer<'_> {
             surface_family_index,
         )?;
 
+        let shader = shaders::include_spirv!("shaders/triangle.frag");
+        log::debug!(
+            "Loaded triangle.frag, it's {} bytes. TODO: the graphics pipeline itself.",
+            shader.len()
+        );
+
         Ok(Renderer {
             foundation,
             physical_devices,
             device,
             swapchain,
+            swapchain_image_views,
             graphics_queue,
             graphics_family_index,
             surface_queue,
@@ -256,7 +294,7 @@ fn is_extension_supported(
     }
 }
 
-fn create_swapchain(
+fn create_swapchain_and_image_views(
     foundation: &Foundation,
     width: u32,
     height: u32,
@@ -265,7 +303,7 @@ fn create_swapchain(
     device: &Device,
     graphics_family_index: u32,
     surface_family_index: u32,
-) -> Result<vk::SwapchainKHR, Error> {
+) -> Result<(vk::SwapchainKHR, Vec<vk::ImageView>), Error> {
     let surface_ext = khr::Surface::new(&foundation.entry, &foundation.instance);
     let present_mode = {
         let surface_present_modes = unsafe {
@@ -352,6 +390,33 @@ fn create_swapchain(
         swapchain_create_info.old_swapchain = old_swapchain;
     }
     // TODO: Can use allocator
-    unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }
-        .map_err(|err| Error::VulkanSwapchainCreation(err))
+    let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }
+        .map_err(|err| Error::VulkanSwapchainCreation(err))?;
+
+    let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }
+        .map_err(|err| Error::VulkanGetSwapchainImages(err))?;
+    let swapchain_image_views = swapchain_images
+        .into_iter()
+        .map(|image| {
+            let subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            };
+            let image_view_create_info = vk::ImageViewCreateInfo {
+                image,
+                view_type: vk::ImageViewType::TYPE_2D,
+                format: image_format,
+                subresource_range,
+                ..Default::default()
+            };
+            // TODO: Can use allocator
+            unsafe { device.create_image_view(&image_view_create_info, None) }
+                .map_err(|err| Error::VulkanSwapchainImageViewCreation(err))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok((swapchain, swapchain_image_views))
 }

@@ -2,7 +2,8 @@
 //! probably narrow down over time.
 
 use crate::{debug_utils, Error};
-use ash::version::EntryV1_0;
+use ash::extensions::khr;
+use ash::version::{EntryV1_0, InstanceV1_0};
 use ash::{vk, Entry, Instance};
 use raw_window_handle::HasRawWindowHandle;
 use std::ffi::CStr;
@@ -14,6 +15,7 @@ pub struct Foundation {
     pub entry: Entry,
     pub instance: Instance,
     pub surface: vk::SurfaceKHR,
+    pub debug_utils_available: bool,
     debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
 
@@ -26,6 +28,13 @@ impl Drop for Foundation {
                 debug_utils_messenger,
             );
         }
+
+        let surface_ext = khr::Surface::new(&self.entry, &self.instance);
+        // TODO: Can use allocator
+        unsafe { surface_ext.destroy_surface(self.surface, None) };
+
+        // TODO: Can use allocator
+        unsafe { self.instance.destroy_instance(None) };
     }
 }
 
@@ -91,6 +100,7 @@ impl Foundation {
             entry,
             instance,
             surface,
+            debug_utils_available,
             debug_utils_messenger,
         })
     }
