@@ -31,4 +31,14 @@ pub enum Error {
     VulkanRenderPassCreation(#[source] vk::Result),
     #[error("could not create the graphics pipeline")]
     VulkanGraphicsPipelineCreation(#[source] vk::Result),
+    #[error("could not create the framebuffer")]
+    VulkanFramebufferCreation(#[source] vk::Result),
+    #[error("could not create the command pool")]
+    VulkanCommandPoolCreation(#[source] vk::Result),
+    #[error("could not allocate the command buffers")]
+    VulkanCommandBuffersAllocation(#[source] vk::Result),
+    #[error("failed to begin command buffer recording")]
+    VulkanBeginCommandBuffer(#[source] vk::Result),
+    #[error("failed to end command buffer recording")]
+    VulkanEndCommandBuffer(#[source] vk::Result),
 }
