@@ -479,12 +479,14 @@ fn create_swapchain_and_image_views(
                 .get_physical_device_surface_present_modes(physical_device, foundation.surface)
                 .map_err(|err| Error::VulkanPhysicalDeviceSurfaceQuery(err))
         }?;
+        log::debug!("Available present modes: {:?}", surface_present_modes);
         if surface_present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
             vk::PresentModeKHR::MAILBOX
         } else {
             vk::PresentModeKHR::FIFO
         }
     };
+    log::debug!("Requested present mode: {:?}.", present_mode);
 
     let (min_image_count, image_extent) = {
         let surface_capabilities = unsafe {
@@ -492,17 +494,17 @@ fn create_swapchain_and_image_views(
                 .get_physical_device_surface_capabilities(physical_device, foundation.surface)
                 .map_err(|err| Error::VulkanPhysicalDeviceSurfaceQuery(err))
         }?;
-        let mut min_image_count = if present_mode == vk::PresentModeKHR::MAILBOX {
-            // TODO: Does the mailbox present mode require an extension?
-            3.max(surface_capabilities.min_image_count)
+        let min_count = surface_capabilities.min_image_count;
+        let max_count = if surface_capabilities.max_image_count != 0 {
+            surface_capabilities.max_image_count
         } else {
-            2.max(surface_capabilities.min_image_count)
+            u32::MAX
         };
-        if surface_capabilities.max_image_count != 0
-            && surface_capabilities.max_image_count < min_image_count
-        {
-            min_image_count = surface_capabilities.max_image_count;
-        }
+        let min_image_count = if present_mode == vk::PresentModeKHR::MAILBOX {
+            3.max(min_count).min(max_count)
+        } else {
+            2.max(min_count).min(max_count)
+        };
         let unset_extent = vk::Extent2D {
             width: u32::MAX,
             height: u32::MAX,
@@ -514,6 +516,12 @@ fn create_swapchain_and_image_views(
         };
         (min_image_count, image_extent)
     };
+    log::debug!(
+        "Requested a minimum of {} swapchain images of resolution {}x{}.",
+        min_image_count,
+        image_extent.width,
+        image_extent.height,
+    );
 
     let (image_format, image_color_space) = {
         let surface_formats = unsafe {
@@ -531,6 +539,11 @@ fn create_swapchain_and_image_views(
         };
         (format.format, format.color_space)
     };
+    log::debug!(
+        "Requested swapchain format {:?} and color space {:?}.",
+        image_format,
+        image_color_space
+    );
 
     let swapchain_ext = khr::Swapchain::new(&foundation.instance, device);
     let mut swapchain_create_info = vk::SwapchainCreateInfoKHR {
