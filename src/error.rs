@@ -41,4 +41,6 @@ pub enum Error {
     VulkanBeginCommandBuffer(#[source] vk::Result),
     #[error("failed to end command buffer recording")]
     VulkanEndCommandBuffer(#[source] vk::Result),
+    #[error("could not create semaphore")]
+    VulkanSemaphoreCreation(#[source] vk::Result),
 }

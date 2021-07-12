@@ -35,11 +35,19 @@ pub struct Renderer<'a> {
     pipelines: Pipelines,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
+    acquired_image_sp: vk::Semaphore,
+    finished_command_buffers_sp: vk::Semaphore,
 }
 
 impl Drop for Renderer<'_> {
     // TODO: Can use allocator
     fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_semaphore(self.acquired_image_sp, None);
+            self.device
+                .destroy_semaphore(self.finished_command_buffers_sp, None);
+        }
+
         unsafe {
             self.device
                 .free_command_buffers(self.command_pool, &self.command_buffers);
@@ -357,6 +365,17 @@ impl Renderer<'_> {
                 .map_err(|err| Error::VulkanEndCommandBuffer(err))?;
         }
 
+        let acquired_image_sp = unsafe {
+            device
+                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                .map_err(|err| Error::VulkanSemaphoreCreation(err))
+        }?;
+        let finished_command_buffers_sp = unsafe {
+            device
+                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                .map_err(|err| Error::VulkanSemaphoreCreation(err))
+        }?;
+
         Ok(Renderer {
             foundation,
             physical_devices,
@@ -371,8 +390,12 @@ impl Renderer<'_> {
             pipelines,
             command_pool,
             command_buffers,
+            acquired_image_sp,
+            finished_command_buffers_sp,
         })
     }
+
+    pub fn render_frame(&self) {}
 }
 
 fn is_extension_supported(

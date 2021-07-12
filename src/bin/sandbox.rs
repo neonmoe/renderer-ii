@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
     let (width, height) = window.vulkan_drawable_size();
 
     let foundation = neonvk::Foundation::new(&window)?;
-    let _renderer = neonvk::Renderer::new(&foundation, width, height, None, None)?;
+    let renderer = neonvk::Renderer::new(&foundation, width, height, None, None)?;
 
     let mut event_pump = sdl_context
         .event_pump()
@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        // TODO: Render something
+        renderer.render_frame();
 
         thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
