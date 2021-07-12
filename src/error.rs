@@ -23,6 +23,12 @@ pub enum Error {
     VulkanGetSwapchainImages(#[source] vk::Result),
     #[error("swapchain image view creation failed")]
     VulkanSwapchainImageViewCreation(#[source] vk::Result),
-    #[error("could not create shader module")]
+    #[error("could not create the shader module")]
     VulkanShaderModuleCreation(#[source] vk::Result),
+    #[error("could not create the pipeline layout")]
+    VulkanPipelineLayoutCreation(#[source] vk::Result),
+    #[error("could not create the render pass")]
+    VulkanRenderPassCreation(#[source] vk::Result),
+    #[error("could not create the graphics pipeline")]
+    VulkanGraphicsPipelineCreation(#[source] vk::Result),
 }
