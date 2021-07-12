@@ -395,7 +395,55 @@ impl Renderer<'_> {
         })
     }
 
-    pub fn render_frame(&self) {}
+    pub fn render_frame(&self) -> Result<(), Error> {
+        let swapchain_khr = khr::Swapchain::new(&self.foundation.instance, &self.device);
+        let (image_index, suboptimal) = unsafe {
+            swapchain_khr
+                .acquire_next_image(
+                    self.swapchain,
+                    u64::MAX,
+                    self.acquired_image_sp,
+                    vk::Fence::null(),
+                )
+                .map_err(|err| Error::VulkanAcquireImage(err))
+        }?;
+        if suboptimal {
+            log::debug!("Rendering frame with a suboptimal swapchain!");
+        }
+
+        // TODO: Re-record command buffer if out-of-date
+
+        let wait_semaphores = [self.acquired_image_sp];
+        let signal_semaphores = [self.finished_command_buffers_sp];
+        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let command_buffers = [self.command_buffers[image_index as usize]];
+        let submit_infos = [vk::SubmitInfo::builder()
+            .wait_semaphores(&wait_semaphores)
+            .signal_semaphores(&signal_semaphores)
+            .wait_dst_stage_mask(&wait_stages)
+            .command_buffers(&command_buffers)
+            .build()];
+        unsafe {
+            self.device
+                .queue_submit(self.graphics_queue, &submit_infos, vk::Fence::null())
+                .map_err(|err| Error::VulkanSubmitQueue(err))
+        }?;
+
+        let swapchains = [self.swapchain];
+        let image_indices = [image_index];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(&signal_semaphores)
+            .swapchains(&swapchains)
+            .image_indices(&image_indices);
+        unsafe { swapchain_khr.queue_present(self.surface_queue, &present_info) }
+            .map_err(|err| Error::VulkanQueuePresent(err))?;
+
+        // TODO: Replace queue_wait_idle with fences
+        let _ = unsafe { self.device.queue_wait_idle(self.graphics_queue) };
+        let _ = unsafe { self.device.queue_wait_idle(self.surface_queue) };
+
+        Ok(())
+    }
 }
 
 fn is_extension_supported(
@@ -445,6 +493,7 @@ fn create_swapchain_and_image_views(
                 .map_err(|err| Error::VulkanPhysicalDeviceSurfaceQuery(err))
         }?;
         let mut min_image_count = if present_mode == vk::PresentModeKHR::MAILBOX {
+            // TODO: Does the mailbox present mode require an extension?
             3.max(surface_capabilities.min_image_count)
         } else {
             2.max(surface_capabilities.min_image_count)
@@ -655,9 +704,19 @@ fn create_pipelines(
         .color_attachments(&attachment_references); // NOTE: resolve_attachments for multisampling?
     let subpasses = [surface_subpass.build()];
 
+    let subpass_dependency = vk::SubpassDependency::builder()
+        .dst_subpass(0) // The subpass at index 0 (surface_subpass) should wait before
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE) // writing to the color attachment
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT) // during the color output stage.
+        .src_subpass(vk::SUBPASS_EXTERNAL) // Because whatever came before
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT) // might still be in the color output stage.
+        .build();
+    let dependencies = [subpass_dependency];
+
     let render_pass_create_info = vk::RenderPassCreateInfo::builder()
         .attachments(&attachments)
-        .subpasses(&subpasses);
+        .subpasses(&subpasses)
+        .dependencies(&dependencies);
     let surface_pipeline_render_pass =
         unsafe { device.create_render_pass(&render_pass_create_info, None) }
             .map_err(|err| Error::VulkanRenderPassCreation(err))?;

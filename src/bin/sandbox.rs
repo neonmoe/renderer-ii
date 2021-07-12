@@ -49,7 +49,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        renderer.render_frame();
+        if let Err(err) = renderer.render_frame() {
+            log::warn!("Error during regular frame rendering: {}", err);
+        }
 
         thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }

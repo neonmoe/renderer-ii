@@ -37,10 +37,16 @@ pub enum Error {
     VulkanCommandPoolCreation(#[source] vk::Result),
     #[error("could not allocate the command buffers")]
     VulkanCommandBuffersAllocation(#[source] vk::Result),
-    #[error("failed to begin command buffer recording")]
+    #[error("could not begin command buffer recording")]
     VulkanBeginCommandBuffer(#[source] vk::Result),
-    #[error("failed to end command buffer recording")]
+    #[error("failed to record command buffer")]
     VulkanEndCommandBuffer(#[source] vk::Result),
     #[error("could not create semaphore")]
     VulkanSemaphoreCreation(#[source] vk::Result),
+    #[error("could not acquire next frame's image")]
+    VulkanAcquireImage(#[source] vk::Result),
+    #[error("could not submit the queue")]
+    VulkanSubmitQueue(#[source] vk::Result),
+    #[error("could not present the queue")]
+    VulkanQueuePresent(#[source] vk::Result),
 }
