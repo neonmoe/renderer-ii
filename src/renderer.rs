@@ -58,7 +58,7 @@ impl Swapchain<'_> {
     ) -> Result<Swapchain<'a>, Error> {
         let device = &renderer.device;
         let swapchain_ext = &renderer.swapchain_ext;
-        let (swapchain, swapchain_image_views, swapchain_format) =
+        let (swapchain, swapchain_image_views, swapchain_format, final_extent) =
             create_swapchain_and_image_views(
                 &renderer.surface_ext,
                 &swapchain_ext,
@@ -71,6 +71,9 @@ impl Swapchain<'_> {
                 renderer.graphics_family_index,
                 renderer.surface_family_index,
             )?;
+        // The width and height may change from the ones passed in,
+        // because they're queried during swapchain creation.
+        let vk::Extent2D { width, height } = final_extent;
 
         let pipelines = create_pipelines(device, width, height, swapchain_format)?;
 
@@ -426,6 +429,12 @@ impl Renderer<'_> {
         })
     }
 
+    /// Wait until the device is idle. Should be called before
+    /// swapchain recreation and after the game loop is over.
+    pub fn wait_idle(&self) -> Result<(), Error> {
+        unsafe { self.device.device_wait_idle() }.map_err(|err| Error::VulkanDeviceWaitIdle(err))
+    }
+
     /// Wait until the latest rendered frame is on screen.
     ///
     /// This will eventually be changed to just wait until we can
@@ -485,11 +494,18 @@ impl Renderer<'_> {
             .wait_semaphores(&signal_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
-        unsafe {
+        let present_result = unsafe {
             self.swapchain_ext
                 .queue_present(self.surface_queue, &present_info)
-                .map_err(|err| Error::VulkanQueuePresent(err))
-        }?;
+        };
+
+        match present_result {
+            Err(err @ vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                return Err(Error::VulkanSwapchainOutOfDate(err))
+            }
+            Err(err) => return Err(Error::VulkanQueuePresent(err)),
+            _ => {}
+        }
 
         Ok(())
     }
@@ -522,56 +538,17 @@ fn create_swapchain_and_image_views(
     device: &Device,
     graphics_family_index: u32,
     surface_family_index: u32,
-) -> Result<(vk::SwapchainKHR, Vec<vk::ImageView>, vk::Format), Error> {
-    let present_mode = {
-        let surface_present_modes = unsafe {
-            surface_ext
-                .get_physical_device_surface_present_modes(physical_device, surface)
-                .map_err(|err| Error::VulkanPhysicalDeviceSurfaceQuery(err))
-        }?;
-        log::debug!("Available present modes: {:?}", surface_present_modes);
-        if surface_present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
-            vk::PresentModeKHR::MAILBOX
-        } else {
-            vk::PresentModeKHR::FIFO
-        }
-    };
-    log::debug!("Requested present mode: {:?}.", present_mode);
-
-    let (min_image_count, image_extent) = {
-        let surface_capabilities = unsafe {
-            surface_ext
-                .get_physical_device_surface_capabilities(physical_device, surface)
-                .map_err(|err| Error::VulkanPhysicalDeviceSurfaceQuery(err))
-        }?;
-        let min_count = surface_capabilities.min_image_count;
-        let max_count = if surface_capabilities.max_image_count != 0 {
-            surface_capabilities.max_image_count
-        } else {
-            u32::MAX
-        };
-        let min_image_count = if present_mode == vk::PresentModeKHR::MAILBOX {
-            3.max(min_count).min(max_count)
-        } else {
-            2.max(min_count).min(max_count)
-        };
-        let unset_extent = vk::Extent2D {
-            width: u32::MAX,
-            height: u32::MAX,
-        };
-        let image_extent = if surface_capabilities.current_extent != unset_extent {
-            surface_capabilities.current_extent
-        } else {
-            vk::Extent2D { width, height }
-        };
-        (min_image_count, image_extent)
-    };
-    log::debug!(
-        "Requested a minimum of {} swapchain images of resolution {}x{}.",
-        min_image_count,
-        image_extent.width,
-        image_extent.height,
-    );
+) -> Result<
+    (
+        vk::SwapchainKHR,
+        Vec<vk::ImageView>,
+        vk::Format,
+        vk::Extent2D,
+    ),
+    Error,
+> {
+    let present_mode = vk::PresentModeKHR::FIFO;
+    let min_image_count = 2;
 
     let (image_format, image_color_space) = {
         let surface_formats = unsafe {
@@ -589,18 +566,30 @@ fn create_swapchain_and_image_views(
         };
         (format.format, format.color_space)
     };
-    log::debug!(
-        "Requested swapchain format {:?} and color space {:?}.",
-        image_format,
-        image_color_space
-    );
+
+    let get_image_extent = || -> Result<vk::Extent2D, Error> {
+        let surface_capabilities = unsafe {
+            surface_ext
+                .get_physical_device_surface_capabilities(physical_device, surface)
+                .map_err(|err| Error::VulkanPhysicalDeviceSurfaceQuery(err))
+        }?;
+        let unset_extent = vk::Extent2D {
+            width: u32::MAX,
+            height: u32::MAX,
+        };
+        let image_extent = if surface_capabilities.current_extent != unset_extent {
+            surface_capabilities.current_extent
+        } else {
+            vk::Extent2D { width, height }
+        };
+        Ok(image_extent)
+    };
 
     let mut swapchain_create_info = vk::SwapchainCreateInfoKHR {
         surface,
         min_image_count,
         image_format,
         image_color_space,
-        image_extent,
         image_array_layers: 1,
         image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
         pre_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
@@ -620,6 +609,10 @@ fn create_swapchain_and_image_views(
     if let Some(old_swapchain) = old_swapchain {
         swapchain_create_info.old_swapchain = old_swapchain;
     }
+    // Get image extent at the latest possible time to avoid getting
+    // an outdated extent. Bummer that this is an issue, but I haven't
+    // found a good way to avoid it.
+    swapchain_create_info.image_extent = get_image_extent()?;
     // TODO: Can use allocator
     let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }
         .map_err(|err| Error::VulkanSwapchainCreation(err))?;
@@ -649,7 +642,12 @@ fn create_swapchain_and_image_views(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok((swapchain, swapchain_image_views, image_format))
+    Ok((
+        swapchain,
+        swapchain_image_views,
+        image_format,
+        swapchain_create_info.image_extent,
+    ))
 }
 
 fn create_pipelines(

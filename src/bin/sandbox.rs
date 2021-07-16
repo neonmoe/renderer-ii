@@ -61,15 +61,18 @@ fn main() -> anyhow::Result<()> {
         }
 
         if size_changed {
+            renderer.wait_idle()?;
+            drop(swapchain);
             let (width, height) = window.vulkan_drawable_size();
-            swapchain = neonvk::Swapchain::new(&renderer, Some(swapchain), width, height)?;
-            // Somehow, the old swapchain needs to not die. Perhaps with Rc's in Renderer?
-            // Should render_frame and wait_frame be in renderer, borrowing swapchain? Yes.
+            // TODO: Fix passing in oldSwapchain (required to support exclusive fullscreen)
+            swapchain = neonvk::Swapchain::new(&renderer, None, width, height)?;
             size_changed = false;
         }
 
-        if let Err(err) = renderer.render_frame(&swapchain) {
-            log::warn!("Error during regular frame rendering: {}", err);
+        match renderer.render_frame(&swapchain) {
+            Ok(_) => {}
+            Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
+            Err(err) => log::warn!("Error during regular frame rendering: {}", err),
         }
 
         frame_instants.push(Instant::now());
@@ -93,6 +96,8 @@ fn main() -> anyhow::Result<()> {
             ));
         }
     }
+
+    renderer.wait_idle()?;
 
     Ok(())
 }

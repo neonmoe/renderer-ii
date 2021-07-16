@@ -65,6 +65,21 @@ fn vulkan_debug(
     cmdbuf_label: Option<&str>,
     object_name: Option<&str>,
 ) {
+    // Explicitly silenced warnings, with explanations for why:
+    match message_id {
+        "VUID-VkSwapchainCreateInfoKHR-imageExtent-01274" => {
+            // This is caused by a the validation layer getting the
+            // surface size during the create_swapchain, but the info
+            // is filled in beforehand. So if the size of the window
+            // changes between these two, the validation layer will
+            // complain that the requested extent is too small or too
+            // big.
+            // TODO: Fix extents for swapchains recreated during a continuous resize
+            return;
+        }
+        _ => {}
+    }
+
     let formatted_message = {
         use std::fmt::Write;
         let mut msg = String::with_capacity(256);

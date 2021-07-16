@@ -49,4 +49,8 @@ pub enum Error {
     VulkanSubmitQueue(#[source] vk::Result),
     #[error("could not present the queue")]
     VulkanQueuePresent(#[source] vk::Result),
+    #[error("swapchain is out of date, cannot present")]
+    VulkanSwapchainOutOfDate(#[source] vk::Result),
+    #[error("could not wait until the device is idle")]
+    VulkanDeviceWaitIdle(#[source] vk::Result),
 }
