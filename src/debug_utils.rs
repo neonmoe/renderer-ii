@@ -64,6 +64,7 @@ fn vulkan_debug(
     object_name: Option<&str>,
 ) {
     // Explicitly silenced warnings, with explanations for why:
+    #[allow(clippy::single_match)]
     match message_id {
         "VUID-VkSwapchainCreateInfoKHR-imageExtent-01274" => {
             // This is caused by a the validation layer getting the

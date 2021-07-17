@@ -48,7 +48,7 @@ impl Foundation {
         }
 
         let mut extensions = ash_window::enumerate_required_extensions(window)
-            .map_err(|err| Error::WindowRequiredExtensions(err))?
+            .map_err(Error::WindowRequiredExtensions)?
             .into_iter()
             .map(|cs| cs.as_ptr())
             .collect::<Vec<*const c_char>>();
@@ -63,7 +63,7 @@ impl Foundation {
             .enabled_extension_names(&extensions);
         let instance = unsafe { entry.create_instance(&create_info, None) }?;
         let surface = unsafe { ash_window::create_surface(&entry, &instance, window, None) }
-            .map_err(|err| Error::VulkanSurfaceCreation(err))?;
+            .map_err(Error::VulkanSurfaceCreation)?;
 
         let debug_utils_messenger = if debug_utils_available {
             debug_utils::create_debug_utils_messenger(&entry, &instance).ok()

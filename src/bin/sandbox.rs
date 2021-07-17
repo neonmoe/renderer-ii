@@ -18,8 +18,8 @@ fn main() -> anyhow::Result<()> {
         .map(|()| log::set_max_level(LevelFilter::Trace))
         .unwrap();
 
-    let sdl_context = sdl2::init().map_err(|err| SandboxError::Sdl(err))?;
-    let video_subsystem = sdl_context.video().map_err(|err| SandboxError::Sdl(err))?;
+    let sdl_context = sdl2::init().map_err(SandboxError::Sdl)?;
+    let video_subsystem = sdl_context.video().map_err(SandboxError::Sdl)?;
     let mut window = video_subsystem
         .window("neonvk sandbox", 800, 600)
         .position_centered()
@@ -36,9 +36,7 @@ fn main() -> anyhow::Result<()> {
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
 
-    let mut event_pump = sdl_context
-        .event_pump()
-        .map_err(|err| SandboxError::Sdl(err))?;
+    let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut size_changed = false;
     'running: loop {
         renderer.wait_frame();
@@ -51,10 +49,10 @@ fn main() -> anyhow::Result<()> {
                     ..
                 } => break 'running,
 
-                Event::Window { win_event, .. } => match win_event {
-                    WindowEvent::SizeChanged(_, _) => size_changed = true,
-                    _ => {}
-                },
+                Event::Window {
+                    win_event: WindowEvent::SizeChanged(_, _),
+                    ..
+                } => size_changed = true,
 
                 _ => {}
             }
@@ -81,7 +79,7 @@ fn main() -> anyhow::Result<()> {
         let interval_sum: Duration = frame_instants
             .windows(2)
             .map(|instants| {
-                if let &[before, after] = instants {
+                if let [before, after] = *instants {
                     after - before
                 } else {
                     unreachable!()

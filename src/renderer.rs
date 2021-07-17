@@ -52,22 +52,46 @@ impl Swapchain<'_> {
     ) -> Result<Swapchain<'a>, Error> {
         let device = &renderer.device;
         let swapchain_ext = &renderer.swapchain_ext;
-        let (swapchain, swapchain_image_views, swapchain_format, final_extent) =
-            create_swapchain_and_image_views(
-                &renderer.surface_ext,
-                &swapchain_ext,
-                renderer.foundation.surface,
-                width,
-                height,
-                old_swapchain.map(|r| r.swapchain),
-                renderer.physical_device,
-                device,
-                renderer.graphics_family_index,
-                renderer.surface_family_index,
-            )?;
+        let queue_family_indices = [
+            renderer.graphics_family_index,
+            renderer.surface_family_index,
+        ];
+        let (swapchain, swapchain_format, final_extent) = create_swapchain(
+            &renderer.surface_ext,
+            &swapchain_ext,
+            renderer.foundation.surface,
+            vk::Extent2D { width, height },
+            old_swapchain.map(|r| r.swapchain),
+            renderer.physical_device,
+            &queue_family_indices,
+        )?;
         // The width and height may change from the ones passed in,
         // because they're queried during swapchain creation.
         let vk::Extent2D { width, height } = final_extent;
+
+        let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }
+            .map_err(Error::VulkanGetSwapchainImages)?;
+        let swapchain_image_views = swapchain_images
+            .into_iter()
+            .map(|image| {
+                let subresource_range = vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                };
+                let image_view_create_info = vk::ImageViewCreateInfo {
+                    image,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    format: swapchain_format,
+                    subresource_range,
+                    ..Default::default()
+                };
+                unsafe { device.create_image_view(&image_view_create_info, None) }
+                    .map_err(Error::VulkanSwapchainImageViewCreation)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         let (surface_pipeline_layout, surface_pipeline_render_pass, surface_pipeline) =
             create_pipelines(device, width, height, swapchain_format)?;
@@ -83,7 +107,7 @@ impl Swapchain<'_> {
                     .height(height)
                     .layers(1);
                 unsafe { device.create_framebuffer(&framebuffer_create_info, None) }
-                    .map_err(|err| Error::VulkanFramebufferCreation(err))
+                    .map_err(Error::VulkanFramebufferCreation)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -94,7 +118,7 @@ impl Swapchain<'_> {
         let command_buffers = unsafe {
             device
                 .allocate_command_buffers(&command_buffer_allocate_info)
-                .map_err(|err| Error::VulkanCommandBuffersAllocation(err))
+                .map_err(Error::VulkanCommandBuffersAllocation)
         }?;
 
         for (command_buffer, framebuffer) in command_buffers.iter().zip(&swapchain_framebuffers) {
@@ -103,7 +127,7 @@ impl Swapchain<'_> {
 
             let begin_info = vk::CommandBufferBeginInfo::default();
             unsafe { device.begin_command_buffer(command_buffer, &begin_info) }
-                .map_err(|err| Error::VulkanBeginCommandBuffer(err))?;
+                .map_err(Error::VulkanBeginCommandBuffer)?;
 
             let render_area = vk::Rect2D::builder().extent(vk::Extent2D { width, height });
             let clear_colors = [vk::ClearValue::default()];
@@ -128,7 +152,7 @@ impl Swapchain<'_> {
             };
 
             unsafe { device.end_command_buffer(command_buffer) }
-                .map_err(|err| Error::VulkanEndCommandBuffer(err))?;
+                .map_err(Error::VulkanEndCommandBuffer)?;
         }
 
         Ok(Swapchain {
@@ -188,24 +212,20 @@ impl Drop for Renderer<'_> {
 }
 
 impl Renderer<'_> {
-    pub fn new<'a>(
-        foundation: &'a Foundation,
+    pub fn new(
+        foundation: &Foundation,
         preferred_physical_device: Option<[u8; 16]>,
-    ) -> Result<Renderer<'a>, Error> {
+    ) -> Result<Renderer<'_>, Error> {
         let surface_ext = khr::Surface::new(&foundation.entry, &foundation.instance);
         let queue_family_supports_surface = |pd: vk::PhysicalDevice, index: u32| {
             let support = unsafe {
                 surface_ext.get_physical_device_surface_support(pd, index, foundation.surface)
             };
-            if let Ok(true) = support {
-                true
-            } else {
-                false
-            }
+            matches!(support, Ok(true))
         };
 
         let all_physical_devices = unsafe { foundation.instance.enumerate_physical_devices() }
-            .map_err(|err| Error::VulkanEnumeratePhysicalDevices(err))?;
+            .map_err(Error::VulkanEnumeratePhysicalDevices)?;
         let mut physical_devices = all_physical_devices
             .into_iter()
             .filter_map(|physical_device| {
@@ -286,9 +306,8 @@ impl Renderer<'_> {
                     b_score.cmp(&a_score)
                 });
                 physical_devices
-                    .iter()
-                    .next()
-                    .map(|t| *t)
+                    .get(0)
+                    .copied()
                     .ok_or(Error::VulkanPhysicalDeviceMissing)?
             };
 
@@ -340,16 +359,14 @@ impl Renderer<'_> {
             foundation
                 .instance
                 .create_device(physical_device, &device_create_info, None)
-                .map_err(|err| Error::VulkanDeviceCreation(err))
+                .map_err(Error::VulkanDeviceCreation)
         }?;
 
-        let graphics_queue;
+        let graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
         let surface_queue;
         if graphics_family_index == surface_family_index {
-            graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
             surface_queue = unsafe { device.get_device_queue(graphics_family_index, 1) };
         } else {
-            graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
             surface_queue = unsafe { device.get_device_queue(surface_family_index, 0) };
         }
         if foundation.debug_utils_available {
@@ -377,17 +394,17 @@ impl Renderer<'_> {
         let command_pool_create_info =
             vk::CommandPoolCreateInfo::builder().queue_family_index(graphics_family_index);
         let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
-            .map_err(|err| Error::VulkanCommandPoolCreation(err))?;
+            .map_err(Error::VulkanCommandPoolCreation)?;
 
         let acquired_image_sp = unsafe {
             device
                 .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                .map_err(|err| Error::VulkanSemaphoreCreation(err))
+                .map_err(Error::VulkanSemaphoreCreation)
         }?;
         let finished_command_buffers_sp = unsafe {
             device
                 .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                .map_err(|err| Error::VulkanSemaphoreCreation(err))
+                .map_err(Error::VulkanSemaphoreCreation)
         }?;
 
         let swapchain_ext = khr::Swapchain::new(&foundation.instance, &device);
@@ -412,7 +429,7 @@ impl Renderer<'_> {
     /// Wait until the device is idle. Should be called before
     /// swapchain recreation and after the game loop is over.
     pub fn wait_idle(&self) -> Result<(), Error> {
-        unsafe { self.device.device_wait_idle() }.map_err(|err| Error::VulkanDeviceWaitIdle(err))
+        unsafe { self.device.device_wait_idle() }.map_err(Error::VulkanDeviceWaitIdle)
     }
 
     /// Wait until the latest rendered frame is on screen.
@@ -444,7 +461,7 @@ impl Renderer<'_> {
                     self.acquired_image_sp,
                     vk::Fence::null(),
                 )
-                .map_err(|err| Error::VulkanAcquireImage(err))
+                .map_err(Error::VulkanAcquireImage)
         }?;
 
         // TODO: Re-record command buffer if out-of-date
@@ -462,7 +479,7 @@ impl Renderer<'_> {
         unsafe {
             self.device
                 .queue_submit(self.graphics_queue, &submit_infos, vk::Fence::null())
-                .map_err(|err| Error::VulkanSubmitQueue(err))
+                .map_err(Error::VulkanSubmitQueue)
         }?;
 
         let swapchains = [swapchain.swapchain];
@@ -504,26 +521,15 @@ fn is_extension_supported(
     }
 }
 
-fn create_swapchain_and_image_views(
+fn create_swapchain(
     surface_ext: &khr::Surface,
     swapchain_ext: &khr::Swapchain,
     surface: vk::SurfaceKHR,
-    width: u32,
-    height: u32,
+    extent: vk::Extent2D,
     old_swapchain: Option<vk::SwapchainKHR>,
     physical_device: vk::PhysicalDevice,
-    device: &Device,
-    graphics_family_index: u32,
-    surface_family_index: u32,
-) -> Result<
-    (
-        vk::SwapchainKHR,
-        Vec<vk::ImageView>,
-        vk::Format,
-        vk::Extent2D,
-    ),
-    Error,
-> {
+    queue_family_indices: &[u32],
+) -> Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D), Error> {
     let present_mode = vk::PresentModeKHR::FIFO;
     let min_image_count = 2;
 
@@ -531,7 +537,7 @@ fn create_swapchain_and_image_views(
         let surface_formats = unsafe {
             surface_ext
                 .get_physical_device_surface_formats(physical_device, surface)
-                .map_err(|err| Error::VulkanPhysicalDeviceSurfaceQuery(err))
+                .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
         }?;
         let format = if let Some(format) = surface_formats.iter().find(|format| {
             format.format == vk::Format::B8G8R8A8_SRGB
@@ -548,7 +554,7 @@ fn create_swapchain_and_image_views(
         let surface_capabilities = unsafe {
             surface_ext
                 .get_physical_device_surface_capabilities(physical_device, surface)
-                .map_err(|err| Error::VulkanPhysicalDeviceSurfaceQuery(err))
+                .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
         }?;
         let unset_extent = vk::Extent2D {
             width: u32::MAX,
@@ -557,7 +563,7 @@ fn create_swapchain_and_image_views(
         let image_extent = if surface_capabilities.current_extent != unset_extent {
             surface_capabilities.current_extent
         } else {
-            vk::Extent2D { width, height }
+            extent
         };
         Ok(image_extent)
     };
@@ -575,8 +581,13 @@ fn create_swapchain_and_image_views(
         clipped: vk::TRUE,
         ..Default::default()
     };
-    let queue_family_indices = &[graphics_family_index, surface_family_index];
-    if graphics_family_index != surface_family_index {
+    if queue_family_indices.windows(2).any(|indices| {
+        if let [a, b] = *indices {
+            a != b
+        } else {
+            unreachable!()
+        }
+    }) {
         swapchain_create_info.image_sharing_mode = vk::SharingMode::CONCURRENT;
         swapchain_create_info.queue_family_index_count = queue_family_indices.len() as u32;
         swapchain_create_info.p_queue_family_indices = queue_family_indices.as_ptr();
@@ -591,38 +602,9 @@ fn create_swapchain_and_image_views(
     // found a good way to avoid it.
     swapchain_create_info.image_extent = get_image_extent()?;
     let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }
-        .map_err(|err| Error::VulkanSwapchainCreation(err))?;
+        .map_err(Error::VulkanSwapchainCreation)?;
 
-    let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }
-        .map_err(|err| Error::VulkanGetSwapchainImages(err))?;
-    let swapchain_image_views = swapchain_images
-        .into_iter()
-        .map(|image| {
-            let subresource_range = vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            };
-            let image_view_create_info = vk::ImageViewCreateInfo {
-                image,
-                view_type: vk::ImageViewType::TYPE_2D,
-                format: image_format,
-                subresource_range,
-                ..Default::default()
-            };
-            unsafe { device.create_image_view(&image_view_create_info, None) }
-                .map_err(|err| Error::VulkanSwapchainImageViewCreation(err))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok((
-        swapchain,
-        swapchain_image_views,
-        image_format,
-        swapchain_create_info.image_extent,
-    ))
+    Ok((swapchain, image_format, swapchain_create_info.image_extent))
 }
 
 fn create_pipelines(
@@ -638,12 +620,12 @@ fn create_pipelines(
     let vert_shader_module = unsafe {
         device
             .create_shader_module(&vert_shader_module_create_info, None)
-            .map_err(|err| Error::VulkanShaderModuleCreation(err))
+            .map_err(Error::VulkanShaderModuleCreation)
     }?;
     let frag_shader_module = unsafe {
         device
             .create_shader_module(&frag_shader_module_create_info, None)
-            .map_err(|err| Error::VulkanShaderModuleCreation(err))
+            .map_err(Error::VulkanShaderModuleCreation)
     }?;
     let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)
@@ -663,7 +645,7 @@ fn create_pipelines(
         let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default();
 
         unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
-            .map_err(|err| Error::VulkanPipelineLayoutCreation(err))?
+            .map_err(Error::VulkanPipelineLayoutCreation)?
     };
 
     let surface_pipeline_render_pass = {
@@ -701,7 +683,7 @@ fn create_pipelines(
             .subpasses(&subpasses)
             .dependencies(&dependencies);
         unsafe { device.create_render_pass(&render_pass_create_info, None) }
-            .map_err(|err| Error::VulkanRenderPassCreation(err))?
+            .map_err(Error::VulkanRenderPassCreation)?
     };
 
     let surface_pipeline = {
