@@ -29,9 +29,9 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     let (width, height) = window.vulkan_drawable_size();
 
-    let foundation = neonvk::Foundation::new(&window)?;
-    let renderer = neonvk::Renderer::new(&foundation, None)?;
-    let mut canvas = neonvk::Canvas::new(&renderer, None, width, height)?;
+    let driver = neonvk::Driver::new(&window)?;
+    let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
+    let mut canvas = neonvk::Canvas::new(&gpu, None, width, height)?;
 
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
@@ -39,7 +39,7 @@ fn main() -> anyhow::Result<()> {
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut size_changed = false;
     'running: loop {
-        renderer.wait_frame();
+        gpu.wait_frame();
 
         for event in event_pump.poll_iter() {
             match event {
@@ -59,15 +59,15 @@ fn main() -> anyhow::Result<()> {
         }
 
         if size_changed {
-            renderer.wait_idle()?;
+            gpu.wait_idle()?;
             drop(canvas);
             let (width, height) = window.vulkan_drawable_size();
             // TODO: Fix passing in old_canvas (required to support exclusive fullscreen)
-            canvas = neonvk::Canvas::new(&renderer, None, width, height)?;
+            canvas = neonvk::Canvas::new(&gpu, None, width, height)?;
             size_changed = false;
         }
 
-        match renderer.render_frame(&canvas) {
+        match gpu.render_frame(&canvas) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
@@ -95,7 +95,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    renderer.wait_idle()?;
+    gpu.wait_idle()?;
 
     Ok(())
 }

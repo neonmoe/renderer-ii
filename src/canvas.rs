@@ -1,9 +1,17 @@
-use crate::{Error, Renderer};
+use crate::{Error, Gpu};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
 use ash::{vk, Device};
 
+/// The shorter-lived half of the rendering pair, along with [Gpu].
+///
+/// This struct has the concrete rendering objects, like the render
+/// passes, framebuffers, command buffers and so on.
 pub struct Canvas<'a> {
+    /// Held by [Canvas] to ensure that the swapchain and command
+    /// buffers are dropped before the device.
+    pub gpu: &'a Gpu<'a>,
+
     pub(crate) swapchain: vk::SwapchainKHR,
     pub(crate) swapchain_image_views: Vec<vk::ImageView>,
     pub(crate) swapchain_framebuffers: Vec<vk::Framebuffer>,
@@ -11,13 +19,12 @@ pub struct Canvas<'a> {
     pub(crate) surface_pipeline: vk::Pipeline,
     pub(crate) command_buffers: Vec<vk::CommandBuffer>,
 
-    renderer: &'a Renderer<'a>,
     surface_pipeline_layout: vk::PipelineLayout,
 }
 
 impl Drop for Canvas<'_> {
     fn drop(&mut self) {
-        let device = &self.renderer.device;
+        let device = &self.gpu.device;
 
         for framebuffer in &self.swapchain_framebuffers {
             unsafe { device.destroy_framebuffer(*framebuffer, None) };
@@ -27,7 +34,7 @@ impl Drop for Canvas<'_> {
             device.destroy_pipeline(self.surface_pipeline, None);
             device.destroy_pipeline_layout(self.surface_pipeline_layout, None);
             device.destroy_render_pass(self.surface_pipeline_render_pass, None);
-            device.free_command_buffers(self.renderer.command_pool, &self.command_buffers);
+            device.free_command_buffers(self.gpu.command_pool, &self.command_buffers);
         };
 
         for image_view in &self.swapchain_image_views {
@@ -35,7 +42,7 @@ impl Drop for Canvas<'_> {
         }
 
         unsafe {
-            self.renderer
+            self.gpu
                 .swapchain_ext
                 .destroy_swapchain(self.swapchain, None)
         };
@@ -44,24 +51,21 @@ impl Drop for Canvas<'_> {
 
 impl Canvas<'_> {
     pub fn new<'a>(
-        renderer: &'a Renderer,
+        gpu: &'a Gpu,
         old_canvas: Option<Canvas>,
         width: u32,
         height: u32,
     ) -> Result<Canvas<'a>, Error> {
-        let device = &renderer.device;
-        let swapchain_ext = &renderer.swapchain_ext;
-        let queue_family_indices = [
-            renderer.graphics_family_index,
-            renderer.surface_family_index,
-        ];
+        let device = &gpu.device;
+        let swapchain_ext = &gpu.swapchain_ext;
+        let queue_family_indices = [gpu.graphics_family_index, gpu.surface_family_index];
         let (swapchain, swapchain_format, final_extent) = create_swapchain(
-            &renderer.surface_ext,
+            &gpu.surface_ext,
             &swapchain_ext,
-            renderer.foundation.surface,
+            gpu.driver.surface,
             vk::Extent2D { width, height },
             old_canvas.map(|r| r.swapchain),
-            renderer.physical_device,
+            gpu.physical_device,
             &queue_family_indices,
         )?;
         // The width and height may change from the ones passed in,
@@ -111,7 +115,7 @@ impl Canvas<'_> {
             .collect::<Result<Vec<_>, _>>()?;
 
         let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(renderer.command_pool)
+            .command_pool(gpu.command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(swapchain_framebuffers.len() as u32);
         let command_buffers = unsafe {
@@ -155,14 +159,14 @@ impl Canvas<'_> {
         }
 
         Ok(Canvas {
-            renderer,
+            gpu,
             swapchain,
             swapchain_image_views,
             swapchain_framebuffers,
-            surface_pipeline_layout,
             surface_pipeline_render_pass,
             surface_pipeline,
             command_buffers,
+            surface_pipeline_layout,
         })
     }
 }

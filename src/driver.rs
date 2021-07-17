@@ -1,6 +1,3 @@
-//! A Vulkan renderer for 3D games. The mission statement will
-//! probably narrow down over time.
-
 use crate::{debug_utils, Error};
 use ash::extensions::khr;
 use ash::version::{EntryV1_0, InstanceV1_0};
@@ -9,9 +6,12 @@ use raw_window_handle::HasRawWindowHandle;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
-/// Holds the Vulkan functions, instance and surface. Should only be
-/// created once, after window creation.
-pub struct Foundation {
+/// Holds the Vulkan functions, instance and surface, acting as the
+/// basis for everything else rendering.
+///
+/// The name comes from the struct being the way to access the
+/// graphics driver.
+pub struct Driver {
     pub entry: Entry,
     pub instance: Instance,
     pub surface: vk::SurfaceKHR,
@@ -20,7 +20,7 @@ pub struct Foundation {
     surface_ext: khr::Surface,
 }
 
-impl Drop for Foundation {
+impl Drop for Driver {
     fn drop(&mut self) {
         if let Some(debug_utils_messenger) = self.debug_utils_messenger.take() {
             debug_utils::destroy_debug_utils_messenger(
@@ -34,8 +34,8 @@ impl Drop for Foundation {
     }
 }
 
-impl Foundation {
-    pub fn new(window: &dyn HasRawWindowHandle) -> Result<Foundation, Error> {
+impl Driver {
+    pub fn new(window: &dyn HasRawWindowHandle) -> Result<Driver, Error> {
         let entry = unsafe { Entry::new().unwrap() };
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))
@@ -73,7 +73,7 @@ impl Foundation {
 
         let surface_ext = khr::Surface::new(&entry, &instance);
 
-        Ok(Foundation {
+        Ok(Driver {
             entry,
             instance,
             surface,

@@ -16,11 +16,11 @@ mod debug_utils;
 mod error;
 pub use error::Error;
 
-mod foundation;
-pub use foundation::Foundation;
+mod driver;
+pub use driver::Driver;
 
-mod renderer;
-pub use renderer::Renderer;
+mod gpu;
+pub use gpu::{Gpu, GpuId, GpuInfo};
 
 mod canvas;
 pub use canvas::Canvas;
