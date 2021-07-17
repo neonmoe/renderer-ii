@@ -17,6 +17,7 @@ pub struct Foundation {
     pub surface: vk::SurfaceKHR,
     pub debug_utils_available: bool,
     debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
+    surface_ext: khr::Surface,
 }
 
 impl Drop for Foundation {
@@ -28,12 +29,7 @@ impl Drop for Foundation {
                 debug_utils_messenger,
             );
         }
-
-        let surface_ext = khr::Surface::new(&self.entry, &self.instance);
-        // TODO: Can use allocator
-        unsafe { surface_ext.destroy_surface(self.surface, None) };
-
-        // TODO: Can use allocator
+        unsafe { self.surface_ext.destroy_surface(self.surface, None) };
         unsafe { self.instance.destroy_instance(None) };
     }
 }
@@ -61,26 +57,11 @@ impl Foundation {
             extensions.push(cstr!("VK_EXT_debug_utils").as_ptr());
         }
 
-        if log::log_enabled!(log::Level::Debug) {
-            let cstr_to_str =
-                |str_ptr: &*const c_char| unsafe { CStr::from_ptr(*str_ptr) }.to_string_lossy();
-            log::debug!(
-                "Requested instance extensions: {:?}",
-                extensions.iter().map(cstr_to_str).collect::<Vec<_>>()
-            );
-            log::debug!(
-                "Requested instance layers: {:?}",
-                layers.iter().map(cstr_to_str).collect::<Vec<_>>()
-            );
-        }
-
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
             .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions);
-        // TODO: Can use allocator
         let instance = unsafe { entry.create_instance(&create_info, None) }?;
-        // TODO: Can use allocator
         let surface = unsafe { ash_window::create_surface(&entry, &instance, window, None) }
             .map_err(|err| Error::VulkanSurfaceCreation(err))?;
 
@@ -90,12 +71,15 @@ impl Foundation {
             None
         };
 
+        let surface_ext = khr::Surface::new(&entry, &instance);
+
         Ok(Foundation {
             entry,
             instance,
             surface,
             debug_utils_available,
             debug_utils_messenger,
+            surface_ext,
         })
     }
 }

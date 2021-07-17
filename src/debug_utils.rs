@@ -14,7 +14,6 @@ pub(crate) fn create_debug_utils_messenger(
         pfn_user_callback: Some(debug_utils_messenger_callback),
         ..Default::default()
     };
-    // TODO: Can use allocator
     unsafe { debug_utils.create_debug_utils_messenger(&create_info, None) }
 }
 
@@ -24,7 +23,6 @@ pub(crate) fn destroy_debug_utils_messenger(
     debug_utils_messenger: vk::DebugUtilsMessengerEXT,
 ) {
     let debug_utils = DebugUtils::new(entry, instance);
-    // TODO: Can use allocator
     unsafe { debug_utils.destroy_debug_utils_messenger(debug_utils_messenger, None) }
 }
 
