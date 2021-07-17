@@ -20,4 +20,7 @@ mod foundation;
 pub use foundation::Foundation;
 
 mod renderer;
-pub use renderer::{Renderer, Swapchain};
+pub use renderer::Renderer;
+
+mod canvas;
+pub use canvas::Canvas;

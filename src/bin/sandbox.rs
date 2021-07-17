@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
 
     let foundation = neonvk::Foundation::new(&window)?;
     let renderer = neonvk::Renderer::new(&foundation, None)?;
-    let mut swapchain = neonvk::Swapchain::new(&renderer, None, width, height)?;
+    let mut canvas = neonvk::Canvas::new(&renderer, None, width, height)?;
 
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
@@ -60,14 +60,14 @@ fn main() -> anyhow::Result<()> {
 
         if size_changed {
             renderer.wait_idle()?;
-            drop(swapchain);
+            drop(canvas);
             let (width, height) = window.vulkan_drawable_size();
-            // TODO: Fix passing in oldSwapchain (required to support exclusive fullscreen)
-            swapchain = neonvk::Swapchain::new(&renderer, None, width, height)?;
+            // TODO: Fix passing in old_canvas (required to support exclusive fullscreen)
+            canvas = neonvk::Canvas::new(&renderer, None, width, height)?;
             size_changed = false;
         }
 
-        match renderer.render_frame(&swapchain) {
+        match renderer.render_frame(&canvas) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
