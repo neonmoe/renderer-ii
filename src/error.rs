@@ -53,4 +53,6 @@ pub enum Error {
     VulkanSwapchainOutOfDate(#[source] vk::Result),
     #[error("could not wait until the device is idle")]
     VulkanDeviceWaitIdle(#[source] vk::Result),
+    #[error("vma (via vk-mem-rs) allocator creation failed")]
+    VmaAllocatorCreation(#[source] vk_mem::error::Error),
 }

@@ -11,6 +11,8 @@ ash = { version = "^0.32.0" }
 ash-window = { version = "^0.6.0" }
 raw-window-handle = { version = "^0.3.0" }
 shaders = { path = "shaders" }
+vk-mem = { version = "^0.2.0" }
+ultraviolet = { version = "^0.8.0" }
 
 # TODO: Move anyhow and sdl2 to dev deps
 # Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.

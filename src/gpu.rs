@@ -3,7 +3,9 @@ use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
 use ash::{vk, Device, Instance};
+use std::cell::Cell;
 use std::ffi::CStr;
+use vk_mem::{Allocator, AllocatorCreateFlags, AllocatorCreateInfo};
 
 /// A unique id for every distinct GPU.
 pub struct GpuId([u8; 16]);
@@ -38,10 +40,16 @@ pub struct Gpu<'a> {
     surface_queue: vk::Queue,
     acquired_image_sp: vk::Semaphore,
     finished_command_buffers_sp: vk::Semaphore,
+    allocator: Allocator,
+    frame_index: Cell<u32>,
 }
 
 impl Drop for Gpu<'_> {
     fn drop(&mut self) {
+        let _ = self.wait_idle();
+
+        self.allocator.destroy();
+
         unsafe {
             self.device.destroy_semaphore(self.acquired_image_sp, None);
             self.device
@@ -49,9 +57,6 @@ impl Drop for Gpu<'_> {
         }
 
         unsafe { self.device.destroy_command_pool(self.command_pool, None) };
-
-        let _ = unsafe { self.device.queue_wait_idle(self.graphics_queue) };
-        let _ = unsafe { self.device.queue_wait_idle(self.surface_queue) };
 
         unsafe { self.device.destroy_device(None) };
     }
@@ -219,6 +224,7 @@ impl Gpu<'_> {
                 .create_device(physical_device, &device_create_info, None)
                 .map_err(Error::VulkanDeviceCreation)
         }?;
+        let swapchain_ext = khr::Swapchain::new(&driver.instance, &device);
 
         let graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
         let surface_queue;
@@ -265,7 +271,17 @@ impl Gpu<'_> {
                 .map_err(Error::VulkanSemaphoreCreation)
         }?;
 
-        let swapchain_ext = khr::Swapchain::new(&driver.instance, &device);
+        let allocator_create_info = AllocatorCreateInfo {
+            physical_device,
+            device: device.clone(),
+            instance: driver.instance.clone(),
+            flags: AllocatorCreateFlags::EXTERNALLY_SYNCHRONIZED,
+            preferred_large_heap_block_size: 128 * 1024 * 1024,
+            frame_in_use_count: 1,
+            heap_size_limits: None,
+        };
+        let allocator =
+            Allocator::new(&allocator_create_info).map_err(Error::VmaAllocatorCreation)?;
 
         Ok((
             Gpu {
@@ -281,6 +297,8 @@ impl Gpu<'_> {
                 surface_queue,
                 acquired_image_sp,
                 finished_command_buffers_sp,
+                allocator,
+                frame_index: Cell::new(0),
             },
             physical_devices,
         ))
@@ -313,6 +331,13 @@ impl Gpu<'_> {
     /// future. Use [Gpu::wait_frame] to block until that
     /// happens.
     pub fn render_frame(&self, canvas: &Canvas) -> Result<(), Error> {
+        // NOTE: This will cause self.allocator to mis-diagnose lost
+        // allocations once per ~828 days (assuming 60 fps) and cause
+        // the slowest memory leak ever.
+        let frame_index = self.frame_index.get().wrapping_add(1);
+        self.frame_index.set(frame_index);
+        let _ = self.allocator.set_current_frame_index(frame_index);
+
         let (image_index, _) = unsafe {
             self.swapchain_ext
                 .acquire_next_image(
