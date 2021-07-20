@@ -39,8 +39,6 @@ fn main() -> anyhow::Result<()> {
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut size_changed = false;
     'running: loop {
-        gpu.wait_frame();
-
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -67,6 +65,7 @@ fn main() -> anyhow::Result<()> {
             size_changed = false;
         }
 
+        gpu.wait_frame()?;
         match gpu.render_frame(&canvas) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}

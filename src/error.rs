@@ -53,6 +53,12 @@ pub enum Error {
     VulkanSwapchainOutOfDate(#[source] vk::Result),
     #[error("could not wait until the device is idle")]
     VulkanDeviceWaitIdle(#[source] vk::Result),
+    #[error("could not create the fence")]
+    VulkanFenceCreation(#[source] vk::Result),
+    #[error("could not reset the fence")]
+    VulkanFenceReset(#[source] vk::Result),
+    #[error("could not wait for the fence")]
+    VulkanFenceWait(#[source] vk::Result),
     #[error("vma (via vk-mem-rs) allocator creation failed")]
     VmaAllocatorCreation(#[source] vk_mem::error::Error),
 }

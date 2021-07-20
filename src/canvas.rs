@@ -319,14 +319,21 @@ fn create_pipelines(
             .color_attachments(&attachment_references); // NOTE: resolve_attachments for multisampling?
         let subpasses = [surface_subpass.build()];
 
-        let subpass_dependency = vk::SubpassDependency::builder()
-            .dst_subpass(0) // The subpass at index 0 (surface_subpass) should wait before
-            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE) // writing to the color attachment
-            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT) // during the color output stage.
-            .src_subpass(vk::SUBPASS_EXTERNAL) // Because whatever came before
-            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT) // might still be in the color output stage.
+        // NOTE: This subpass dependency ensures that the layout of
+        // the swapchain image is set up properly for rendering to
+        // it. The spec says it should be inserted by the
+        // implementation if not provided by the application, but
+        // Android seems to be buggy in this regard. Source:
+        //
+        // https://www.reddit.com/r/vulkan/comments/701qqz/vk_subpass_external_presentation_question/dmzovoh/
+        let color_attachment_write_dependency = vk::SubpassDependency::builder()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_subpass(0)
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
             .build();
-        let dependencies = [subpass_dependency];
+        let dependencies = [color_attachment_write_dependency];
 
         let render_pass_create_info = vk::RenderPassCreateInfo::builder()
             .attachments(&attachments)

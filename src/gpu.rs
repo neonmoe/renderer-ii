@@ -38,10 +38,16 @@ pub struct Gpu<'a> {
 
     graphics_queue: vk::Queue,
     surface_queue: vk::Queue,
-    acquired_image_sp: vk::Semaphore,
-    finished_command_buffers_sp: vk::Semaphore,
     allocator: Allocator,
     frame_index: Cell<u32>,
+    frame_sync_objects_vec: Vec<FrameSyncObjects>,
+}
+
+#[derive(Clone, Copy)]
+struct FrameSyncObjects {
+    acquired_image_sp: vk::Semaphore,
+    finished_command_buffers_sp: vk::Semaphore,
+    finished_queue_fence: vk::Fence,
 }
 
 impl Drop for Gpu<'_> {
@@ -50,10 +56,19 @@ impl Drop for Gpu<'_> {
 
         self.allocator.destroy();
 
-        unsafe {
-            self.device.destroy_semaphore(self.acquired_image_sp, None);
-            self.device
-                .destroy_semaphore(self.finished_command_buffers_sp, None);
+        for frame_sync_objects in &self.frame_sync_objects_vec {
+            let FrameSyncObjects {
+                acquired_image_sp,
+                finished_command_buffers_sp,
+                finished_queue_fence,
+            } = *frame_sync_objects;
+
+            unsafe {
+                self.device.destroy_semaphore(acquired_image_sp, None);
+                self.device
+                    .destroy_semaphore(finished_command_buffers_sp, None);
+                self.device.destroy_fence(finished_queue_fence, None);
+            }
         }
 
         unsafe { self.device.destroy_command_pool(self.command_pool, None) };
@@ -260,17 +275,6 @@ impl Gpu<'_> {
         let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
             .map_err(Error::VulkanCommandPoolCreation)?;
 
-        let acquired_image_sp = unsafe {
-            device
-                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                .map_err(Error::VulkanSemaphoreCreation)
-        }?;
-        let finished_command_buffers_sp = unsafe {
-            device
-                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                .map_err(Error::VulkanSemaphoreCreation)
-        }?;
-
         let allocator_create_info = AllocatorCreateInfo {
             physical_device,
             device: device.clone(),
@@ -282,6 +286,34 @@ impl Gpu<'_> {
         };
         let allocator =
             Allocator::new(&allocator_create_info).map_err(Error::VmaAllocatorCreation)?;
+
+        let frame_sync_objects_vec = (0..2)
+            .map(|_| {
+                let acquired_image_sp = unsafe {
+                    device
+                        .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                        .map_err(Error::VulkanSemaphoreCreation)
+                }?;
+                let finished_command_buffers_sp = unsafe {
+                    device
+                        .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                        .map_err(Error::VulkanSemaphoreCreation)
+                }?;
+                let finished_queue_fence = unsafe {
+                    device
+                        .create_fence(
+                            &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
+                            None,
+                        )
+                        .map_err(Error::VulkanFenceCreation)
+                }?;
+                Ok(FrameSyncObjects {
+                    acquired_image_sp,
+                    finished_command_buffers_sp,
+                    finished_queue_fence,
+                })
+            })
+            .collect::<Result<Vec<FrameSyncObjects>, Error>>()?;
 
         Ok((
             Gpu {
@@ -295,10 +327,9 @@ impl Gpu<'_> {
                 command_pool,
                 graphics_queue,
                 surface_queue,
-                acquired_image_sp,
-                finished_command_buffers_sp,
                 allocator,
                 frame_index: Cell::new(0),
+                frame_sync_objects_vec,
             },
             physical_devices,
         ))
@@ -310,19 +341,17 @@ impl Gpu<'_> {
         unsafe { self.device.device_wait_idle() }.map_err(Error::VulkanDeviceWaitIdle)
     }
 
-    /// Wait until the latest rendered frame is on screen.
-    ///
-    /// This will eventually be changed to just wait until we can
-    /// start rendering the next frame, not necessarily until the
-    /// previous one has been presented.
-    pub fn wait_frame(&self) {
-        // NOTE: Not using fences to sync for simplicity and ease of
-        // thinking about the game loop: after render_frame is done,
-        // the frame is on the screen, full stop. Fences should be
-        // easy enough to add in later.
-        let device = &self.device;
-        let _ = unsafe { device.queue_wait_idle(self.graphics_queue) };
-        let _ = unsafe { device.queue_wait_idle(self.surface_queue) };
+    /// Wait until the next frame can start rendering.
+    pub fn wait_frame(&self) -> Result<(), Error> {
+        let frame_index = self.frame_index.get().wrapping_add(1);
+        let next_sync_objects =
+            self.frame_sync_objects_vec[frame_index as usize % self.frame_sync_objects_vec.len()];
+        unsafe {
+            self.device
+                .wait_for_fences(&[next_sync_objects.finished_queue_fence], true, u64::MAX)
+                .map_err(Error::VulkanFenceWait)
+        }?;
+        Ok(())
     }
 
     /// Queue up all the rendering commands.
@@ -338,21 +367,30 @@ impl Gpu<'_> {
         self.frame_index.set(frame_index);
         let _ = self.allocator.set_current_frame_index(frame_index);
 
+        let FrameSyncObjects {
+            acquired_image_sp,
+            finished_command_buffers_sp,
+            finished_queue_fence,
+        } = self.frame_sync_objects_vec[frame_index as usize % self.frame_sync_objects_vec.len()];
+
         let (image_index, _) = unsafe {
             self.swapchain_ext
                 .acquire_next_image(
                     canvas.swapchain,
                     u64::MAX,
-                    self.acquired_image_sp,
+                    acquired_image_sp,
                     vk::Fence::null(),
                 )
                 .map_err(Error::VulkanAcquireImage)
         }?;
 
+        unsafe { self.device.reset_fences(&[finished_queue_fence]) }
+            .map_err(Error::VulkanFenceReset)?;
+
         // TODO: Re-record command buffer if out-of-date
 
-        let wait_semaphores = [self.acquired_image_sp];
-        let signal_semaphores = [self.finished_command_buffers_sp];
+        let wait_semaphores = [acquired_image_sp];
+        let signal_semaphores = [finished_command_buffers_sp];
         let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let command_buffers = [canvas.command_buffers[image_index as usize]];
         let submit_infos = [vk::SubmitInfo::builder()
@@ -363,7 +401,7 @@ impl Gpu<'_> {
             .build()];
         unsafe {
             self.device
-                .queue_submit(self.graphics_queue, &submit_infos, vk::Fence::null())
+                .queue_submit(self.graphics_queue, &submit_infos, finished_queue_fence)
                 .map_err(Error::VulkanSubmitQueue)
         }?;
 
