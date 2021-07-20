@@ -1,3 +1,10 @@
+// TODO: Restructure Canvas
+// The first pass was, as expected, not backed by good understanding.
+// The current plan/understanding of Vulkan is:
+// - Very few render passes. These basically just specify attachments and map to "one rendered image".
+//   - Shadows will need their own render pass (or at least a subpass?).
+// - Possibly many pipelines. These specify shaders and map to "materials".
+
 use crate::{Error, Gpu};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
@@ -52,7 +59,7 @@ impl Drop for Canvas<'_> {
 impl Canvas<'_> {
     pub fn new<'a>(
         gpu: &'a Gpu,
-        old_canvas: Option<Canvas>,
+        old_canvas: Option<&Canvas>,
         width: u32,
         height: u32,
     ) -> Result<Canvas<'a>, Error> {

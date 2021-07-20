@@ -58,10 +58,8 @@ fn main() -> anyhow::Result<()> {
 
         if size_changed {
             gpu.wait_idle()?;
-            drop(canvas);
             let (width, height) = window.vulkan_drawable_size();
-            // TODO: Fix passing in old_canvas (required to support exclusive fullscreen)
-            canvas = neonvk::Canvas::new(&gpu, None, width, height)?;
+            canvas = neonvk::Canvas::new(&gpu, Some(&canvas), width, height)?;
             size_changed = false;
         }
 
