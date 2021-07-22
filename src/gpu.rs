@@ -1,49 +1,12 @@
-use crate::{Canvas, Driver, Error};
+use crate::material::{PipelineParameters, PIPELINE_PARAMETERS};
+use crate::{Canvas, Driver, Error, Mesh};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
 use ash::{vk, Device, Instance};
 use std::cell::Cell;
 use std::ffi::CStr;
-use std::mem;
-use ultraviolet::Vec3;
 use vk_mem::{Allocator, AllocatorCreateFlags, AllocatorCreateInfo};
-
-struct Material {
-    vertex_shader: &'static [u32],
-    fragment_shader: &'static [u32],
-    bindings: &'static [vk::VertexInputBindingDescription],
-    attributes: &'static [vk::VertexInputAttributeDescription],
-}
-
-enum MaterialIndex {
-    PlainVertexColor,
-    Length,
-}
-
-static MATERIALS: [Material; MaterialIndex::Length as usize] = [Material {
-    vertex_shader: shaders::include_spirv!("shaders/plain_color.vert"),
-    fragment_shader: shaders::include_spirv!("shaders/plain_color.frag"),
-    bindings: &[vk::VertexInputBindingDescription {
-        binding: 0,
-        stride: mem::size_of::<[Vec3; 2]>() as u32,
-        input_rate: vk::VertexInputRate::VERTEX,
-    }],
-    attributes: &[
-        vk::VertexInputAttributeDescription {
-            binding: 0,
-            location: 0,
-            format: vk::Format::R32G32B32_SFLOAT,
-            offset: 0,
-        },
-        vk::VertexInputAttributeDescription {
-            binding: 0,
-            location: 1,
-            format: vk::Format::R32G32B32_SFLOAT,
-            offset: mem::size_of::<[Vec3; 1]>() as u32,
-        },
-    ],
-}];
 
 /// A unique id for every distinct GPU.
 pub struct GpuId([u8; 16]);
@@ -70,22 +33,18 @@ pub struct Gpu<'a> {
     pub(crate) swapchain_ext: khr::Swapchain,
     pub(crate) physical_device: vk::PhysicalDevice,
     pub(crate) device: Device,
+    pub(crate) allocator: Allocator,
     pub(crate) graphics_family_index: u32,
     pub(crate) surface_family_index: u32,
-    pub(crate) command_pool: vk::CommandPool,
-
     graphics_queue: vk::Queue,
     surface_queue: vk::Queue,
-    allocator: Allocator,
     frame_index: Cell<u32>,
     frame_sync_objects_vec: Vec<FrameSyncObjects>,
-
     pub(crate) final_render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
     pipelines: Vec<vk::Pipeline>,
+    command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
-
-    buffers: Vec<(vk::Buffer, vk_mem::Allocation)>,
 }
 
 #[derive(Clone, Copy)]
@@ -98,10 +57,6 @@ struct FrameSyncObjects {
 impl Drop for Gpu<'_> {
     fn drop(&mut self) {
         let _ = self.wait_idle();
-
-        for &(buffer, allocation) in &self.buffers {
-            let _ = self.allocator.destroy_buffer(buffer, &allocation);
-        }
 
         for &pipeline in &self.pipelines {
             unsafe { self.device.destroy_pipeline(pipeline, None) };
@@ -378,7 +333,12 @@ impl Gpu<'_> {
             unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
                 .map_err(Error::VulkanPipelineLayoutCreation)?
         };
-        let pipelines = create_pipelines(&device, pipeline_layout, final_render_pass, &MATERIALS)?;
+        let pipelines = create_pipelines(
+            &device,
+            pipeline_layout,
+            final_render_pass,
+            &PIPELINE_PARAMETERS,
+        )?;
 
         let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(graphics_family_index)
@@ -399,36 +359,6 @@ impl Gpu<'_> {
                 .map_err(Error::VulkanCommandBuffersAllocation)
         }?;
 
-        // Setup testing meshes
-        let triangle_vertices: [[Vec3; 2]; 3] = [
-            [Vec3::new(0.0, -0.5, 0.0), Vec3::new(1.0, 0.0, 0.0)],
-            [Vec3::new(0.5, 0.5, 0.0), Vec3::new(0.0, 1.0, 0.0)],
-            [Vec3::new(-0.5, 0.5, 0.0), Vec3::new(0.0, 0.0, 1.0)],
-        ];
-        let buffer_using_families = [graphics_family_index];
-        let triangle_create_info = vk::BufferCreateInfo::builder()
-            .size((triangle_vertices.len() * mem::size_of::<[Vec3; 2]>()) as u64)
-            .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .queue_family_indices(&buffer_using_families);
-        let allocation_create_info = vk_mem::AllocationCreateInfo {
-            usage: vk_mem::MemoryUsage::CpuToGpu,
-            flags: vk_mem::AllocationCreateFlags::MAPPED,
-            required_flags: vk::MemoryPropertyFlags::HOST_COHERENT,
-            ..Default::default()
-        };
-        let (triangle_buffer, triangle_allocation, alloc_info) = allocator
-            .create_buffer(&triangle_create_info, &allocation_create_info)
-            .map_err(Error::VmaBufferAllocation)?;
-        let buffer_ptr = alloc_info.get_mapped_data();
-        fn copy_raw<T>(data: &[T], pointer: *mut u8) {
-            let length = data.len() * mem::size_of::<T>();
-            let data_ptr = unsafe { mem::transmute::<*const T, *const u8>(data.as_ptr()) };
-            unsafe { std::ptr::copy_nonoverlapping(data_ptr, pointer, length) };
-        }
-        copy_raw(&triangle_vertices, buffer_ptr);
-        let buffers = vec![(triangle_buffer, triangle_allocation)];
-
         Ok((
             Gpu {
                 driver,
@@ -448,7 +378,6 @@ impl Gpu<'_> {
                 pipelines,
                 command_buffers,
                 pipeline_layout,
-                buffers,
             },
             physical_devices,
         ))
@@ -478,7 +407,7 @@ impl Gpu<'_> {
     /// The rendered frame will appear on the screen some time in the
     /// future. Use [Gpu::wait_frame] to block until that
     /// happens.
-    pub fn render_frame(&self, canvas: &Canvas) -> Result<(), Error> {
+    pub fn render_frame(&self, canvas: &Canvas, meshes: &[Mesh]) -> Result<(), Error> {
         // NOTE: This will cause self.allocator to mis-diagnose lost
         // allocations once per ~828 days (assuming 60 fps) and cause
         // the slowest memory leak ever.
@@ -508,7 +437,7 @@ impl Gpu<'_> {
 
         let command_buffer = self.command_buffers[image_index as usize];
         let framebuffer = canvas.swapchain_framebuffers[image_index as usize];
-        self.record_commmand_buffer(command_buffer, framebuffer, canvas.extent)?;
+        self.record_commmand_buffer(command_buffer, framebuffer, canvas.extent, meshes)?;
 
         let wait_semaphores = [acquired_image_sp];
         let signal_semaphores = [finished_command_buffers_sp];
@@ -553,6 +482,7 @@ impl Gpu<'_> {
         command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
         extent: vk::Extent2D,
+        meshes: &[Mesh],
     ) -> Result<(), Error> {
         let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {
@@ -577,15 +507,17 @@ impl Gpu<'_> {
                 &render_pass_begin_info,
                 vk::SubpassContents::INLINE,
             );
-            let index = MaterialIndex::PlainVertexColor as usize;
-            self.device.cmd_bind_pipeline(
-                command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipelines[index],
-            );
-            self.device
-                .cmd_bind_vertex_buffers(command_buffer, 0, &[self.buffers[0].0], &[0]);
-            self.device.cmd_draw(command_buffer, 3, 1, 0, 0);
+            for mesh in meshes {
+                let index = mesh.material as usize;
+                self.device.cmd_bind_pipeline(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.pipelines[index],
+                );
+                self.device
+                    .cmd_bind_vertex_buffers(command_buffer, 0, &[mesh.buffer], &[0]);
+                self.device.cmd_draw(command_buffer, mesh.vertices, 1, 0, 0);
+            }
             self.device.cmd_end_render_pass(command_buffer);
         }
 
@@ -660,9 +592,9 @@ fn create_pipelines(
     device: &Device,
     pipeline_layout: vk::PipelineLayout,
     render_pass: vk::RenderPass,
-    materials: &[Material],
+    pipelines_params: &[PipelineParameters],
 ) -> Result<Vec<vk::Pipeline>, Error> {
-    let mut all_shader_modules = Vec::with_capacity(materials.len() * 2);
+    let mut all_shader_modules = Vec::with_capacity(pipelines_params.len() * 2);
     let mut create_shader_module = |spirv: &'static [u32]| -> Result<vk::ShaderModule, Error> {
         let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
         let shader_module = unsafe { device.create_shader_module(&create_info, None) }
@@ -671,7 +603,7 @@ fn create_pipelines(
         Ok(shader_module)
     };
 
-    let shader_stages_per_material = materials
+    let shader_stages_per_material = pipelines_params
         .iter()
         .map(|material| {
             let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
@@ -689,7 +621,7 @@ fn create_pipelines(
         })
         .collect::<Result<Vec<[vk::PipelineShaderStageCreateInfo; 2]>, Error>>()?;
 
-    let vertex_input_per_material = materials
+    let vertex_input_per_material = pipelines_params
         .iter()
         .map(|material| {
             vk::PipelineVertexInputStateCreateInfo::builder()

@@ -2,6 +2,7 @@ use log::LevelFilter;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use std::time::{Duration, Instant};
+use ultraviolet::{Bivec3, Rotor3, Vec3};
 
 use logger::Logger;
 static LOGGER: Logger = Logger;
@@ -33,12 +34,30 @@ fn main() -> anyhow::Result<()> {
     let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
     let mut canvas = neonvk::Canvas::new(&gpu, None, width, height)?;
 
+    let start_time = Instant::now();
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
 
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut size_changed = false;
+    let mut _previous_meshes = vec![];
     'running: loop {
+        let frame_start_seconds = (Instant::now() - start_time).as_secs_f32();
+
+        let rotor = Rotor3::from_angle_plane(frame_start_seconds * 1.0, Bivec3::new(1.0, 0.0, 0.0));
+        let red = Vec3::new(1.0, 0.1, 0.1);
+        let yellow = Vec3::new(0.9, 0.9, 0.1);
+        let pink = Vec3::new(0.9, 0.1, 0.9);
+        let vertices = [
+            [Vec3::new(-0.5, -0.5, 0.0).rotated_by(rotor), red],
+            [Vec3::new(0.5, -0.5, 0.0).rotated_by(rotor), pink],
+            [Vec3::new(-0.5, 0.5, 0.0).rotated_by(rotor), yellow],
+            [Vec3::new(0.5, 0.5, 0.0).rotated_by(rotor), red],
+            [Vec3::new(-0.5, 0.5, 0.0).rotated_by(rotor), yellow],
+            [Vec3::new(0.5, -0.5, 0.0).rotated_by(rotor), pink],
+        ];
+        let meshes = vec![neonvk::Mesh::new(&gpu, &vertices)?];
+
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -63,12 +82,12 @@ fn main() -> anyhow::Result<()> {
             size_changed = false;
         }
 
-        gpu.wait_frame()?;
-        match gpu.render_frame(&canvas) {
+        match gpu.render_frame(&canvas, &meshes) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
         }
+        gpu.wait_frame()?;
 
         frame_instants.push(Instant::now());
         frame_instants.retain(|time| (Instant::now() - *time) < Duration::from_secs(1));
@@ -90,6 +109,8 @@ fn main() -> anyhow::Result<()> {
                 avg_interval.as_secs_f64() * 1000.0
             ));
         }
+
+        _previous_meshes = meshes;
     }
 
     gpu.wait_idle()?;
