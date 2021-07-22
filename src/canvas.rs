@@ -1,14 +1,9 @@
 use crate::{Error, Gpu};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
-use ash::{vk, Device};
+use ash::vk;
 
-struct Material<'a> {
-    vertex_shader: &'a [u32],
-    fragment_shader: &'a [u32],
-    bindings: &'a [vk::VertexInputBindingDescription],
-    attributes: &'a [vk::VertexInputAttributeDescription],
-}
+pub const SWAPCHAIN_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
 
 /// The shorter-lived half of the rendering pair, along with [Gpu].
 ///
@@ -19,14 +14,11 @@ pub struct Canvas<'a> {
     /// buffers are dropped before the device.
     pub gpu: &'a Gpu<'a>,
 
+    pub extent: vk::Extent2D,
+
     pub(crate) swapchain: vk::SwapchainKHR,
     pub(crate) swapchain_image_views: Vec<vk::ImageView>,
     pub(crate) swapchain_framebuffers: Vec<vk::Framebuffer>,
-    pub(crate) final_render_pass: vk::RenderPass,
-    pub(crate) pipelines: Vec<vk::Pipeline>,
-    pub(crate) command_buffers: Vec<vk::CommandBuffer>,
-
-    pipeline_layout: vk::PipelineLayout,
 }
 
 impl Drop for Canvas<'_> {
@@ -36,16 +28,6 @@ impl Drop for Canvas<'_> {
         for &framebuffer in &self.swapchain_framebuffers {
             unsafe { device.destroy_framebuffer(framebuffer, None) };
         }
-
-        for &pipeline in &self.pipelines {
-            unsafe { device.destroy_pipeline(pipeline, None) };
-        }
-
-        unsafe {
-            device.destroy_pipeline_layout(self.pipeline_layout, None);
-            device.destroy_render_pass(self.final_render_pass, None);
-            device.free_command_buffers(self.gpu.command_pool, &self.command_buffers);
-        };
 
         for &image_view in &self.swapchain_image_views {
             unsafe { device.destroy_image_view(image_view, None) };
@@ -60,27 +42,34 @@ impl Drop for Canvas<'_> {
 }
 
 impl Canvas<'_> {
+    /// Creates a new Canvas. Should be recreated when the window size
+    /// changes.
+    ///
+    /// The fallback width and height parameters are used when Vulkan
+    /// can't get the window size, e.g. when creating a new window in
+    /// Wayland (when the window size is specified by the size of the
+    /// initial framebuffer).
     pub fn new<'a>(
         gpu: &'a Gpu,
         old_canvas: Option<&Canvas>,
-        width: u32,
-        height: u32,
+        fallback_width: u32,
+        fallback_height: u32,
     ) -> Result<Canvas<'a>, Error> {
         let device = &gpu.device;
         let swapchain_ext = &gpu.swapchain_ext;
         let queue_family_indices = [gpu.graphics_family_index, gpu.surface_family_index];
-        let (swapchain, swapchain_format, final_extent) = create_swapchain(
+        let (swapchain, swapchain_format, extent) = create_swapchain(
             &gpu.surface_ext,
             &swapchain_ext,
             gpu.driver.surface,
-            vk::Extent2D { width, height },
+            vk::Extent2D {
+                width: fallback_width,
+                height: fallback_height,
+            },
             old_canvas.map(|r| r.swapchain),
             gpu.physical_device,
             &queue_family_indices,
         )?;
-        // The width and height may change from the ones passed in,
-        // because they're queried during swapchain creation.
-        let vk::Extent2D { width, height } = final_extent;
 
         let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }
             .map_err(Error::VulkanGetSwapchainImages)?;
@@ -106,96 +95,27 @@ impl Canvas<'_> {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let final_render_pass = create_render_pass(device, swapchain_format)?;
-        let pipeline_layout = {
-            // TODO: Insert/describe uniforms here?
-            let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default();
-            unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
-                .map_err(Error::VulkanPipelineLayoutCreation)?
-        };
-        let materials = [Material {
-            vertex_shader: shaders::include_spirv!("shaders/triangle.vert"),
-            fragment_shader: shaders::include_spirv!("shaders/triangle.frag"),
-            attributes: &[],
-            bindings: &[],
-        }];
-        let pipelines = create_pipelines(
-            device,
-            width,
-            height,
-            pipeline_layout,
-            final_render_pass,
-            &materials[..],
-        )?;
-
         let swapchain_framebuffers = swapchain_image_views
             .iter()
             .map(|image_view| {
                 let attachments = [*image_view];
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
-                    .render_pass(final_render_pass)
+                    .render_pass(gpu.final_render_pass)
                     .attachments(&attachments)
-                    .width(width)
-                    .height(height)
+                    .width(extent.width)
+                    .height(extent.height)
                     .layers(1);
                 unsafe { device.create_framebuffer(&framebuffer_create_info, None) }
                     .map_err(Error::VulkanFramebufferCreation)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(gpu.command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(swapchain_framebuffers.len() as u32);
-        let command_buffers = unsafe {
-            device
-                .allocate_command_buffers(&command_buffer_allocate_info)
-                .map_err(Error::VulkanCommandBuffersAllocation)
-        }?;
-
-        for (command_buffer, framebuffer) in command_buffers.iter().zip(&swapchain_framebuffers) {
-            let command_buffer = *command_buffer;
-            let framebuffer = *framebuffer;
-
-            let begin_info = vk::CommandBufferBeginInfo::default();
-            unsafe { device.begin_command_buffer(command_buffer, &begin_info) }
-                .map_err(Error::VulkanBeginCommandBuffer)?;
-
-            let render_area = vk::Rect2D::builder().extent(final_extent).build();
-            let clear_colors = [vk::ClearValue::default()];
-            let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
-                .render_pass(final_render_pass)
-                .framebuffer(framebuffer)
-                .render_area(render_area)
-                .clear_values(&clear_colors);
-            unsafe {
-                device.cmd_begin_render_pass(
-                    command_buffer,
-                    &render_pass_begin_info,
-                    vk::SubpassContents::INLINE,
-                );
-                device.cmd_bind_pipeline(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipelines[0],
-                );
-                device.cmd_draw(command_buffer, 3, 1, 0, 0);
-                device.cmd_end_render_pass(command_buffer);
-            };
-
-            unsafe { device.end_command_buffer(command_buffer) }
-                .map_err(Error::VulkanEndCommandBuffer)?;
-        }
-
         Ok(Canvas {
             gpu,
+            extent,
             swapchain,
             swapchain_image_views,
             swapchain_framebuffers,
-            final_render_pass,
-            pipelines,
-            command_buffers,
-            pipeline_layout,
         })
     }
 }
@@ -218,15 +138,15 @@ fn create_swapchain(
                 .get_physical_device_surface_formats(physical_device, surface)
                 .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
         }?;
-        let format = if let Some(format) = surface_formats.iter().find(|format| {
-            format.format == vk::Format::B8G8R8A8_SRGB
-                && format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
-        }) {
-            format
+        let color_space = if let Some(format) = surface_formats
+            .iter()
+            .find(|format| format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
+        {
+            format.color_space
         } else {
-            &surface_formats[0]
+            surface_formats[0].color_space
         };
-        (format.format, format.color_space)
+        (SWAPCHAIN_FORMAT, color_space)
     };
 
     let get_image_extent = || -> Result<vk::Extent2D, Error> {
@@ -284,171 +204,4 @@ fn create_swapchain(
         .map_err(Error::VulkanSwapchainCreation)?;
 
     Ok((swapchain, image_format, swapchain_create_info.image_extent))
-}
-
-fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderPass, Error> {
-    let surface_color_attachment = vk::AttachmentDescription::builder()
-        .format(format)
-        .samples(vk::SampleCountFlags::TYPE_1) // NOTE: Multisampling
-        .load_op(vk::AttachmentLoadOp::CLEAR) // NOTE: Shadow maps probably don't care
-        .store_op(vk::AttachmentStoreOp::STORE)
-        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-    let attachments = [surface_color_attachment.build()];
-
-    let surface_color_attachment_reference = vk::AttachmentReference::builder()
-        .attachment(0)
-        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-    let attachment_references = [surface_color_attachment_reference.build()];
-    let surface_subpass = vk::SubpassDescription::builder()
-        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&attachment_references); // NOTE: resolve_attachments for multisampling?
-    let subpasses = [surface_subpass.build()];
-
-    // NOTE: This subpass dependency ensures that the layout of
-    // the swapchain image is set up properly for rendering to
-    // it. The spec says it should be inserted by the
-    // implementation if not provided by the application, but
-    // Android seems to be buggy in this regard. Source:
-    //
-    // https://www.reddit.com/r/vulkan/comments/701qqz/vk_subpass_external_presentation_question/dmzovoh/
-    let color_attachment_write_dependency = vk::SubpassDependency::builder()
-        .src_subpass(vk::SUBPASS_EXTERNAL)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_subpass(0)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .build();
-    let dependencies = [color_attachment_write_dependency];
-
-    let render_pass_create_info = vk::RenderPassCreateInfo::builder()
-        .attachments(&attachments)
-        .subpasses(&subpasses)
-        .dependencies(&dependencies);
-    unsafe { device.create_render_pass(&render_pass_create_info, None) }
-        .map_err(Error::VulkanRenderPassCreation)
-}
-
-fn create_pipelines<'m>(
-    device: &Device,
-    width: u32,
-    height: u32,
-    pipeline_layout: vk::PipelineLayout,
-    render_pass: vk::RenderPass,
-    materials: &'m [Material<'m>],
-) -> Result<Vec<vk::Pipeline>, Error> {
-    let mut all_shader_modules = Vec::with_capacity(materials.len() * 2);
-    let mut create_shader_module = |spirv: &'m [u32]| -> Result<vk::ShaderModule, Error> {
-        let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
-        let shader_module = unsafe { device.create_shader_module(&create_info, None) }
-            .map_err(Error::VulkanShaderModuleCreation)?;
-        all_shader_modules.push(shader_module);
-        Ok(shader_module)
-    };
-
-    let shader_stages_per_material = materials
-        .iter()
-        .map(|material| {
-            let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::VERTEX)
-                .module(create_shader_module(material.vertex_shader)?)
-                .name(cstr!("main"));
-            let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::FRAGMENT)
-                .module(create_shader_module(material.fragment_shader)?)
-                .name(cstr!("main"));
-            Ok([
-                vert_shader_stage_create_info.build(),
-                frag_shader_stage_create_info.build(),
-            ])
-        })
-        .collect::<Result<Vec<[vk::PipelineShaderStageCreateInfo; 2]>, Error>>()?;
-
-    let vertex_input_per_material = materials
-        .iter()
-        .map(|material| {
-            vk::PipelineVertexInputStateCreateInfo::builder()
-                .vertex_binding_descriptions(material.bindings)
-                .vertex_attribute_descriptions(material.attributes)
-                .build()
-        })
-        .collect::<Vec<vk::PipelineVertexInputStateCreateInfo>>();
-
-    let pipelines = {
-        let input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
-            .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
-            .primitive_restart_enable(false);
-
-        let viewports = [vk::Viewport::builder()
-            .width(width as f32)
-            .height(height as f32)
-            .min_depth(0.0)
-            .max_depth(1.0)
-            .build()];
-        let scissors = [vk::Rect2D::builder()
-            .extent(vk::Extent2D { width, height })
-            .build()];
-        let viewport_create_info = vk::PipelineViewportStateCreateInfo::builder()
-            .viewports(&viewports)
-            .scissors(&scissors);
-
-        // NOTE: Shadow maps would want to configure this for clamping and biasing depth values
-        let rasterization_create_info = vk::PipelineRasterizationStateCreateInfo::builder()
-            .polygon_mode(vk::PolygonMode::FILL)
-            .cull_mode(vk::CullModeFlags::BACK)
-            .front_face(vk::FrontFace::CLOCKWISE)
-            .line_width(1.0);
-
-        // TODO: Add multisampling
-        let multisample_create_info = vk::PipelineMultisampleStateCreateInfo::builder()
-            .sample_shading_enable(false)
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-
-        // NOTE: Shadow maps may need a vk::PipelineDepthStencilStateCreateInfo
-
-        let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState::builder()
-            .color_write_mask(
-                vk::ColorComponentFlags::R
-                    | vk::ColorComponentFlags::G
-                    | vk::ColorComponentFlags::B
-                    | vk::ColorComponentFlags::A,
-            )
-            .blend_enable(false)
-            .build()];
-        let color_blend_create_info = vk::PipelineColorBlendStateCreateInfo::builder()
-            .logic_op_enable(false)
-            .attachments(&color_blend_attachment_states);
-
-        let pipeline_create_infos = shader_stages_per_material
-            .iter()
-            .zip(vertex_input_per_material.iter())
-            .map(|(shader_stages, vertex_input)| {
-                vk::GraphicsPipelineCreateInfo::builder()
-                    .stages(&shader_stages[..])
-                    .vertex_input_state(&vertex_input)
-                    .input_assembly_state(&input_assembly_create_info)
-                    .viewport_state(&viewport_create_info)
-                    .rasterization_state(&rasterization_create_info)
-                    .multisample_state(&multisample_create_info)
-                    .color_blend_state(&color_blend_create_info)
-                    .layout(pipeline_layout)
-                    .render_pass(render_pass)
-                    .subpass(0)
-                    .build()
-            })
-            .collect::<Vec<vk::GraphicsPipelineCreateInfo>>();
-        unsafe {
-            device
-                .create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_infos, None)
-                .map_err(|(_, err)| Error::VulkanGraphicsPipelineCreation(err))
-        }?
-    };
-
-    for shader_module in all_shader_modules {
-        unsafe { device.destroy_shader_module(shader_module, None) };
-    }
-
-    Ok(pipelines)
 }

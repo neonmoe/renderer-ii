@@ -37,6 +37,8 @@ pub enum Error {
     VulkanCommandPoolCreation(#[source] vk::Result),
     #[error("could not allocate the command buffers")]
     VulkanCommandBuffersAllocation(#[source] vk::Result),
+    #[error("could not reset the command buffer")]
+    VulkanResetCommandBuffer(#[source] vk::Result),
     #[error("could not begin command buffer recording")]
     VulkanBeginCommandBuffer(#[source] vk::Result),
     #[error("failed to record command buffer")]
@@ -61,4 +63,6 @@ pub enum Error {
     VulkanFenceWait(#[source] vk::Result),
     #[error("vma (via vk-mem-rs) allocator creation failed")]
     VmaAllocatorCreation(#[source] vk_mem::error::Error),
+    #[error("vma (via vk-mem-rs) buffer allocation failed")]
+    VmaBufferAllocation(#[source] vk_mem::error::Error),
 }
