@@ -1,4 +1,4 @@
-use crate::material::{PipelineParameters, PIPELINE_PARAMETERS};
+use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
 use crate::{Error, Gpu};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
@@ -311,16 +311,16 @@ fn create_pipelines(
         Ok(shader_module)
     };
 
-    let shader_stages_per_material = pipelines_params
+    let shader_stages_per_pipeline = pipelines_params
         .iter()
-        .map(|material| {
+        .map(|pipeline| {
             let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
                 .stage(vk::ShaderStageFlags::VERTEX)
-                .module(create_shader_module(material.vertex_shader)?)
+                .module(create_shader_module(pipeline.vertex_shader)?)
                 .name(cstr!("main"));
             let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
                 .stage(vk::ShaderStageFlags::FRAGMENT)
-                .module(create_shader_module(material.fragment_shader)?)
+                .module(create_shader_module(pipeline.fragment_shader)?)
                 .name(cstr!("main"));
             Ok([
                 vert_shader_stage_create_info.build(),
@@ -329,12 +329,12 @@ fn create_pipelines(
         })
         .collect::<Result<Vec<[vk::PipelineShaderStageCreateInfo; 2]>, Error>>()?;
 
-    let vertex_input_per_material = pipelines_params
+    let vertex_input_per_pipeline = pipelines_params
         .iter()
-        .map(|material| {
+        .map(|pipeline| {
             vk::PipelineVertexInputStateCreateInfo::builder()
-                .vertex_binding_descriptions(&material.bindings)
-                .vertex_attribute_descriptions(&material.attributes)
+                .vertex_binding_descriptions(&pipeline.bindings)
+                .vertex_attribute_descriptions(&pipeline.attributes)
                 .build()
         })
         .collect::<Vec<vk::PipelineVertexInputStateCreateInfo>>();
@@ -382,9 +382,9 @@ fn create_pipelines(
             .logic_op_enable(false)
             .attachments(&color_blend_attachment_states);
 
-        let pipeline_create_infos = shader_stages_per_material
+        let pipeline_create_infos = shader_stages_per_pipeline
             .iter()
-            .zip(vertex_input_per_material.iter())
+            .zip(vertex_input_per_pipeline.iter())
             .map(|(shader_stages, vertex_input)| {
                 vk::GraphicsPipelineCreateInfo::builder()
                     .stages(&shader_stages[..])

@@ -3,10 +3,10 @@ use std::mem;
 use ultraviolet::Vec3;
 
 #[derive(Clone, Copy)]
-pub enum Material {
+pub enum Pipeline {
     PlainVertexColor,
     #[doc(hidden)]
-    Length,
+    Count,
 }
 
 pub(crate) struct PipelineParameters {
@@ -16,7 +16,7 @@ pub(crate) struct PipelineParameters {
     pub attributes: &'static [vk::VertexInputAttributeDescription],
 }
 
-pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Material::Length as usize] =
+pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as usize] =
     [PipelineParameters {
         vertex_shader: shaders::include_spirv!("shaders/plain_color.vert"),
         fragment_shader: shaders::include_spirv!("shaders/plain_color.frag"),

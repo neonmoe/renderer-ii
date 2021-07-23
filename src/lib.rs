@@ -25,8 +25,8 @@ pub use gpu::{Gpu, GpuId, GpuInfo};
 mod canvas;
 pub use canvas::Canvas;
 
-mod material;
-pub use material::Material;
+mod pipeline;
+pub use pipeline::Pipeline;
 
 mod mesh;
 pub use mesh::Mesh;

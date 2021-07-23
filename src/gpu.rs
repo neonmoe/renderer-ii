@@ -464,7 +464,7 @@ impl Gpu<'_> {
                 vk::SubpassContents::INLINE,
             );
             for mesh in meshes {
-                let index = mesh.material as usize;
+                let index = mesh.pipeline as usize;
                 self.device.cmd_bind_pipeline(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,

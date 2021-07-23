@@ -65,4 +65,6 @@ pub enum Error {
     VmaAllocatorCreation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) buffer allocation failed")]
     VmaBufferAllocation(#[source] vk_mem::error::Error),
+    #[error("updated vertex count does not match the original amount")]
+    MeshVertexCountMismatch,
 }

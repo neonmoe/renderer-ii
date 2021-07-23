@@ -1,22 +1,22 @@
-use crate::{Error, Gpu, Material};
+use crate::{Error, Gpu, Pipeline};
 use ash::vk;
 use std::mem;
-use ultraviolet::Vec3;
 
-fn copy_raw<T>(data: &[T], pointer: *mut u8) {
+fn copy_raw<T>(data: &[T], dst_ptr: *mut u8) {
     let length = data.len() * mem::size_of::<T>();
-    let data_ptr = unsafe { mem::transmute::<*const T, *const u8>(data.as_ptr()) };
-    unsafe { std::ptr::copy_nonoverlapping(data_ptr, pointer, length) };
+    let src_ptr = data.as_ptr() as *const u8;
+    unsafe { std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, length) };
 }
 
 pub struct Mesh<'a> {
     /// Held by [Mesh] to be able to destroy resources on drop.
     pub gpu: &'a Gpu<'a>,
 
-    pub material: Material,
+    pub pipeline: Pipeline,
     pub(crate) buffer: vk::Buffer,
-    pub(crate) allocation: vk_mem::Allocation,
     pub(crate) vertices: u32,
+    allocation: vk_mem::Allocation,
+    alloc_info: vk_mem::AllocationInfo,
 }
 
 impl Drop for Mesh<'_> {
@@ -29,13 +29,17 @@ impl Drop for Mesh<'_> {
 }
 
 impl Mesh<'_> {
-    pub fn new<'a, V>(gpu: &'a Gpu<'_>, vertices: &[V]) -> Result<Mesh<'a>, Error> {
-        let buffer_using_families = [gpu.graphics_family_index];
+    /// Creates a new mesh. Ensure that the vertices match the
+    /// pipeline.
+    pub fn new<'a, V>(
+        gpu: &'a Gpu<'_>,
+        vertices: &[V],
+        pipeline: Pipeline,
+    ) -> Result<Mesh<'a>, Error> {
         let buffer_create_info = vk::BufferCreateInfo::builder()
-            .size((vertices.len() * mem::size_of::<[Vec3; 2]>()) as u64)
+            .size((vertices.len() * mem::size_of::<V>()) as u64)
             .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .queue_family_indices(&buffer_using_families);
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let allocation_create_info = vk_mem::AllocationCreateInfo {
             usage: vk_mem::MemoryUsage::CpuToGpu,
             flags: vk_mem::AllocationCreateFlags::MAPPED,
@@ -50,10 +54,22 @@ impl Mesh<'_> {
         copy_raw(&vertices, buffer_ptr);
         Ok(Mesh {
             gpu,
-            material: Material::PlainVertexColor,
+            pipeline,
             buffer,
-            allocation,
             vertices: vertices.len() as u32,
+            allocation,
+            alloc_info,
         })
+    }
+
+    /// Updates the vertices of the mesh. The amount of vertices must
+    /// be the same as in [Mesh::new].
+    pub fn update_vertices<V>(&mut self, new_vertices: &[V]) -> Result<(), Error> {
+        if self.vertices != new_vertices.len() as u32 {
+            Err(Error::MeshVertexCountMismatch)
+        } else {
+            copy_raw(&new_vertices, self.alloc_info.get_mapped_data());
+            Ok(())
+        }
     }
 }
