@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
     let sdl_context = sdl2::init().map_err(SandboxError::Sdl)?;
     let video_subsystem = sdl_context.video().map_err(SandboxError::Sdl)?;
     let mut window = video_subsystem
-        .window("neonvk sandbox", 800, 600)
+        .window("neonvk sandbox", 640, 640)
         .position_centered()
         .resizable()
         .allow_highdpi()
@@ -37,18 +37,32 @@ fn main() -> anyhow::Result<()> {
     let red = Vec3::new(1.0, 0.1, 0.1);
     let yellow = Vec3::new(0.9, 0.9, 0.1);
     let pink = Vec3::new(0.9, 0.1, 0.9);
-    let mut meshes = vec![neonvk::Mesh::new(
-        &gpu,
-        &[
-            [Vec3::new(-0.5, -0.5, 0.0), red],
-            [Vec3::new(0.5, -0.5, 0.0), pink],
-            [Vec3::new(-0.5, 0.5, 0.0), yellow],
-            [Vec3::new(0.5, 0.5, 0.0), red],
-            [Vec3::new(-0.5, 0.5, 0.0), yellow],
-            [Vec3::new(0.5, -0.5, 0.0), pink],
-        ],
-        neonvk::Pipeline::PlainVertexColor,
-    )?];
+    let mut meshes = vec![
+        neonvk::Mesh::new(
+            &gpu,
+            &[
+                [Vec3::new(-0.5, -0.5, 0.0), red],
+                [Vec3::new(0.5, -0.5, 0.0), pink],
+                [Vec3::new(-0.5, 0.5, 0.0), yellow],
+                [Vec3::new(0.5, 0.5, 0.0), red],
+                [Vec3::new(-0.5, 0.5, 0.0), yellow],
+                [Vec3::new(0.5, -0.5, 0.0), pink],
+            ],
+            neonvk::Pipeline::PlainVertexColor,
+            true,
+        )?,
+        neonvk::Mesh::new(
+            &gpu,
+            &[
+                [Vec3::new(-1.0, -1.0, 0.0), red],
+                [Vec3::new(-0.5, -1.0, 0.0), pink],
+                [Vec3::new(-1.0, -0.5, 0.0), yellow],
+            ],
+            neonvk::Pipeline::PlainVertexColor,
+            false,
+        )?,
+    ];
+    gpu.wait_mesh_uploads()?;
 
     let start_time = Instant::now();
     let mut frame_instants = Vec::with_capacity(10_000);

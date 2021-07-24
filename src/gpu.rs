@@ -1,3 +1,4 @@
+use crate::mesh::MeshUpload;
 use crate::{Canvas, Driver, Error, Mesh};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
@@ -5,6 +6,7 @@ use ash::vk::Handle;
 use ash::{vk, Device, Instance};
 use std::cell::Cell;
 use std::ffi::CStr;
+use std::sync::mpsc::{self, Receiver, Sender};
 use vk_mem::{Allocator, AllocatorCreateFlags, AllocatorCreateInfo};
 
 /// A unique id for every distinct GPU.
@@ -30,17 +32,21 @@ pub struct Gpu<'a> {
 
     pub(crate) surface_ext: khr::Surface,
     pub(crate) swapchain_ext: khr::Swapchain,
+
     pub(crate) physical_device: vk::PhysicalDevice,
     pub(crate) device: Device,
     pub(crate) allocator: Allocator,
-    pub(crate) graphics_family_index: u32,
-    pub(crate) surface_family_index: u32,
-    pub(crate) frame_sync_objects_vec: Vec<FrameSyncObjects>,
     pub(crate) command_pool: vk::CommandPool,
 
-    graphics_queue: vk::Queue,
+    pub(crate) graphics_family_index: u32,
+    pub(crate) surface_family_index: u32,
+    pub(crate) graphics_queue: vk::Queue,
     surface_queue: vk::Queue,
+
+    pub(crate) frame_sync_objects_vec: Vec<FrameSyncObjects>,
     frame_index: Cell<u32>,
+
+    mesh_uploads: (Sender<MeshUpload>, Receiver<MeshUpload>),
 }
 
 #[derive(Clone, Copy)]
@@ -334,9 +340,43 @@ impl Gpu<'_> {
                 allocator,
                 frame_index: Cell::new(0),
                 frame_sync_objects_vec,
+                mesh_uploads: mpsc::channel(),
             },
             physical_devices,
         ))
+    }
+
+    pub(crate) fn add_mesh_upload(&self, mesh_upload: MeshUpload) {
+        let _ = self.mesh_uploads.0.send(mesh_upload);
+    }
+
+    /// Wait for all non-editable [Mesh]es to upload.
+    ///
+    /// Should be called after recreating new [Mesh]es, though not
+    /// needed if the new ones were editable, i.e. allocated in RAM
+    /// anyways. This waits for the transfers to GPU-only memory.
+    pub fn wait_mesh_uploads(&self) -> Result<(), Error> {
+        let mesh_uploads = self.mesh_uploads.1.try_iter().collect::<Vec<MeshUpload>>();
+        let fences = mesh_uploads
+            .iter()
+            .map(|upload| upload.finished_upload)
+            .collect::<Vec<vk::Fence>>();
+        if !fences.is_empty() {
+            unsafe { self.device.wait_for_fences(&fences, true, u64::MAX) }
+                .map_err(Error::VulkanFenceWait)?;
+            for mesh_upload in mesh_uploads {
+                let _ = self
+                    .allocator
+                    .destroy_buffer(mesh_upload.staging_buffer, &mesh_upload.staging_allocation);
+                let cmdbufs = [mesh_upload.upload_cmdbuf];
+                unsafe {
+                    self.device.destroy_fence(mesh_upload.finished_upload, None);
+                    self.device
+                        .free_command_buffers(self.command_pool, &cmdbufs);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Wait until the device is idle. Should be called before
@@ -408,7 +448,7 @@ impl Gpu<'_> {
         unsafe {
             self.device
                 .queue_submit(self.graphics_queue, &submit_infos, finished_queue_fence)
-                .map_err(Error::VulkanSubmitQueue)
+                .map_err(Error::VulkanQueueSubmit)
         }?;
 
         let swapchains = [canvas.swapchain];

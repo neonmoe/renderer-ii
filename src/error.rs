@@ -48,7 +48,7 @@ pub enum Error {
     #[error("could not acquire next frame's image")]
     VulkanAcquireImage(#[source] vk::Result),
     #[error("could not submit the queue")]
-    VulkanSubmitQueue(#[source] vk::Result),
+    VulkanQueueSubmit(#[source] vk::Result),
     #[error("could not present the queue")]
     VulkanQueuePresent(#[source] vk::Result),
     #[error("swapchain is out of date, cannot present")]
@@ -67,4 +67,6 @@ pub enum Error {
     VmaBufferAllocation(#[source] vk_mem::error::Error),
     #[error("updated vertex count does not match the original amount")]
     MeshVertexCountMismatch,
+    #[error("tried to update vertices, mesh is not editable (see Mesh::new)")]
+    MeshNotEditable,
 }

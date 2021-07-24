@@ -32,7 +32,16 @@ unsafe extern "system" fn debug_utils_messenger_callback(
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _p_user_data: *mut c_void,
 ) -> vk::Bool32 {
-    let ptr_to_str = |ptr: *const c_char| unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
+    if p_callback_data.is_null() {
+        return vk::FALSE;
+    }
+    let ptr_to_str = |ptr: *const c_char| {
+        if ptr.is_null() {
+            String::from("-")
+        } else {
+            unsafe { CStr::from_ptr(ptr) }.to_string_lossy().to_string()
+        }
+    };
     let message_id = ptr_to_str((*p_callback_data).p_message_id_name);
     let message = ptr_to_str((*p_callback_data).p_message);
     let message = if message.contains("MessageID = ") && message.contains("] Object ") {
