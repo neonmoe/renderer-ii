@@ -1,4 +1,4 @@
-use crate::{Error, Gpu, Pipeline};
+use crate::{Error, Gpu};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use std::mem;
@@ -11,26 +11,36 @@ fn copy_raw<T>(data: &[T], dst_ptr: *mut u8) {
 
 /// Contains the fence for the upload queue submit, and everything
 /// that needs to be cleaned up after it's done.
-pub(crate) struct MeshUpload {
+pub(crate) struct BufferUpload {
     pub finished_upload: vk::Fence,
     pub staging_buffer: vk::Buffer,
     pub staging_allocation: vk_mem::Allocation,
     pub upload_cmdbuf: vk::CommandBuffer,
 }
 
-pub struct Mesh<'a> {
-    /// Held by [Mesh] to be able to destroy resources on drop.
-    pub gpu: &'a Gpu<'a>,
+impl BufferUpload {
+    pub fn clean_up(&mut self, gpu: &Gpu<'_>) {
+        let _ = gpu
+            .allocator
+            .destroy_buffer(self.staging_buffer, &self.staging_allocation);
+        let cmdbufs = [self.upload_cmdbuf];
+        unsafe {
+            gpu.device.destroy_fence(self.finished_upload, None);
+            gpu.device.free_command_buffers(gpu.command_pool, &cmdbufs);
+        }
+    }
+}
 
-    pub pipeline: Pipeline,
-    pub(crate) buffer: vk::Buffer,
-    pub(crate) vertices: u32,
+pub(crate) struct Buffer<'a> {
+    pub gpu: &'a Gpu<'a>,
+    pub buffer: vk::Buffer,
+    pub vertices: u32,
     allocation: vk_mem::Allocation,
     alloc_info: vk_mem::AllocationInfo,
     editable: bool,
 }
 
-impl Drop for Mesh<'_> {
+impl Drop for Buffer<'_> {
     fn drop(&mut self) {
         let _ = self
             .gpu
@@ -39,16 +49,12 @@ impl Drop for Mesh<'_> {
     }
 }
 
-impl Mesh<'_> {
-    /// Creates a new mesh. Ensure that the vertices match the
-    /// pipeline. If not `editable`, call [Gpu::wait_mesh_uploads]
-    /// after your mesh creation code, before they're rendered.
+impl Buffer<'_> {
     pub fn new<'a, V>(
         gpu: &'a Gpu<'_>,
         vertices: &[V],
-        pipeline: Pipeline,
         editable: bool,
-    ) -> Result<Mesh<'a>, Error> {
+    ) -> Result<Buffer<'a>, Error> {
         // TODO: Create separate staging/gpu-only/shared allocation pools
 
         let buffer_size = (vertices.len() * mem::size_of::<V>()) as u64;
@@ -66,16 +72,15 @@ impl Mesh<'_> {
             required_flags: vk::MemoryPropertyFlags::HOST_COHERENT,
             ..Default::default()
         };
-        let (buffer, allocation, alloc_info) = gpu
+        let (vk_buffer, allocation, alloc_info) = gpu
             .allocator
             .create_buffer(&buffer_create_info, &allocation_create_info)
             .map_err(Error::VmaBufferAllocation)?;
         let buffer_ptr = alloc_info.get_mapped_data();
         copy_raw(&vertices, buffer_ptr);
-        let mut mesh = Mesh {
+        let mut buffer = Buffer {
             gpu,
-            pipeline,
-            buffer,
+            buffer: vk_buffer,
             vertices: vertices.len() as u32,
             allocation,
             alloc_info,
@@ -121,7 +126,7 @@ impl Mesh<'_> {
                     .begin_command_buffer(upload_cmdbuf, &command_buffer_begin_info)
                     .map_err(Error::VulkanBeginCommandBuffer)?;
                 gpu.device
-                    .cmd_copy_buffer(upload_cmdbuf, buffer, gpu_buffer, &copy_regions);
+                    .cmd_copy_buffer(upload_cmdbuf, vk_buffer, gpu_buffer, &copy_regions);
                 gpu.device
                     .end_command_buffer(upload_cmdbuf)
                     .map_err(Error::VulkanEndCommandBuffer)?;
@@ -137,29 +142,29 @@ impl Mesh<'_> {
                     .map_err(Error::VulkanQueueSubmit)
             }?;
 
-            let mesh_upload = MeshUpload {
+            let buffer_upload = BufferUpload {
                 finished_upload,
-                staging_buffer: mesh.buffer,
-                staging_allocation: mesh.allocation,
+                staging_buffer: buffer.buffer,
+                staging_allocation: buffer.allocation,
                 upload_cmdbuf,
             };
-            gpu.add_mesh_upload(mesh_upload);
+            gpu.add_buffer_upload(buffer_upload);
 
-            mesh.buffer = gpu_buffer;
-            mesh.allocation = gpu_allocation;
-            mesh.alloc_info = gpu_alloc_info;
+            buffer.buffer = gpu_buffer;
+            buffer.allocation = gpu_allocation;
+            buffer.alloc_info = gpu_alloc_info;
         }
 
-        Ok(mesh)
+        Ok(buffer)
     }
 
-    /// Updates the vertices of the mesh. The amount of vertices must
-    /// be the same as in [Mesh::new].
+    /// Updates the vertices of the buffer. The amount of vertices must
+    /// be the same as in [Buffer::new].
     pub fn update_vertices<V>(&mut self, new_vertices: &[V]) -> Result<(), Error> {
         if !self.editable {
-            Err(Error::MeshNotEditable)
+            Err(Error::BufferNotEditable)
         } else if self.vertices != new_vertices.len() as u32 {
-            Err(Error::MeshVertexCountMismatch)
+            Err(Error::BufferVertexCountMismatch)
         } else {
             copy_raw(&new_vertices, self.alloc_info.get_mapped_data());
             Ok(())

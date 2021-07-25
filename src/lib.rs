@@ -9,6 +9,7 @@ macro_rules! cstr {
 
 // internal modules:
 
+mod buffer;
 mod debug_utils;
 
 // public-facing modules:
@@ -28,5 +29,5 @@ pub use canvas::Canvas;
 mod pipeline;
 pub use pipeline::Pipeline;
 
-mod mesh;
-pub use mesh::Mesh;
+mod model;
+pub use model::Model;

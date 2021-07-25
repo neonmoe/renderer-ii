@@ -66,7 +66,7 @@ pub enum Error {
     #[error("vma (via vk-mem-rs) buffer allocation failed")]
     VmaBufferAllocation(#[source] vk_mem::error::Error),
     #[error("updated vertex count does not match the original amount")]
-    MeshVertexCountMismatch,
-    #[error("tried to update vertices, mesh is not editable (see Mesh::new)")]
-    MeshNotEditable,
+    BufferVertexCountMismatch,
+    #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
+    BufferNotEditable,
 }
