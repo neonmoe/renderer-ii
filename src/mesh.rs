@@ -29,7 +29,7 @@ impl Mesh<'_> {
         let mut data: Vec<u8> = vec![0; vertices_size + indices_size];
         let vertices_dst_ptr = data.as_mut_ptr();
         let vertices_src_ptr = vertices.as_ptr() as *const u8;
-        let indices_dst_ptr = unsafe { vertices_dst_ptr.offset(vertices_size as isize) };
+        let indices_dst_ptr = unsafe { vertices_dst_ptr.add(vertices_size) };
         let indices_src_ptr = indices.as_ptr() as *const u8;
         unsafe {
             // Fill out the buffer with the vertices and

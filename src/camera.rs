@@ -1,7 +1,7 @@
 use crate::buffer::Buffer;
 use crate::{Canvas, Error, Gpu, Pipeline};
 use ash::vk;
-use ultraviolet::Mat4;
+use ultraviolet::{projection, Mat4, Vec3};
 
 struct GlobalTransforms {
     _projection: Mat4,
@@ -9,10 +9,19 @@ struct GlobalTransforms {
 }
 
 impl GlobalTransforms {
-    fn new(_canvas: &Canvas) -> GlobalTransforms {
+    fn new(canvas: &Canvas) -> GlobalTransforms {
         GlobalTransforms {
-            _projection: Mat4::identity(),
-            _view: Mat4::identity(),
+            _projection: projection::perspective_vk(
+                74.0,
+                canvas.extent.width as f32 / canvas.extent.height as f32,
+                0.1,
+                100.0,
+            ),
+            _view: Mat4::look_at(
+                Vec3::new(0.75, 0.0, -1.5),
+                Vec3::zero(),
+                Vec3::new(0.0, 1.0, 0.0),
+            ),
         }
     }
 }
