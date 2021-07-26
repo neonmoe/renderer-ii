@@ -23,7 +23,6 @@ pub struct Canvas<'a> {
     pub(crate) final_render_pass: vk::RenderPass,
     pub(crate) pipelines: Vec<vk::Pipeline>,
     pub(crate) command_buffers: Vec<vk::CommandBuffer>,
-    pipeline_layout: vk::PipelineLayout,
 }
 
 impl Drop for Canvas<'_> {
@@ -35,7 +34,6 @@ impl Drop for Canvas<'_> {
         }
 
         unsafe {
-            device.destroy_pipeline_layout(self.pipeline_layout, None);
             device.destroy_render_pass(self.final_render_pass, None);
             device.free_command_buffers(self.gpu.command_pool, &self.command_buffers);
         }
@@ -111,17 +109,11 @@ impl Canvas<'_> {
             .collect::<Result<Vec<_>, _>>()?;
 
         let final_render_pass = create_render_pass(&device, crate::canvas::SWAPCHAIN_FORMAT)?;
-        let pipeline_layout = {
-            // TODO: Insert/describe uniforms here?
-            let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default();
-            unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
-                .map_err(Error::VulkanPipelineLayoutCreation)?
-        };
         let pipelines = create_pipelines(
             &device,
-            pipeline_layout,
             final_render_pass,
             extent,
+            &gpu.descriptors.pipeline_layouts,
             &PIPELINE_PARAMETERS,
         )?;
 
@@ -159,7 +151,6 @@ impl Canvas<'_> {
             final_render_pass,
             pipelines,
             command_buffers,
-            pipeline_layout,
         })
     }
 }
@@ -211,19 +202,18 @@ fn create_swapchain(
         Ok(image_extent)
     };
 
-    let mut swapchain_create_info = vk::SwapchainCreateInfoKHR {
-        surface,
-        min_image_count,
-        image_format,
-        image_color_space,
-        image_array_layers: 1,
-        image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-        pre_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
-        composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
-        present_mode,
-        clipped: vk::TRUE,
-        ..Default::default()
-    };
+    let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+        .surface(surface)
+        .min_image_count(min_image_count)
+        .image_format(image_format)
+        .image_color_space(image_color_space)
+        .image_array_layers(1)
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+        .pre_transform(vk::SurfaceTransformFlagsKHR::IDENTITY)
+        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+        .present_mode(present_mode)
+        .clipped(true)
+        .image_extent(get_image_extent()?);
     if queue_family_indices.windows(2).any(|indices| {
         if let [a, b] = *indices {
             a != b
@@ -231,19 +221,16 @@ fn create_swapchain(
             unreachable!()
         }
     }) {
-        swapchain_create_info.image_sharing_mode = vk::SharingMode::CONCURRENT;
-        swapchain_create_info.queue_family_index_count = queue_family_indices.len() as u32;
-        swapchain_create_info.p_queue_family_indices = queue_family_indices.as_ptr();
+        swapchain_create_info = swapchain_create_info
+            .image_sharing_mode(vk::SharingMode::CONCURRENT)
+            .queue_family_indices(&queue_family_indices);
     } else {
-        swapchain_create_info.image_sharing_mode = vk::SharingMode::EXCLUSIVE;
+        swapchain_create_info =
+            swapchain_create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
     }
     if let Some(old_swapchain) = old_swapchain {
-        swapchain_create_info.old_swapchain = old_swapchain;
+        swapchain_create_info = swapchain_create_info.old_swapchain(old_swapchain);
     }
-    // Get image extent at the latest possible time to avoid getting
-    // an outdated extent. Bummer that this is an issue, but I haven't
-    // found a good way to avoid it.
-    swapchain_create_info.image_extent = get_image_extent()?;
     let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }
         .map_err(Error::VulkanSwapchainCreation)?;
 
@@ -297,9 +284,9 @@ fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderP
 
 fn create_pipelines(
     device: &Device,
-    pipeline_layout: vk::PipelineLayout,
     render_pass: vk::RenderPass,
     extent: vk::Extent2D,
+    pipeline_layouts: &[vk::PipelineLayout],
     pipelines_params: &[PipelineParameters],
 ) -> Result<Vec<vk::Pipeline>, Error> {
     let mut all_shader_modules = Vec::with_capacity(pipelines_params.len() * 2);
@@ -385,7 +372,8 @@ fn create_pipelines(
         let pipeline_create_infos = shader_stages_per_pipeline
             .iter()
             .zip(vertex_input_per_pipeline.iter())
-            .map(|(shader_stages, vertex_input)| {
+            .zip(pipeline_layouts.iter())
+            .map(|((shader_stages, vertex_input), &pipeline_layout)| {
                 vk::GraphicsPipelineCreateInfo::builder()
                     .stages(&shader_stages[..])
                     .vertex_input_state(&vertex_input)

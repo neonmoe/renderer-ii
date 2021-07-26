@@ -25,6 +25,8 @@ pub enum Error {
     VulkanSwapchainImageViewCreation(#[source] vk::Result),
     #[error("could not create the shader module")]
     VulkanShaderModuleCreation(#[source] vk::Result),
+    #[error("could not create the descriptor set layout")]
+    VulkanDescriptorSetLayoutCreation(#[source] vk::Result),
     #[error("could not create the pipeline layout")]
     VulkanPipelineLayoutCreation(#[source] vk::Result),
     #[error("could not create the render pass")]
@@ -61,12 +63,14 @@ pub enum Error {
     VulkanFenceReset(#[source] vk::Result),
     #[error("could not wait for the fence")]
     VulkanFenceWait(#[source] vk::Result),
+    #[error("could not create descriptor pool")]
+    VulkanDescriptorPoolCreation(#[source] vk::Result),
+    #[error("could not allocate descriptor sets")]
+    VulkanAllocateDescriptorSets(#[source] vk::Result),
     #[error("vma (via vk-mem-rs) allocator creation failed")]
     VmaAllocatorCreation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) buffer allocation failed")]
     VmaBufferAllocation(#[source] vk_mem::error::Error),
-    #[error("updated vertex count does not match the original amount")]
-    MeshVertexCountMismatch,
-    #[error("tried to update vertices, mesh is not editable (see Mesh::new)")]
-    MeshNotEditable,
+    #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
+    BufferNotEditable,
 }

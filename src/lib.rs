@@ -9,24 +9,28 @@ macro_rules! cstr {
 
 // internal modules:
 
+mod buffer;
 mod debug_utils;
 
 // public-facing modules:
 
-mod error;
-pub use error::Error;
-
-mod driver;
-pub use driver::Driver;
-
-mod gpu;
-pub use gpu::{Gpu, GpuId, GpuInfo};
+mod camera;
+pub use camera::Camera;
 
 mod canvas;
 pub use canvas::Canvas;
 
-mod pipeline;
-pub use pipeline::Pipeline;
+mod driver;
+pub use driver::Driver;
+
+mod error;
+pub use error::Error;
+
+mod gpu;
+pub use gpu::{Gpu, GpuId, GpuInfo};
 
 mod mesh;
 pub use mesh::Mesh;
+
+mod pipeline;
+pub use pipeline::Pipeline;

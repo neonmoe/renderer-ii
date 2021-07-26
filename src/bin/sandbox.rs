@@ -33,6 +33,7 @@ fn main() -> anyhow::Result<()> {
     let driver = neonvk::Driver::new(&window)?;
     let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
     let mut canvas = neonvk::Canvas::new(&gpu, None, width, height)?;
+    let camera = neonvk::Camera::new(&gpu, &canvas)?;
 
     let red = Vec3::new(1.0, 0.1, 0.1);
     let yellow = Vec3::new(0.9, 0.9, 0.1);
@@ -62,7 +63,7 @@ fn main() -> anyhow::Result<()> {
             false,
         )?,
     ];
-    gpu.wait_mesh_uploads()?;
+    gpu.wait_buffer_uploads()?;
 
     let start_time = Instant::now();
     let mut frame_instants = Vec::with_capacity(10_000);
@@ -106,7 +107,7 @@ fn main() -> anyhow::Result<()> {
             size_changed = false;
         }
 
-        match gpu.render_frame(&canvas, &meshes) {
+        match gpu.render_frame(&canvas, &camera, &meshes) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),

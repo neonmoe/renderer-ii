@@ -1,5 +1,6 @@
-use crate::mesh::MeshUpload;
-use crate::{Canvas, Driver, Error, Mesh};
+use crate::buffer::BufferUpload;
+use crate::pipeline::Descriptors;
+use crate::{Camera, Canvas, Driver, Error, Mesh};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
@@ -43,10 +44,12 @@ pub struct Gpu<'a> {
     pub(crate) graphics_queue: vk::Queue,
     surface_queue: vk::Queue,
 
+    pub(crate) descriptors: Descriptors,
+
     pub(crate) frame_sync_objects_vec: Vec<FrameSyncObjects>,
     frame_index: Cell<u32>,
 
-    mesh_uploads: (Sender<MeshUpload>, Receiver<MeshUpload>),
+    buffer_uploads: (Sender<BufferUpload>, Receiver<BufferUpload>),
 }
 
 #[derive(Clone, Copy)]
@@ -59,6 +62,8 @@ pub(crate) struct FrameSyncObjects {
 impl Drop for Gpu<'_> {
     fn drop(&mut self) {
         let _ = self.wait_idle();
+
+        self.descriptors.clean_up(&self.device);
 
         unsafe { self.device.destroy_command_pool(self.command_pool, None) };
 
@@ -325,6 +330,8 @@ impl Gpu<'_> {
         let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
             .map_err(Error::VulkanCommandPoolCreation)?;
 
+        let descriptors = Descriptors::new(&device, frame_sync_objects_vec.len() as u32)?;
+
         Ok((
             Gpu {
                 driver,
@@ -338,39 +345,46 @@ impl Gpu<'_> {
                 graphics_queue,
                 surface_queue,
                 allocator,
+                descriptors,
                 frame_index: Cell::new(0),
                 frame_sync_objects_vec,
-                mesh_uploads: mpsc::channel(),
+                buffer_uploads: mpsc::channel(),
             },
             physical_devices,
         ))
     }
 
-    pub(crate) fn add_mesh_upload(&self, mesh_upload: MeshUpload) {
-        let _ = self.mesh_uploads.0.send(mesh_upload);
+    pub(crate) fn add_buffer_upload(&self, buffer_upload: BufferUpload) {
+        let _ = self.buffer_uploads.0.send(buffer_upload);
     }
 
-    /// Wait for all non-editable [Mesh]es to upload.
+    /// Wait for all non-editable [Buffer]es to upload.
     ///
-    /// Should be called after recreating new [Mesh]es, though not
+    /// Should be called after recreating new [Buffer]es, though not
     /// needed if the new ones were editable, i.e. allocated in RAM
     /// anyways. This waits for the transfers to GPU-only memory.
-    pub fn wait_mesh_uploads(&self) -> Result<(), Error> {
-        let mesh_uploads = self.mesh_uploads.1.try_iter().collect::<Vec<MeshUpload>>();
-        let fences = mesh_uploads
+    pub fn wait_buffer_uploads(&self) -> Result<(), Error> {
+        let buffer_uploads = self
+            .buffer_uploads
+            .1
+            .try_iter()
+            .collect::<Vec<BufferUpload>>();
+        let fences = buffer_uploads
             .iter()
             .map(|upload| upload.finished_upload)
             .collect::<Vec<vk::Fence>>();
         if !fences.is_empty() {
             unsafe { self.device.wait_for_fences(&fences, true, u64::MAX) }
                 .map_err(Error::VulkanFenceWait)?;
-            for mesh_upload in mesh_uploads {
-                let _ = self
-                    .allocator
-                    .destroy_buffer(mesh_upload.staging_buffer, &mesh_upload.staging_allocation);
-                let cmdbufs = [mesh_upload.upload_cmdbuf];
+            for buffer_upload in buffer_uploads {
+                let _ = self.allocator.destroy_buffer(
+                    buffer_upload.staging_buffer,
+                    &buffer_upload.staging_allocation,
+                );
+                let cmdbufs = [buffer_upload.upload_cmdbuf];
                 unsafe {
-                    self.device.destroy_fence(mesh_upload.finished_upload, None);
+                    self.device
+                        .destroy_fence(buffer_upload.finished_upload, None);
                     self.device
                         .free_command_buffers(self.command_pool, &cmdbufs);
                 }
@@ -403,13 +417,26 @@ impl Gpu<'_> {
     /// The rendered frame will appear on the screen some time in the
     /// future. Use [Gpu::wait_frame] to block until that
     /// happens.
-    pub fn render_frame(&self, canvas: &Canvas, meshes: &[Mesh]) -> Result<(), Error> {
+    pub fn render_frame(
+        &self,
+        canvas: &Canvas,
+        camera: &Camera,
+        meshes: &[Mesh],
+    ) -> Result<(), Error> {
         // NOTE: This will cause self.allocator to mis-diagnose lost
         // allocations once per ~828 days (assuming 60 fps) and cause
         // the slowest memory leak ever.
         let frame_index = self.frame_index.get().wrapping_add(1);
         self.frame_index.set(frame_index);
         let _ = self.allocator.set_current_frame_index(frame_index);
+
+        // NOTE: Ideally the application should call this after
+        // creating new buffers, so this should generally be a
+        // no-op. When it's not, we don't want to risk using buffers
+        // which are still being uploaded.
+        self.wait_buffer_uploads()?;
+
+        camera.update(canvas)?;
 
         let FrameSyncObjects {
             acquired_image_sp,
@@ -433,7 +460,7 @@ impl Gpu<'_> {
 
         let command_buffer = canvas.command_buffers[image_index as usize];
         let framebuffer = canvas.swapchain_framebuffers[image_index as usize];
-        self.record_commmand_buffer(command_buffer, framebuffer, canvas, meshes)?;
+        self.record_commmand_buffer(command_buffer, framebuffer, frame_index, canvas, meshes)?;
 
         let wait_semaphores = [acquired_image_sp];
         let signal_semaphores = [finished_command_buffers_sp];
@@ -477,6 +504,7 @@ impl Gpu<'_> {
         &self,
         command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
+        frame_index: u32,
         canvas: &Canvas,
         meshes: &[Mesh],
     ) -> Result<(), Error> {
@@ -504,17 +532,26 @@ impl Gpu<'_> {
                 vk::SubpassContents::INLINE,
             );
             for mesh in meshes {
-                let index = mesh.pipeline as usize;
+                let pipeline_idx = mesh.pipeline as usize;
                 self.device.cmd_bind_pipeline(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
-                    canvas.pipelines[index],
+                    canvas.pipelines[pipeline_idx],
                 );
+                self.device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.descriptors.pipeline_layouts[pipeline_idx],
+                    0,
+                    self.descriptors.descriptor_sets(frame_index, mesh.pipeline),
+                    &[],
+                );
+                let mesh_buffer = mesh.mesh_buffer.buffer;
                 self.device
-                    .cmd_bind_vertex_buffers(command_buffer, 0, &[mesh.buffer], &[0]);
+                    .cmd_bind_vertex_buffers(command_buffer, 0, &[mesh_buffer], &[0]);
                 self.device.cmd_bind_index_buffer(
                     command_buffer,
-                    mesh.buffer,
+                    mesh_buffer,
                     mesh.indices_offset,
                     mesh.index_type,
                 );
