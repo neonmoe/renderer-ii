@@ -1,5 +1,5 @@
-use crate::buffer::BufferUpload;
-use crate::{Canvas, Driver, Error, Model};
+use crate::mesh::MeshUpload;
+use crate::{Canvas, Driver, Error, Mesh};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
@@ -46,7 +46,7 @@ pub struct Gpu<'a> {
     pub(crate) frame_sync_objects_vec: Vec<FrameSyncObjects>,
     frame_index: Cell<u32>,
 
-    buffer_uploads: (Sender<BufferUpload>, Receiver<BufferUpload>),
+    mesh_uploads: (Sender<MeshUpload>, Receiver<MeshUpload>),
 }
 
 #[derive(Clone, Copy)]
@@ -340,36 +340,40 @@ impl Gpu<'_> {
                 allocator,
                 frame_index: Cell::new(0),
                 frame_sync_objects_vec,
-                buffer_uploads: mpsc::channel(),
+                mesh_uploads: mpsc::channel(),
             },
             physical_devices,
         ))
     }
 
-    pub(crate) fn add_buffer_upload(&self, buffer_upload: BufferUpload) {
-        let _ = self.buffer_uploads.0.send(buffer_upload);
+    pub(crate) fn add_mesh_upload(&self, mesh_upload: MeshUpload) {
+        let _ = self.mesh_uploads.0.send(mesh_upload);
     }
 
-    /// Wait for all non-editable [Buffer]es to upload.
+    /// Wait for all non-editable [Mesh]es to upload.
     ///
-    /// Should be called after recreating new [Buffer]es, though not
+    /// Should be called after recreating new [Mesh]es, though not
     /// needed if the new ones were editable, i.e. allocated in RAM
     /// anyways. This waits for the transfers to GPU-only memory.
-    pub fn wait_buffer_uploads(&self) -> Result<(), Error> {
-        let buffer_uploads = self
-            .buffer_uploads
-            .1
-            .try_iter()
-            .collect::<Vec<BufferUpload>>();
-        let fences = buffer_uploads
+    pub fn wait_mesh_uploads(&self) -> Result<(), Error> {
+        let mesh_uploads = self.mesh_uploads.1.try_iter().collect::<Vec<MeshUpload>>();
+        let fences = mesh_uploads
             .iter()
             .map(|upload| upload.finished_upload)
             .collect::<Vec<vk::Fence>>();
         if !fences.is_empty() {
             unsafe { self.device.wait_for_fences(&fences, true, u64::MAX) }
                 .map_err(Error::VulkanFenceWait)?;
-            for mut buffer_upload in buffer_uploads {
-                buffer_upload.clean_up(&self);
+            for mesh_upload in mesh_uploads {
+                let _ = self
+                    .allocator
+                    .destroy_buffer(mesh_upload.staging_buffer, &mesh_upload.staging_allocation);
+                let cmdbufs = [mesh_upload.upload_cmdbuf];
+                unsafe {
+                    self.device.destroy_fence(mesh_upload.finished_upload, None);
+                    self.device
+                        .free_command_buffers(self.command_pool, &cmdbufs);
+                }
             }
         }
         Ok(())
@@ -399,7 +403,7 @@ impl Gpu<'_> {
     /// The rendered frame will appear on the screen some time in the
     /// future. Use [Gpu::wait_frame] to block until that
     /// happens.
-    pub fn render_frame(&self, canvas: &Canvas, models: &[Model]) -> Result<(), Error> {
+    pub fn render_frame(&self, canvas: &Canvas, meshes: &[Mesh]) -> Result<(), Error> {
         // NOTE: This will cause self.allocator to mis-diagnose lost
         // allocations once per ~828 days (assuming 60 fps) and cause
         // the slowest memory leak ever.
@@ -429,7 +433,7 @@ impl Gpu<'_> {
 
         let command_buffer = canvas.command_buffers[image_index as usize];
         let framebuffer = canvas.swapchain_framebuffers[image_index as usize];
-        self.record_commmand_buffer(command_buffer, framebuffer, canvas, models)?;
+        self.record_commmand_buffer(command_buffer, framebuffer, canvas, meshes)?;
 
         let wait_semaphores = [acquired_image_sp];
         let signal_semaphores = [finished_command_buffers_sp];
@@ -474,7 +478,7 @@ impl Gpu<'_> {
         command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
         canvas: &Canvas,
-        models: &[Model],
+        meshes: &[Mesh],
     ) -> Result<(), Error> {
         let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {
@@ -499,17 +503,16 @@ impl Gpu<'_> {
                 &render_pass_begin_info,
                 vk::SubpassContents::INLINE,
             );
-            for model in models {
-                let buffer = &model.buffer;
+            for mesh in meshes {
+                let index = mesh.pipeline as usize;
                 self.device.cmd_bind_pipeline(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
-                    canvas.pipelines[0],
+                    canvas.pipelines[index],
                 );
                 self.device
-                    .cmd_bind_vertex_buffers(command_buffer, 0, &[buffer.buffer], &[0]);
-                self.device
-                    .cmd_draw(command_buffer, buffer.vertices, 1, 0, 0);
+                    .cmd_bind_vertex_buffers(command_buffer, 0, &[mesh.buffer], &[0]);
+                self.device.cmd_draw(command_buffer, mesh.vertices, 1, 0, 0);
             }
             self.device.cmd_end_render_pass(command_buffer);
         }

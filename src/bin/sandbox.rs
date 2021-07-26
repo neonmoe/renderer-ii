@@ -37,8 +37,8 @@ fn main() -> anyhow::Result<()> {
     let red = Vec3::new(1.0, 0.1, 0.1);
     let yellow = Vec3::new(0.9, 0.9, 0.1);
     let pink = Vec3::new(0.9, 0.1, 0.9);
-    let mut models = vec![
-        neonvk::Model::new(
+    let mut meshes = vec![
+        neonvk::Mesh::new(
             &gpu,
             &[
                 [Vec3::new(-0.5, -0.5, 0.0), red],
@@ -48,19 +48,21 @@ fn main() -> anyhow::Result<()> {
                 [Vec3::new(-0.5, 0.5, 0.0), yellow],
                 [Vec3::new(0.5, -0.5, 0.0), pink],
             ],
+            neonvk::Pipeline::PlainVertexColor,
             true,
         )?,
-        neonvk::Model::new(
+        neonvk::Mesh::new(
             &gpu,
             &[
                 [Vec3::new(-1.0, -1.0, 0.0), red],
                 [Vec3::new(-0.5, -1.0, 0.0), pink],
                 [Vec3::new(-1.0, -0.5, 0.0), yellow],
             ],
+            neonvk::Pipeline::PlainVertexColor,
             false,
         )?,
     ];
-    gpu.wait_buffer_uploads()?;
+    gpu.wait_mesh_uploads()?;
 
     let start_time = Instant::now();
     let mut frame_instants = Vec::with_capacity(10_000);
@@ -80,7 +82,7 @@ fn main() -> anyhow::Result<()> {
             [Vec3::new(-0.5, 0.5, 0.0).rotated_by(rotor), yellow],
             [Vec3::new(0.5, -0.5, 0.0).rotated_by(rotor), pink],
         ];
-        models[0].update_vertices(&vertices)?;
+        meshes[0].update_vertices(&vertices)?;
 
         for event in event_pump.poll_iter() {
             match event {
@@ -106,8 +108,7 @@ fn main() -> anyhow::Result<()> {
             size_changed = false;
         }
 
-        gpu.wait_buffer_uploads()?;
-        match gpu.render_frame(&canvas, &models) {
+        match gpu.render_frame(&canvas, &meshes) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
