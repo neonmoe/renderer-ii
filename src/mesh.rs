@@ -3,12 +3,6 @@ use ash::version::DeviceV1_0;
 use ash::vk;
 use std::mem;
 
-fn copy_raw<T>(data: &[T], dst_ptr: *mut u8) {
-    let length = data.len() * mem::size_of::<T>();
-    let src_ptr = data.as_ptr() as *const u8;
-    unsafe { std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, length) };
-}
-
 /// Contains the fence for the upload queue submit, and everything
 /// that needs to be cleaned up after it's done.
 pub(crate) struct MeshUpload {
@@ -24,10 +18,13 @@ pub struct Mesh<'a> {
 
     pub pipeline: Pipeline,
     pub(crate) buffer: vk::Buffer,
-    pub(crate) vertices: u32,
+    pub(crate) index_count: u32,
+    pub(crate) indices_offset: vk::DeviceSize,
+    pub(crate) index_type: vk::IndexType,
     allocation: vk_mem::Allocation,
     alloc_info: vk_mem::AllocationInfo,
     editable: bool,
+    vertex_count: usize,
 }
 
 impl Drop for Mesh<'_> {
@@ -43,19 +40,20 @@ impl Mesh<'_> {
     /// Creates a new mesh. Ensure that the vertices match the
     /// pipeline. If not `editable`, call [Gpu::wait_mesh_uploads]
     /// after your mesh creation code, before they're rendered.
-    pub fn new<'a, V>(
+    pub fn new<'a, V, I: IndexType>(
         gpu: &'a Gpu<'_>,
         vertices: &[V],
+        indices: &[I],
         pipeline: Pipeline,
         editable: bool,
     ) -> Result<Mesh<'a>, Error> {
         // TODO: Create separate staging/gpu-only/shared allocation pools
 
-        let buffer_size = (vertices.len() * mem::size_of::<V>()) as u64;
+        let buffer_size = mesh_data_size(vertices, indices);
         let buffer_create_info = vk::BufferCreateInfo::builder()
             .size(buffer_size)
             .usage(if editable {
-                vk::BufferUsageFlags::VERTEX_BUFFER
+                vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER
             } else {
                 vk::BufferUsageFlags::TRANSFER_SRC
             })
@@ -71,21 +69,28 @@ impl Mesh<'_> {
             .create_buffer(&buffer_create_info, &allocation_create_info)
             .map_err(Error::VmaBufferAllocation)?;
         let buffer_ptr = alloc_info.get_mapped_data();
-        copy_raw(&vertices, buffer_ptr);
+        copy_mesh_data(&vertices, Some(&indices), buffer_ptr);
         let mut mesh = Mesh {
             gpu,
             pipeline,
             buffer,
-            vertices: vertices.len() as u32,
+            index_count: indices.len() as u32,
+            indices_offset: mesh_indices_offset(&vertices),
+            index_type: I::vk_index_type(),
             allocation,
             alloc_info,
             editable,
+            vertex_count: vertices.len(),
         };
 
         if !editable {
             let buffer_create_info = vk::BufferCreateInfo::builder()
-                .size((vertices.len() * mem::size_of::<V>()) as u64)
-                .usage(vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST)
+                .size(buffer_size)
+                .usage(
+                    vk::BufferUsageFlags::VERTEX_BUFFER
+                        | vk::BufferUsageFlags::INDEX_BUFFER
+                        | vk::BufferUsageFlags::TRANSFER_DST,
+                )
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
             let allocation_create_info = vk_mem::AllocationCreateInfo {
                 usage: vk_mem::MemoryUsage::GpuOnly,
@@ -158,11 +163,51 @@ impl Mesh<'_> {
     pub fn update_vertices<V>(&mut self, new_vertices: &[V]) -> Result<(), Error> {
         if !self.editable {
             Err(Error::MeshNotEditable)
-        } else if self.vertices != new_vertices.len() as u32 {
+        } else if self.vertex_count != new_vertices.len() {
             Err(Error::MeshVertexCountMismatch)
         } else {
-            copy_raw(&new_vertices, self.alloc_info.get_mapped_data());
+            // The index type doesn't matter, but needs to be specified.
+            copy_mesh_data::<V, u16>(&new_vertices, None, self.alloc_info.get_mapped_data());
             Ok(())
         }
+    }
+}
+
+pub trait IndexType {
+    fn vk_index_type() -> vk::IndexType;
+}
+
+impl IndexType for u16 {
+    fn vk_index_type() -> vk::IndexType {
+        vk::IndexType::UINT16
+    }
+}
+
+impl IndexType for u32 {
+    fn vk_index_type() -> vk::IndexType {
+        vk::IndexType::UINT32
+    }
+}
+
+fn mesh_indices_offset<V>(vertices: &[V]) -> vk::DeviceSize {
+    (vertices.len() * mem::size_of::<V>()) as vk::DeviceSize
+}
+
+fn mesh_data_size<V, I: IndexType>(vertices: &[V], indices: &[I]) -> vk::DeviceSize {
+    let vertices_length = vertices.len() * mem::size_of::<V>();
+    let indices_length = indices.len() * mem::size_of::<I>();
+    (vertices_length + indices_length) as vk::DeviceSize
+}
+
+fn copy_mesh_data<V, I: IndexType>(vertices: &[V], indices: Option<&[I]>, dst_ptr: *mut u8) {
+    let vertices_length = vertices.len() * mem::size_of::<V>();
+    let vertices_src_ptr = vertices.as_ptr() as *const u8;
+    unsafe { std::ptr::copy_nonoverlapping(vertices_src_ptr, dst_ptr, vertices_length) };
+    if let Some(indices) = indices {
+        // TODO: Fix possible alignment issues?
+        let indices_length = indices.len() * mem::size_of::<I>();
+        let indices_src_ptr = indices.as_ptr() as *const u8;
+        let indices_dst_ptr = unsafe { dst_ptr.offset(vertices_length as isize) };
+        unsafe { std::ptr::copy_nonoverlapping(indices_src_ptr, indices_dst_ptr, indices_length) };
     }
 }

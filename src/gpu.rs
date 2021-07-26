@@ -512,7 +512,14 @@ impl Gpu<'_> {
                 );
                 self.device
                     .cmd_bind_vertex_buffers(command_buffer, 0, &[mesh.buffer], &[0]);
-                self.device.cmd_draw(command_buffer, mesh.vertices, 1, 0, 0);
+                self.device.cmd_bind_index_buffer(
+                    command_buffer,
+                    mesh.buffer,
+                    mesh.indices_offset,
+                    mesh.index_type,
+                );
+                self.device
+                    .cmd_draw_indexed(command_buffer, mesh.index_count, 1, 0, 0, 0);
             }
             self.device.cmd_end_render_pass(command_buffer);
         }

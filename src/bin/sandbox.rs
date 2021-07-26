@@ -45,9 +45,8 @@ fn main() -> anyhow::Result<()> {
                 [Vec3::new(0.5, -0.5, 0.0), pink],
                 [Vec3::new(-0.5, 0.5, 0.0), yellow],
                 [Vec3::new(0.5, 0.5, 0.0), red],
-                [Vec3::new(-0.5, 0.5, 0.0), yellow],
-                [Vec3::new(0.5, -0.5, 0.0), pink],
             ],
+            &[0u16, 1, 2, 3, 2, 1],
             neonvk::Pipeline::PlainVertexColor,
             true,
         )?,
@@ -58,6 +57,7 @@ fn main() -> anyhow::Result<()> {
                 [Vec3::new(-0.5, -1.0, 0.0), pink],
                 [Vec3::new(-1.0, -0.5, 0.0), yellow],
             ],
+            &[0u32, 1, 2],
             neonvk::Pipeline::PlainVertexColor,
             false,
         )?,
@@ -79,8 +79,6 @@ fn main() -> anyhow::Result<()> {
             [Vec3::new(0.5, -0.5, 0.0).rotated_by(rotor), pink],
             [Vec3::new(-0.5, 0.5, 0.0).rotated_by(rotor), yellow],
             [Vec3::new(0.5, 0.5, 0.0).rotated_by(rotor), red],
-            [Vec3::new(-0.5, 0.5, 0.0).rotated_by(rotor), yellow],
-            [Vec3::new(0.5, -0.5, 0.0).rotated_by(rotor), pink],
         ];
         meshes[0].update_vertices(&vertices)?;
 
