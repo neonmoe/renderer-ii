@@ -55,6 +55,11 @@ impl Driver {
         let debug_utils_available = is_extension_supported(&entry, "VK_EXT_debug_utils");
         if debug_utils_available {
             extensions.push(cstr!("VK_EXT_debug_utils").as_ptr());
+            log::debug!("Instance extension: VK_EXT_debug_utils");
+        }
+        if is_extension_supported(&entry, "VK_KHR_get_physical_device_properties2") {
+            extensions.push(cstr!("VK_KHR_get_physical_device_properties2").as_ptr());
+            log::debug!("Instance extension: VK_KHR_get_physical_device_properties2");
         }
 
         let create_info = vk::InstanceCreateInfo::builder()

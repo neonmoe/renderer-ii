@@ -238,12 +238,17 @@ impl Gpu<'_> {
             ]
         };
         let physical_device_features = vk::PhysicalDeviceFeatures::default();
-        let extensions = &[cstr!("VK_KHR_swapchain").as_ptr()];
+        let mut extensions = vec![cstr!("VK_KHR_swapchain").as_ptr()];
+        log::debug!("Device extension: VK_KHR_swapchain");
+        if is_extension_supported(&driver.instance, physical_device, "VK_EXT_memory_budget") {
+            extensions.push(cstr!("VK_EXT_memory_budget").as_ptr());
+            log::debug!("Device extension: VK_EXT_memory_budget");
+        }
 
         let device_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(&queue_create_infos)
             .enabled_features(&physical_device_features)
-            .enabled_extension_names(extensions);
+            .enabled_extension_names(&extensions);
         let device = unsafe {
             driver
                 .instance
@@ -391,6 +396,19 @@ impl Gpu<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Returns the total bytes used by resources, and the total
+    /// allocated bytes.
+    pub fn vram_usage(&self) -> Result<(vk::DeviceSize, vk::DeviceSize), Error> {
+        let stats = self
+            .allocator
+            .calculate_stats()
+            .map_err(Error::VmaCalculateStats)?;
+        Ok((
+            stats.total.usedBytes,
+            stats.total.usedBytes + stats.total.unusedBytes,
+        ))
     }
 
     /// Wait until the device is idle. Should be called before

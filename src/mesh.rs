@@ -53,8 +53,8 @@ impl Mesh<'_> {
 
     /// Updates the vertices of the mesh. The amount of vertices must
     /// be the same as in [Mesh::new].
-    pub fn update_vertices<V>(&mut self, new_vertices: &[V]) -> Result<(), Error> {
-        self.mesh_buffer.update_data(new_vertices)
+    pub fn update_vertices<V>(&mut self, gpu: &Gpu, new_vertices: &[V]) -> Result<(), Error> {
+        self.mesh_buffer.update_data(gpu, new_vertices)
     }
 }
 

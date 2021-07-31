@@ -71,6 +71,10 @@ pub enum Error {
     VmaAllocatorCreation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) buffer allocation failed")]
     VmaBufferAllocation(#[source] vk_mem::error::Error),
+    #[error("vma (via vk-mem-rs) could not flush allocation")]
+    VmaFlushAllocation(#[source] vk_mem::error::Error),
+    #[error("vma (via vk-mem-rs) stats calculation failed")]
+    VmaCalculateStats(#[source] vk_mem::error::Error),
     #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
     BufferNotEditable,
 }

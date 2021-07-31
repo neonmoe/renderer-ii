@@ -54,6 +54,6 @@ impl Camera<'_> {
     /// [Camera] and [Canvas].
     pub(crate) fn update(&self, canvas: &Canvas) -> Result<(), Error> {
         self.transforms_buffer
-            .update_data(&[GlobalTransforms::new(canvas)])
+            .update_data(&canvas.gpu, &[GlobalTransforms::new(canvas)])
     }
 }

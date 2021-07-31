@@ -55,7 +55,6 @@ impl Buffer<'_> {
         let allocation_create_info = vk_mem::AllocationCreateInfo {
             usage: vk_mem::MemoryUsage::CpuToGpu,
             flags: vk_mem::AllocationCreateFlags::MAPPED,
-            required_flags: vk::MemoryPropertyFlags::HOST_COHERENT,
             ..Default::default()
         };
         let (vk_buffer, allocation, alloc_info) = gpu
@@ -64,6 +63,9 @@ impl Buffer<'_> {
             .map_err(Error::VmaBufferAllocation)?;
         let buffer_ptr = alloc_info.get_mapped_data();
         copy_buffer_data(data, buffer_ptr);
+        gpu.allocator
+            .flush_allocation(&allocation, 0, vk::WHOLE_SIZE as usize)
+            .map_err(Error::VmaFlushAllocation)?;
         let mut buffer = Buffer {
             gpu,
             buffer: vk_buffer,
@@ -143,11 +145,14 @@ impl Buffer<'_> {
         Ok(buffer)
     }
 
-    pub fn update_data<T>(&self, new_data: &[T]) -> Result<(), Error> {
+    pub fn update_data<T>(&self, gpu: &Gpu, new_data: &[T]) -> Result<(), Error> {
         if !self.editable {
             Err(Error::BufferNotEditable)
         } else {
             copy_buffer_data(new_data, self.alloc_info.get_mapped_data());
+            gpu.allocator
+                .flush_allocation(&self.allocation, 0, vk::WHOLE_SIZE as usize)
+                .map_err(Error::VmaFlushAllocation)?;
             Ok(())
         }
     }

@@ -81,7 +81,7 @@ fn main() -> anyhow::Result<()> {
             [Vec3::new(-0.5, 0.5, 0.0).rotated_by(rotor), yellow],
             [Vec3::new(0.5, 0.5, 0.0).rotated_by(rotor), red],
         ];
-        meshes[0].update_vertices(&vertices)?;
+        meshes[0].update_vertices(&gpu, &vertices)?;
 
         for event in event_pump.poll_iter() {
             match event {
@@ -127,11 +127,16 @@ fn main() -> anyhow::Result<()> {
                 }
             })
             .sum();
-        if let Some(avg_interval) = interval_sum.checked_div(interval_count as u32) {
+        if let (Some(avg_interval), Ok((used, alloced))) = (
+            interval_sum.checked_div(interval_count as u32),
+            gpu.vram_usage(),
+        ) {
             let _ = window.set_title(&format!(
-                "{} ({:.2} ms)",
+                "{} ({:.2} ms frame interval, {} of VRAM in use, {} allocated)",
                 env!("CARGO_PKG_NAME"),
-                avg_interval.as_secs_f64() * 1000.0
+                avg_interval.as_secs_f64() * 1000.0,
+                display_bytes(used),
+                display_bytes(alloced),
             ));
         }
     }
@@ -139,6 +144,18 @@ fn main() -> anyhow::Result<()> {
     gpu.wait_idle()?;
 
     Ok(())
+}
+
+fn display_bytes(bytes: u64) -> String {
+    const KIBI: u64 = 1_024;
+    const MEBI: u64 = KIBI * KIBI;
+    const GIBI: u64 = KIBI * KIBI * KIBI;
+    match bytes {
+        x if x < KIBI => format!("{:.1} bytes", bytes as f32),
+        x if x < MEBI => format!("{:.1} KiB", bytes as f32 / KIBI as f32),
+        x if x < GIBI => format!("{:.1} MiB", bytes as f32 / MEBI as f32),
+        _ => format!("{:.1} GiB", bytes as f32 / GIBI as f32),
+    }
 }
 
 mod logger {
