@@ -547,6 +547,8 @@ impl Gpu<'_> {
                     &[],
                 );
                 let mesh_buffer = mesh.mesh_buffer.buffer;
+                // TODO: If editable, copy the buffer to a temporary pool with CAN_BECOME_LOST
+                // to avoid changing the buffer while it's still in use.
                 self.device
                     .cmd_bind_vertex_buffers(command_buffer, 0, &[mesh_buffer], &[0]);
                 self.device.cmd_bind_index_buffer(

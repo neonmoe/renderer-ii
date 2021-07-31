@@ -346,7 +346,7 @@ fn create_pipelines(
         let rasterization_create_info = vk::PipelineRasterizationStateCreateInfo::builder()
             .polygon_mode(vk::PolygonMode::FILL)
             .cull_mode(vk::CullModeFlags::BACK)
-            .front_face(vk::FrontFace::CLOCKWISE)
+            .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
             .line_width(1.0);
 
         // TODO: Add multisampling

@@ -187,6 +187,8 @@ impl Descriptors {
         offset: vk::DeviceSize,
         range: vk::DeviceSize,
     ) {
+        // TODO: Add frame-specific buffers, copy given buffer to current frame's buffer
+        // to avoid changing the buffer while it's being used in a previous frame.
         let pipeline_idx = pipeline as usize;
         let set_idx = set as usize;
         for descriptor_sets_of_a_frame in &self.descriptor_sets {
