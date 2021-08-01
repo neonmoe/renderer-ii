@@ -8,7 +8,9 @@ use ash::{vk, Device, Instance};
 use std::cell::Cell;
 use std::ffi::CStr;
 use std::sync::mpsc::{self, Receiver, Sender};
-use vk_mem::{Allocator, AllocatorCreateFlags, AllocatorCreateInfo};
+
+/// Get from [Gpu::wait_frame].
+pub struct FrameIndex(u32);
 
 /// A unique id for every distinct GPU.
 pub struct GpuId([u8; 16]);
@@ -36,8 +38,12 @@ pub struct Gpu<'a> {
 
     pub(crate) physical_device: vk::PhysicalDevice,
     pub(crate) device: Device,
-    pub(crate) allocator: Allocator,
+    pub(crate) allocator: vk_mem::Allocator,
     pub(crate) command_pool: vk::CommandPool,
+
+    pub(crate) staging_cpu_buffer_pool: vk_mem::AllocatorPool,
+    pub(crate) main_gpu_buffer_pool: vk_mem::AllocatorPool,
+    pub(crate) temp_gpu_buffer_pools: Vec<vk_mem::AllocatorPool>,
 
     pub(crate) graphics_family_index: u32,
     pub(crate) surface_family_index: u32,
@@ -50,6 +56,10 @@ pub struct Gpu<'a> {
     frame_index: Cell<u32>,
 
     buffer_uploads: (Sender<BufferUpload>, Receiver<BufferUpload>),
+    temporary_buffers: Vec<(
+        Sender<(vk::Buffer, vk_mem::Allocation)>,
+        Receiver<(vk::Buffer, vk_mem::Allocation)>,
+    )>,
 }
 
 #[derive(Clone, Copy)]
@@ -67,6 +77,11 @@ impl Drop for Gpu<'_> {
 
         unsafe { self.device.destroy_command_pool(self.command_pool, None) };
 
+        let _ = self.allocator.destroy_pool(&self.staging_cpu_buffer_pool);
+        let _ = self.allocator.destroy_pool(&self.main_gpu_buffer_pool);
+        for temp_gpu_buffer_pool in &self.temp_gpu_buffer_pools {
+            let _ = self.allocator.destroy_pool(temp_gpu_buffer_pool);
+        }
         self.allocator.destroy();
 
         for frame_sync_objects in &self.frame_sync_objects_vec {
@@ -286,19 +301,8 @@ impl Gpu<'_> {
             }
         }
 
-        let allocator_create_info = AllocatorCreateInfo {
-            physical_device,
-            device: device.clone(),
-            instance: driver.instance.clone(),
-            flags: AllocatorCreateFlags::EXTERNALLY_SYNCHRONIZED,
-            preferred_large_heap_block_size: 128 * 1024 * 1024,
-            frame_in_use_count: 1,
-            heap_size_limits: None,
-        };
-        let allocator =
-            Allocator::new(&allocator_create_info).map_err(Error::VmaAllocatorCreation)?;
-
-        let frame_sync_objects_vec = (0..2)
+        let frame_in_use_count = 2;
+        let frame_sync_objects_vec = (0..frame_in_use_count)
             .map(|_| {
                 let acquired_image_sp = unsafe {
                     device
@@ -337,23 +341,105 @@ impl Gpu<'_> {
 
         let descriptors = Descriptors::new(&device, frame_sync_objects_vec.len() as u32)?;
 
+        let allocator_create_info = vk_mem::AllocatorCreateInfo {
+            physical_device,
+            device: device.clone(),
+            instance: driver.instance.clone(),
+            flags: vk_mem::AllocatorCreateFlags::EXTERNALLY_SYNCHRONIZED,
+            preferred_large_heap_block_size: 128 * 1024 * 1024,
+            frame_in_use_count,
+            heap_size_limits: None,
+        };
+        let allocator =
+            vk_mem::Allocator::new(&allocator_create_info).map_err(Error::VmaAllocatorCreation)?;
+
+        let mesh_usage = vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::VERTEX_BUFFER;
+        let uniform_usage = vk::BufferUsageFlags::UNIFORM_BUFFER;
+        let pool_defaults = vk_mem::AllocatorPoolCreateInfo {
+            flags: vk_mem::AllocatorPoolCreateFlags::IGNORE_BUFFER_IMAGE_GRANULARITY,
+            frame_in_use_count,
+            ..Default::default()
+        };
+
+        let cpu_buffer_info = vk::BufferCreateInfo::builder()
+            .size(1024)
+            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let cpu_alloc_info = vk_mem::AllocationCreateInfo {
+            required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
+            ..Default::default()
+        };
+        let staging_cpu_buffer_pool = allocator
+            .create_pool(&vk_mem::AllocatorPoolCreateInfo {
+                memory_type_index: allocator
+                    .find_memory_type_index_for_buffer_info(&cpu_buffer_info, &cpu_alloc_info)
+                    .map_err(Error::VmaFindMemoryType)?,
+                ..pool_defaults
+            })
+            .map_err(Error::VmaPoolCreation)?;
+
+        let gpu_buffer_info = vk::BufferCreateInfo::builder()
+            .size(1024)
+            .usage(vk::BufferUsageFlags::TRANSFER_DST | uniform_usage | mesh_usage)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let gpu_alloc_info = vk_mem::AllocationCreateInfo {
+            required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            ..Default::default()
+        };
+        let main_gpu_buffer_pool = allocator
+            .create_pool(&vk_mem::AllocatorPoolCreateInfo {
+                memory_type_index: allocator
+                    .find_memory_type_index_for_buffer_info(&gpu_buffer_info, &gpu_alloc_info)
+                    .map_err(Error::VmaFindMemoryType)?,
+                ..pool_defaults
+            })
+            .map_err(Error::VmaPoolCreation)?;
+        let temp_gpu_buffer_pools = (0..frame_in_use_count)
+            .map(|_| {
+                allocator
+                    .create_pool(&vk_mem::AllocatorPoolCreateInfo {
+                        memory_type_index: allocator
+                            .find_memory_type_index_for_buffer_info(
+                                &gpu_buffer_info,
+                                &gpu_alloc_info,
+                            )
+                            .map_err(Error::VmaFindMemoryType)?,
+                        flags: pool_defaults.flags
+                            | vk_mem::AllocatorPoolCreateFlags::LINEAR_ALGORITHM,
+                        ..pool_defaults
+                    })
+                    .map_err(Error::VmaPoolCreation)
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
         Ok((
             Gpu {
                 driver,
+
                 surface_ext,
                 swapchain_ext,
+
                 physical_device,
                 device,
+                allocator,
+                command_pool,
+
+                staging_cpu_buffer_pool,
+                main_gpu_buffer_pool,
+                temp_gpu_buffer_pools,
+
                 graphics_family_index,
                 surface_family_index,
-                command_pool,
                 graphics_queue,
                 surface_queue,
-                allocator,
+
                 descriptors,
-                frame_index: Cell::new(0),
+
                 frame_sync_objects_vec,
+                frame_index: Cell::new(0),
+
                 buffer_uploads: mpsc::channel(),
+                temporary_buffers: (0..frame_in_use_count).map(|_| mpsc::channel()).collect(),
             },
             physical_devices,
         ))
@@ -418,7 +504,10 @@ impl Gpu<'_> {
     }
 
     /// Wait until the next frame can start rendering.
-    pub fn wait_frame(&self) -> Result<(), Error> {
+    ///
+    /// After ensuring that the next frame can be rendered, this also
+    /// frees the resources that can now be freed up.
+    pub fn wait_frame(&self) -> Result<FrameIndex, Error> {
         let frame_index = self.frame_index.get().wrapping_add(1);
         let next_sync_objects =
             self.frame_sync_objects_vec[frame_index as usize % self.frame_sync_objects_vec.len()];
@@ -427,7 +516,14 @@ impl Gpu<'_> {
                 .wait_for_fences(&[next_sync_objects.finished_queue_fence], true, u64::MAX)
                 .map_err(Error::VulkanFenceWait)
         }?;
-        Ok(())
+
+        let (_, temp_allocs_receiver) =
+            &self.temporary_buffers[frame_index as usize % self.temporary_buffers.len()];
+        for (buffer, allocation) in temp_allocs_receiver.try_iter() {
+            let _ = self.allocator.destroy_buffer(buffer, &allocation);
+        }
+
+        Ok(FrameIndex(frame_index))
     }
 
     /// Queue up all the rendering commands.
@@ -437,6 +533,7 @@ impl Gpu<'_> {
     /// happens.
     pub fn render_frame(
         &self,
+        FrameIndex(frame_index): FrameIndex,
         canvas: &Canvas,
         camera: &Camera,
         meshes: &[Mesh],
@@ -444,7 +541,6 @@ impl Gpu<'_> {
         // NOTE: This will cause self.allocator to mis-diagnose lost
         // allocations once per ~828 days (assuming 60 fps) and cause
         // the slowest memory leak ever.
-        let frame_index = self.frame_index.get().wrapping_add(1);
         self.frame_index.set(frame_index);
         let _ = self.allocator.set_current_frame_index(frame_index);
 
@@ -536,6 +632,9 @@ impl Gpu<'_> {
                 .map_err(Error::VulkanBeginCommandBuffer)?;
         }
 
+        let temp_buffer_pool =
+            &self.temp_gpu_buffer_pools[frame_index as usize % self.temp_gpu_buffer_pools.len()];
+
         let render_area = vk::Rect2D::builder().extent(canvas.extent).build();
         let clear_colors = [vk::ClearValue::default()];
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
@@ -564,7 +663,20 @@ impl Gpu<'_> {
                     self.descriptors.descriptor_sets(frame_index, mesh.pipeline),
                     &[],
                 );
-                let mesh_buffer = mesh.mesh_buffer.buffer;
+                let mesh_buffer = if let Some(buffer) = mesh.mesh_buffer.immutable_buffer() {
+                    buffer
+                } else if let Ok((buffer, alloc, _)) = mesh.mesh_buffer.mutable_buffer(
+                    command_buffer,
+                    &self.allocator,
+                    temp_buffer_pool.clone(),
+                ) {
+                    let (sender, _) = &self.temporary_buffers
+                        [frame_index as usize % self.temporary_buffers.len()];
+                    let _ = sender.send((buffer, alloc));
+                    buffer
+                } else {
+                    continue;
+                };
                 // TODO: If editable, copy the buffer to a temporary pool with CAN_BECOME_LOST
                 // to avoid changing the buffer while it's still in use.
                 self.device
@@ -601,4 +713,13 @@ fn is_extension_supported(
             extension_name == target_extension_name
         }),
     }
+}
+
+fn make_temp_copy_buffer(
+    command_buffer: vk::CommandBuffer,
+    allocator: &vk_mem::Allocator,
+    pool: &vk_mem::AllocatorPool,
+    buffer: vk::Buffer,
+) -> (vk::Buffer, vk_mem::Allocation) {
+    todo!()
 }

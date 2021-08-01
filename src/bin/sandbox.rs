@@ -107,12 +107,12 @@ fn main() -> anyhow::Result<()> {
             size_changed = false;
         }
 
-        match gpu.render_frame(&canvas, &camera, &meshes) {
+        let frame_index = gpu.wait_frame()?;
+        match gpu.render_frame(frame_index, &canvas, &camera, &meshes) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
         }
-        gpu.wait_frame()?;
 
         frame_instants.push(Instant::now());
         frame_instants.retain(|time| (Instant::now() - *time) < Duration::from_secs(1));

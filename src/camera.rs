@@ -32,21 +32,7 @@ pub struct Camera<'a> {
 
 impl Camera<'_> {
     pub fn new<'a>(gpu: &'a Gpu, canvas: &Canvas) -> Result<Camera<'a>, Error> {
-        let transforms_buffer = Buffer::new(
-            gpu,
-            &[GlobalTransforms::new(canvas)],
-            true,
-            vk::BufferUsageFlags::UNIFORM_BUFFER,
-        )?;
-        gpu.descriptors.set_uniform_buffer(
-            &gpu.device,
-            Pipeline::PlainVertexColor,
-            0,
-            0,
-            transforms_buffer.buffer,
-            0,
-            vk::WHOLE_SIZE,
-        );
+        let transforms_buffer = Buffer::new(gpu, &[GlobalTransforms::new(canvas)], true)?;
         Ok(Camera { transforms_buffer })
     }
 
@@ -54,6 +40,16 @@ impl Camera<'_> {
     /// [Camera] and [Canvas].
     pub(crate) fn update(&self, canvas: &Canvas) -> Result<(), Error> {
         self.transforms_buffer
-            .update_data(&canvas.gpu, &[GlobalTransforms::new(canvas)])
+            .update_data(&canvas.gpu, &[GlobalTransforms::new(canvas)])?;
+        canvas.gpu.descriptors.set_uniform_buffer(
+            &canvas.gpu.device,
+            Pipeline::PlainVertexColor,
+            0,
+            0,
+            self.transforms_buffer.immutable_buffer().unwrap(),
+            0,
+            vk::WHOLE_SIZE,
+        );
+        Ok(())
     }
 }

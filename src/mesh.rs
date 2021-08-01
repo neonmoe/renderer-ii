@@ -40,10 +40,8 @@ impl Mesh<'_> {
             ptr::copy_nonoverlapping(indices_src_ptr, indices_dst_ptr, indices_size);
         }
 
-        let usage = vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER;
-
         Ok(Mesh {
-            mesh_buffer: Buffer::new(gpu, &data, editable, usage)?,
+            mesh_buffer: Buffer::new(gpu, &data, editable)?,
             pipeline,
             index_count: indices.len() as u32,
             indices_offset: vertices_size as vk::DeviceSize,

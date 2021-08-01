@@ -69,12 +69,16 @@ pub enum Error {
     VulkanAllocateDescriptorSets(#[source] vk::Result),
     #[error("vma (via vk-mem-rs) allocator creation failed")]
     VmaAllocatorCreation(#[source] vk_mem::error::Error),
+    #[error("vma (via vk-mem-rs) allocator pool creation failed")]
+    VmaPoolCreation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) buffer allocation failed")]
     VmaBufferAllocation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) could not flush allocation")]
     VmaFlushAllocation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) stats calculation failed")]
     VmaCalculateStats(#[source] vk_mem::error::Error),
+    #[error("vma (via vk-mem-rs) could not find a memory type index (gpu doesn't support required memory features)")]
+    VmaFindMemoryType(#[source] vk_mem::error::Error),
     #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
     BufferNotEditable,
 }
