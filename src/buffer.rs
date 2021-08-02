@@ -152,7 +152,7 @@ impl Buffer<'_> {
     /// manually, it's called right before rendering.
     pub fn buffer(&self, frame_index: u32) -> Result<vk::Buffer, Error> {
         if self.editable {
-            let pool_index = frame_index as usize % self.gpu.temp_gpu_buffer_pools.len();
+            let pool_index = self.gpu.frame_mod(frame_index);
             let temp_pool = self.gpu.temp_gpu_buffer_pools[pool_index].clone();
             let (temp_buffer, temp_alloc, _, upload_cmdbuf, finished_upload) =
                 start_buffer_upload(&self.gpu, temp_pool.clone(), self.buffer, self.buffer_size)?;

@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::{Error, Gpu};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::Device;
@@ -179,14 +179,14 @@ impl Descriptors {
 
     pub(crate) fn set_uniform_buffer(
         &self,
-        device: &Device,
+        gpu: &Gpu,
         pipeline: Pipeline,
         frame_index: u32,
         set: u32,
         binding: u32,
         buffer: vk::Buffer,
     ) {
-        let frame_idx = frame_index as usize % self.descriptor_sets.len();
+        let frame_idx = gpu.frame_mod(frame_index);
         let pipeline_idx = pipeline as usize;
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[frame_idx][pipeline_idx][set_idx];
@@ -203,16 +203,18 @@ impl Descriptors {
             .descriptor_type(params.descriptor_type)
             .buffer_info(&descriptor_buffer_info)
             .build();
-        unsafe { device.update_descriptor_sets(&[write_descriptor_set], &[]) };
+        unsafe {
+            gpu.device
+                .update_descriptor_sets(&[write_descriptor_set], &[])
+        };
     }
 
     pub(crate) fn descriptor_sets(
         &self,
+        gpu: &Gpu,
         frame_index: u32,
-        pipeline: Pipeline,
+        pipeline_idx: usize,
     ) -> &[vk::DescriptorSet] {
-        let pipeline_idx = pipeline as usize;
-        let frame_index = frame_index as usize % self.descriptor_sets.len();
-        &self.descriptor_sets[frame_index][pipeline_idx]
+        &self.descriptor_sets[gpu.frame_mod(frame_index)][pipeline_idx]
     }
 }

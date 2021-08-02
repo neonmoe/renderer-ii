@@ -1,5 +1,5 @@
 use crate::buffer::BufferUpload;
-use crate::pipeline::Descriptors;
+use crate::pipeline::{Descriptors, Pipeline};
 use crate::{Camera, Canvas, Driver, Error, Mesh};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
@@ -54,6 +54,7 @@ pub struct Gpu<'a> {
 
     pub(crate) frame_sync_objects_vec: Vec<FrameSyncObjects>,
     frame_index: Cell<u32>,
+    frame_count: Cell<u32>,
 
     buffer_uploads: (Sender<BufferUpload>, Receiver<BufferUpload>),
     temporary_buffers: Vec<(
@@ -308,7 +309,7 @@ impl Gpu<'_> {
             }
         }
 
-        let frame_in_use_count = 2;
+        let frame_in_use_count = 3;
         let frame_sync_objects_vec = (0..frame_in_use_count)
             .map(|_| {
                 let acquired_image_sp = unsafe {
@@ -346,7 +347,7 @@ impl Gpu<'_> {
         let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
             .map_err(Error::VulkanCommandPoolCreation)?;
 
-        let descriptors = Descriptors::new(&device, frame_sync_objects_vec.len() as u32)?;
+        let descriptors = Descriptors::new(&device, frame_in_use_count)?;
 
         let allocator_create_info = vk_mem::AllocatorCreateInfo {
             physical_device,
@@ -444,6 +445,7 @@ impl Gpu<'_> {
 
                 frame_sync_objects_vec,
                 frame_index: Cell::new(0),
+                frame_count: Cell::new(frame_in_use_count),
 
                 buffer_uploads: mpsc::channel(),
                 temporary_buffers: (0..frame_in_use_count).map(|_| mpsc::channel()).collect(),
@@ -462,8 +464,18 @@ impl Gpu<'_> {
         buffer: vk::Buffer,
         allocation: vk_mem::Allocation,
     ) {
-        let index = frame_index as usize % self.temporary_buffers.len();
+        let index = self.frame_mod(frame_index);
         let _ = self.temporary_buffers[index].0.send((buffer, allocation));
+    }
+
+    pub(crate) fn set_frame_count(&self, new_frame_count: u32) {
+        self.frame_count.set(new_frame_count);
+    }
+
+    /// Returns the frame index % frame count. Generally everything
+    /// frame-specific is a vec that can be indexed into with this.
+    pub(crate) fn frame_mod(&self, frame_index: u32) -> usize {
+        (frame_index % self.frame_count.get()) as usize
     }
 
     /// Wait for all non-editable [Buffer]es to upload.
@@ -527,17 +539,20 @@ impl Gpu<'_> {
     /// After ensuring that the next frame can be rendered, this also
     /// frees the resources that can now be freed up.
     pub fn wait_frame(&self) -> Result<FrameIndex, Error> {
+        // NOTE: This will cause self.allocator to mis-diagnose lost
+        // allocations once per ~828 days (assuming 60 fps) and cause
+        // the slowest memory leak ever. The reason it's a u32 is
+        // because that's what VMA uses.
         let frame_index = self.frame_index.get().wrapping_add(1);
-        let next_sync_objects =
-            self.frame_sync_objects_vec[frame_index as usize % self.frame_sync_objects_vec.len()];
+
+        let next_sync_objects = self.frame_sync_objects_vec[self.frame_mod(frame_index)];
         unsafe {
             self.device
                 .wait_for_fences(&[next_sync_objects.finished_queue_fence], true, u64::MAX)
                 .map_err(Error::VulkanFenceWait)
         }?;
 
-        let (_, temp_allocs_receiver) =
-            &self.temporary_buffers[frame_index as usize % self.temporary_buffers.len()];
+        let (_, temp_allocs_receiver) = &self.temporary_buffers[self.frame_mod(frame_index)];
         for (buffer, allocation) in temp_allocs_receiver.try_iter() {
             let _ = self.allocator.destroy_buffer(buffer, &allocation);
         }
@@ -557,9 +572,6 @@ impl Gpu<'_> {
         camera: &Camera,
         meshes: &[Mesh],
     ) -> Result<(), Error> {
-        // NOTE: This will cause self.allocator to mis-diagnose lost
-        // allocations once per ~828 days (assuming 60 fps) and cause
-        // the slowest memory leak ever.
         self.frame_index.set(frame_index);
         let _ = self.allocator.set_current_frame_index(frame_index);
 
@@ -569,7 +581,7 @@ impl Gpu<'_> {
             acquired_image_sp,
             finished_command_buffers_sp,
             finished_queue_fence,
-        } = self.frame_sync_objects_vec[frame_index as usize % self.frame_sync_objects_vec.len()];
+        } = self.frame_sync_objects_vec[self.frame_mod(frame_index)];
 
         let (image_index, _) = unsafe {
             self.swapchain_ext
@@ -661,39 +673,81 @@ impl Gpu<'_> {
                 command_buffer,
                 &render_pass_begin_info,
                 vk::SubpassContents::INLINE,
-            );
-            for mesh in meshes {
-                let pipeline_idx = mesh.pipeline as usize;
+            )
+        };
+
+        // Bind the shared descriptor set (#0)
+        let shared_descriptor_set = self.descriptors.descriptor_sets(&self, frame_index, 0)[0];
+        unsafe {
+            self.device.cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.descriptors.pipeline_layouts[0],
+                0,
+                &[shared_descriptor_set],
+                &[],
+            )
+        };
+
+        let mut meshes_per_pipeline = (0..(Pipeline::Count as usize))
+            .map(|_| Vec::with_capacity(meshes.len()))
+            .collect::<Vec<Vec<&Mesh<'_>>>>();
+        for mesh in meshes {
+            let bucket = unsafe { meshes_per_pipeline.get_unchecked_mut(mesh.pipeline as usize) };
+            bucket.push(mesh);
+        }
+
+        for (pipeline_idx, meshes) in meshes_per_pipeline.into_iter().enumerate() {
+            if meshes.is_empty() {
+                continue;
+            }
+
+            unsafe {
                 self.device.cmd_bind_pipeline(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
                     canvas.pipelines[pipeline_idx],
-                );
-                self.device.cmd_bind_descriptor_sets(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    self.descriptors.pipeline_layouts[pipeline_idx],
-                    0,
-                    self.descriptors.descriptor_sets(frame_index, mesh.pipeline),
-                    &[],
-                );
+                )
+            };
+            let layout = self.descriptors.pipeline_layouts[pipeline_idx];
+            let descriptor_sets =
+                self.descriptors
+                    .descriptor_sets(&self, frame_index, pipeline_idx);
+            if descriptor_sets.len() > 1 {
+                unsafe {
+                    self.device.cmd_bind_descriptor_sets(
+                        command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        layout,
+                        1,
+                        &descriptor_sets[1..],
+                        &[],
+                    )
+                };
+            }
 
+            for mesh in meshes {
                 let mesh_buffer = if let Ok(buffer) = mesh.mesh_buffer.buffer(frame_index) {
                     buffer
                 } else {
                     continue;
                 };
-                self.device
-                    .cmd_bind_vertex_buffers(command_buffer, 0, &[mesh_buffer], &[0]);
-                self.device.cmd_bind_index_buffer(
-                    command_buffer,
-                    mesh_buffer,
-                    mesh.indices_offset,
-                    mesh.index_type,
-                );
-                self.device
-                    .cmd_draw_indexed(command_buffer, mesh.index_count, 1, 0, 0, 0);
+                unsafe {
+                    self.device
+                        .cmd_bind_vertex_buffers(command_buffer, 0, &[mesh_buffer], &[0]);
+                    self.device.cmd_bind_index_buffer(
+                        command_buffer,
+                        mesh_buffer,
+                        mesh.indices_offset,
+                        mesh.index_type,
+                    );
+                    self.device
+                        .cmd_draw_indexed(command_buffer, mesh.index_count, 1, 0, 0, 0);
+                }
             }
+        }
+
+        unsafe {
             self.device.cmd_end_render_pass(command_buffer);
         }
 

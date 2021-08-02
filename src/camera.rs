@@ -42,7 +42,7 @@ impl Camera<'_> {
             .update_data(&canvas.gpu, &[GlobalTransforms::new(canvas)])?;
         let buffer = self.transforms_buffer.buffer(frame_index)?;
         canvas.gpu.descriptors.set_uniform_buffer(
-            &canvas.gpu.device,
+            &canvas.gpu,
             Pipeline::PlainVertexColor,
             frame_index,
             0,

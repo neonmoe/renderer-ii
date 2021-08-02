@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
     let sdl_context = sdl2::init().map_err(SandboxError::Sdl)?;
     let video_subsystem = sdl_context.video().map_err(SandboxError::Sdl)?;
     let mut window = video_subsystem
-        .window("neonvk sandbox", 640, 640)
+        .window("neonvk sandbox", 640, 480)
         .position_centered()
         .resizable()
         .allow_highdpi()

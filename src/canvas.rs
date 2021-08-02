@@ -71,7 +71,7 @@ impl Canvas<'_> {
         let device = &gpu.device;
         let swapchain_ext = &gpu.swapchain_ext;
         let queue_family_indices = [gpu.graphics_family_index, gpu.surface_family_index];
-        let (swapchain, swapchain_format, extent) = create_swapchain(
+        let (swapchain, swapchain_format, extent, frame_count) = create_swapchain(
             &gpu.surface_ext,
             &swapchain_ext,
             gpu.driver.surface,
@@ -83,6 +83,8 @@ impl Canvas<'_> {
             gpu.physical_device,
             &queue_family_indices,
         )?;
+
+        gpu.set_frame_count(frame_count);
 
         // TODO: Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
@@ -165,9 +167,19 @@ fn create_swapchain(
     old_swapchain: Option<vk::SwapchainKHR>,
     physical_device: vk::PhysicalDevice,
     queue_family_indices: &[u32],
-) -> Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D), Error> {
+) -> Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D, u32), Error> {
+    // NOTE: The following combinations should be presented as a config option:
+    // - FIFO + 2 (traditional double-buffered vsync)
+    //   - no tearing, good latency, bad for perf when running under refresh rate
+    // - FIFO + 3 (like double-buffering, but longer queue)
+    //   - no tearing, bad latency, no perf issues when running under refresh rate
+    // - MAILBOX + 3 (render-constantly, discard frames when waiting for vsync)
+    //   - no tearing, great latency, optimal choice when available
+    // - IMMEDIATE + 2 (render-constantly, ignore vsync (probably causes tearing))
+    //   - possible tearing, best latency
+    // With the non-available ones grayed out, of course.
     let present_mode = vk::PresentModeKHR::FIFO;
-    let min_image_count = 2;
+    let min_image_count = 3;
 
     let (image_format, image_color_space) = {
         let surface_formats = unsafe {
@@ -236,7 +248,12 @@ fn create_swapchain(
     let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }
         .map_err(Error::VulkanSwapchainCreation)?;
 
-    Ok((swapchain, image_format, swapchain_create_info.image_extent))
+    Ok((
+        swapchain,
+        image_format,
+        swapchain_create_info.image_extent,
+        min_image_count,
+    ))
 }
 
 fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderPass, Error> {
