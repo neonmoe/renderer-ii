@@ -1,6 +1,5 @@
 use crate::buffer::Buffer;
 use crate::{Canvas, Error, Gpu, Pipeline};
-use ash::vk;
 use ultraviolet::{projection, Mat4, Vec3};
 
 struct GlobalTransforms {
@@ -38,17 +37,17 @@ impl Camera<'_> {
 
     /// Updates Vulkan buffers with the current state of the
     /// [Camera] and [Canvas].
-    pub(crate) fn update(&self, canvas: &Canvas) -> Result<(), Error> {
+    pub(crate) fn update(&self, canvas: &Canvas, frame_index: u32) -> Result<(), Error> {
         self.transforms_buffer
             .update_data(&canvas.gpu, &[GlobalTransforms::new(canvas)])?;
+        let buffer = self.transforms_buffer.buffer(frame_index)?;
         canvas.gpu.descriptors.set_uniform_buffer(
             &canvas.gpu.device,
             Pipeline::PlainVertexColor,
+            frame_index,
             0,
             0,
-            self.transforms_buffer.immutable_buffer().unwrap(),
-            0,
-            vk::WHOLE_SIZE,
+            buffer,
         );
         Ok(())
     }

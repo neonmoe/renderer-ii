@@ -71,11 +71,16 @@ pub(crate) struct FrameSyncObjects {
 
 impl Drop for Gpu<'_> {
     fn drop(&mut self) {
+        let _ = self.wait_buffer_uploads();
         let _ = self.wait_idle();
 
         self.descriptors.clean_up(&self.device);
 
-        unsafe { self.device.destroy_command_pool(self.command_pool, None) };
+        for (_, temp_allocs_receiver) in &self.temporary_buffers {
+            for (buffer, allocation) in temp_allocs_receiver.try_iter() {
+                let _ = self.allocator.destroy_buffer(buffer, &allocation);
+            }
+        }
 
         let _ = self.allocator.destroy_pool(&self.staging_cpu_buffer_pool);
         let _ = self.allocator.destroy_pool(&self.main_gpu_buffer_pool);
@@ -98,6 +103,8 @@ impl Drop for Gpu<'_> {
                 self.device.destroy_fence(finished_queue_fence, None);
             }
         }
+
+        unsafe { self.device.destroy_command_pool(self.command_pool, None) };
 
         unsafe { self.device.destroy_device(None) };
     }
@@ -449,6 +456,16 @@ impl Gpu<'_> {
         let _ = self.buffer_uploads.0.send(buffer_upload);
     }
 
+    pub(crate) fn add_temporary_buffer(
+        &self,
+        frame_index: u32,
+        buffer: vk::Buffer,
+        allocation: vk_mem::Allocation,
+    ) {
+        let index = frame_index as usize % self.temporary_buffers.len();
+        let _ = self.temporary_buffers[index].0.send((buffer, allocation));
+    }
+
     /// Wait for all non-editable [Buffer]es to upload.
     ///
     /// Should be called after recreating new [Buffer]es, though not
@@ -468,10 +485,12 @@ impl Gpu<'_> {
             unsafe { self.device.wait_for_fences(&fences, true, u64::MAX) }
                 .map_err(Error::VulkanFenceWait)?;
             for buffer_upload in buffer_uploads {
-                let _ = self.allocator.destroy_buffer(
-                    buffer_upload.staging_buffer,
-                    &buffer_upload.staging_allocation,
-                );
+                if let Some(buffer) = buffer_upload.staging_buffer {
+                    unsafe { self.device.destroy_buffer(buffer, None) };
+                }
+                if let Some(allocation) = &buffer_upload.staging_allocation {
+                    let _ = self.allocator.free_memory(allocation);
+                }
                 let cmdbufs = [buffer_upload.upload_cmdbuf];
                 unsafe {
                     self.device
@@ -544,13 +563,7 @@ impl Gpu<'_> {
         self.frame_index.set(frame_index);
         let _ = self.allocator.set_current_frame_index(frame_index);
 
-        // NOTE: Ideally the application should call this after
-        // creating new buffers, so this should generally be a
-        // no-op. When it's not, we don't want to risk using buffers
-        // which are still being uploaded.
-        self.wait_buffer_uploads()?;
-
-        camera.update(canvas)?;
+        camera.update(canvas, frame_index)?;
 
         let FrameSyncObjects {
             acquired_image_sp,
@@ -574,7 +587,11 @@ impl Gpu<'_> {
 
         let command_buffer = canvas.command_buffers[image_index as usize];
         let framebuffer = canvas.swapchain_framebuffers[image_index as usize];
-        self.record_commmand_buffer(command_buffer, framebuffer, frame_index, canvas, meshes)?;
+        self.record_commmand_buffer(frame_index, command_buffer, framebuffer, canvas, meshes)?;
+
+        // Ensure all the buffers are ready for use during the render.
+        // TODO: Instead of cpu-side sync, wait for buffer uploads on the GPU side, right before usage
+        self.wait_buffer_uploads()?;
 
         let wait_semaphores = [acquired_image_sp];
         let signal_semaphores = [finished_command_buffers_sp];
@@ -616,9 +633,9 @@ impl Gpu<'_> {
 
     fn record_commmand_buffer(
         &self,
+        frame_index: u32,
         command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
-        frame_index: u32,
         canvas: &Canvas,
         meshes: &[Mesh],
     ) -> Result<(), Error> {
@@ -631,9 +648,6 @@ impl Gpu<'_> {
                 .begin_command_buffer(command_buffer, &begin_info)
                 .map_err(Error::VulkanBeginCommandBuffer)?;
         }
-
-        let temp_buffer_pool =
-            &self.temp_gpu_buffer_pools[frame_index as usize % self.temp_gpu_buffer_pools.len()];
 
         let render_area = vk::Rect2D::builder().extent(canvas.extent).build();
         let clear_colors = [vk::ClearValue::default()];
@@ -663,22 +677,12 @@ impl Gpu<'_> {
                     self.descriptors.descriptor_sets(frame_index, mesh.pipeline),
                     &[],
                 );
-                let mesh_buffer = if let Some(buffer) = mesh.mesh_buffer.immutable_buffer() {
-                    buffer
-                } else if let Ok((buffer, alloc, _)) = mesh.mesh_buffer.mutable_buffer(
-                    command_buffer,
-                    &self.allocator,
-                    temp_buffer_pool.clone(),
-                ) {
-                    let (sender, _) = &self.temporary_buffers
-                        [frame_index as usize % self.temporary_buffers.len()];
-                    let _ = sender.send((buffer, alloc));
+
+                let mesh_buffer = if let Ok(buffer) = mesh.mesh_buffer.buffer(frame_index) {
                     buffer
                 } else {
                     continue;
                 };
-                // TODO: If editable, copy the buffer to a temporary pool with CAN_BECOME_LOST
-                // to avoid changing the buffer while it's still in use.
                 self.device
                     .cmd_bind_vertex_buffers(command_buffer, 0, &[mesh_buffer], &[0]);
                 self.device.cmd_bind_index_buffer(
@@ -713,13 +717,4 @@ fn is_extension_supported(
             extension_name == target_extension_name
         }),
     }
-}
-
-fn make_temp_copy_buffer(
-    command_buffer: vk::CommandBuffer,
-    allocator: &vk_mem::Allocator,
-    pool: &vk_mem::AllocatorPool,
-    buffer: vk::Buffer,
-) -> (vk::Buffer, vk_mem::Allocation) {
-    todo!()
 }

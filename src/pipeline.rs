@@ -181,33 +181,29 @@ impl Descriptors {
         &self,
         device: &Device,
         pipeline: Pipeline,
+        frame_index: u32,
         set: u32,
         binding: u32,
         buffer: vk::Buffer,
-        offset: vk::DeviceSize,
-        range: vk::DeviceSize,
     ) {
-        // TODO: Instead of setting the uniform buffer to the given one, it should be get/created from a neonvk::Buffer.
+        let frame_idx = frame_index as usize % self.descriptor_sets.len();
         let pipeline_idx = pipeline as usize;
         let set_idx = set as usize;
-        for descriptor_sets_of_a_frame in &self.descriptor_sets {
-            let descriptor_set = descriptor_sets_of_a_frame[pipeline_idx][set_idx];
-            let descriptor_buffer_info = [vk::DescriptorBufferInfo::builder()
-                .buffer(buffer)
-                .offset(offset)
-                .range(range)
-                .build()];
-            let params =
-                &PIPELINE_PARAMETERS[pipeline_idx].descriptor_sets[set_idx][binding as usize];
-            let write_descriptor_set = vk::WriteDescriptorSet::builder()
-                .dst_set(descriptor_set)
-                .dst_binding(binding)
-                .dst_array_element(0)
-                .descriptor_type(params.descriptor_type)
-                .buffer_info(&descriptor_buffer_info)
-                .build();
-            unsafe { device.update_descriptor_sets(&[write_descriptor_set], &[]) };
-        }
+        let descriptor_set = self.descriptor_sets[frame_idx][pipeline_idx][set_idx];
+        let descriptor_buffer_info = [vk::DescriptorBufferInfo::builder()
+            .buffer(buffer)
+            .offset(0)
+            .range(vk::WHOLE_SIZE)
+            .build()];
+        let params = &PIPELINE_PARAMETERS[pipeline_idx].descriptor_sets[set_idx][binding as usize];
+        let write_descriptor_set = vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_set)
+            .dst_binding(binding)
+            .dst_array_element(0)
+            .descriptor_type(params.descriptor_type)
+            .buffer_info(&descriptor_buffer_info)
+            .build();
+        unsafe { device.update_descriptor_sets(&[write_descriptor_set], &[]) };
     }
 
     pub(crate) fn descriptor_sets(

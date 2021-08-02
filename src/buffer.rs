@@ -8,9 +8,9 @@ use std::{mem, ptr};
 /// that needs to be cleaned up after it's done.
 pub(crate) struct BufferUpload {
     pub finished_upload: vk::Fence,
-    pub staging_buffer: vk::Buffer,
-    pub staging_allocation: vk_mem::Allocation,
     pub upload_cmdbuf: vk::CommandBuffer,
+    pub staging_buffer: Option<vk::Buffer>,
+    pub staging_allocation: Option<vk_mem::Allocation>,
 }
 
 pub struct Buffer<'a> {
@@ -41,8 +41,6 @@ impl Buffer<'_> {
     /// Currently the buffers are always created as INDEX | VERTEX |
     /// UNIFORM buffers.
     pub fn new<'a, T>(gpu: &'a Gpu<'_>, data: &[T], editable: bool) -> Result<Buffer<'a>, Error> {
-        // TODO: Create separate staging/gpu-only/shared allocation pools
-
         let buffer_size = (data.len() * mem::size_of::<T>()) as vk::DeviceSize;
         let buffer_create_info = vk::BufferCreateInfo::builder()
             .size(buffer_size)
@@ -119,9 +117,9 @@ impl Buffer<'_> {
 
             let buffer_upload = BufferUpload {
                 finished_upload,
-                staging_buffer: buffer.buffer,
-                staging_allocation: buffer.allocation,
                 upload_cmdbuf,
+                staging_buffer: Some(buffer.buffer),
+                staging_allocation: Some(buffer.allocation),
             };
             gpu.add_buffer_upload(buffer_upload);
 
@@ -145,32 +143,31 @@ impl Buffer<'_> {
         }
     }
 
-    /// Returns a buffer if this buffer is not editable, i.e. the
-    /// buffer does not need to be copied to a temporary buffer.
-    pub fn immutable_buffer(&self) -> Option<vk::Buffer> {
+    /// Returns a [vk::Buffer] which contains the contents of this
+    /// [Buffer].
+    ///
+    /// If self is editable, a temporary copy will be
+    /// returned. [Gpu::wait_buffer_uploads] needs to be called before
+    /// the returned buffer can be used for rendering. If not called
+    /// manually, it's called right before rendering.
+    pub fn buffer(&self, frame_index: u32) -> Result<vk::Buffer, Error> {
         if self.editable {
-            None
+            let pool_index = frame_index as usize % self.gpu.temp_gpu_buffer_pools.len();
+            let temp_pool = self.gpu.temp_gpu_buffer_pools[pool_index].clone();
+            let (temp_buffer, temp_alloc, _, upload_cmdbuf, finished_upload) =
+                start_buffer_upload(&self.gpu, temp_pool.clone(), self.buffer, self.buffer_size)?;
+            self.gpu.add_buffer_upload(BufferUpload {
+                finished_upload,
+                upload_cmdbuf,
+                staging_buffer: None,
+                staging_allocation: None,
+            });
+            self.gpu
+                .add_temporary_buffer(frame_index, temp_buffer, temp_alloc);
+            Ok(temp_buffer)
         } else {
-            Some(self.buffer)
+            Ok(self.buffer)
         }
-    }
-
-    /// Allocates a new temporary buffer, adds a copy command to the
-    /// command buffer, and returns the new buffer and allocation.
-    pub fn mutable_buffer(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        allocator: &vk_mem::Allocator,
-        temp_pool: vk_mem::AllocatorPool,
-    ) -> Result<(vk::Buffer, vk_mem::Allocation, vk_mem::AllocationInfo), Error> {
-        copy_vk_buffer(
-            &self.gpu.device,
-            command_buffer,
-            allocator,
-            temp_pool,
-            self.buffer,
-            self.buffer_size,
-        )
     }
 }
 
@@ -178,6 +175,75 @@ fn copy_buffer_data<T>(data: &[T], dst_ptr: *mut u8) {
     let size = data.len() * mem::size_of::<T>();
     let data_ptr = data.as_ptr() as *const u8;
     unsafe { ptr::copy_nonoverlapping(data_ptr, dst_ptr, size) };
+}
+
+fn start_buffer_upload(
+    gpu: &Gpu,
+    pool: vk_mem::AllocatorPool,
+    buffer: vk::Buffer,
+    buffer_size: vk::DeviceSize,
+) -> Result<
+    (
+        vk::Buffer,
+        vk_mem::Allocation,
+        vk_mem::AllocationInfo,
+        vk::CommandBuffer,
+        vk::Fence,
+    ),
+    Error,
+> {
+    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+        .command_pool(gpu.command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(1);
+    let command_buffers = unsafe {
+        gpu.device
+            .allocate_command_buffers(&command_buffer_allocate_info)
+            .map_err(Error::VulkanCommandBuffersAllocation)
+    }?;
+    let upload_cmdbuf = command_buffers[0];
+
+    let finished_upload = unsafe {
+        gpu.device
+            .create_fence(&vk::FenceCreateInfo::default(), None)
+            .map_err(Error::VulkanFenceCreation)
+    }?;
+
+    let command_buffer_begin_info =
+        vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+    unsafe {
+        gpu.device
+            .begin_command_buffer(upload_cmdbuf, &command_buffer_begin_info)
+            .map_err(Error::VulkanBeginCommandBuffer)
+    }?;
+    let (buffer, allocation, alloc_info) = copy_vk_buffer(
+        &gpu.device,
+        upload_cmdbuf,
+        &gpu.allocator,
+        pool,
+        buffer,
+        buffer_size,
+    )?;
+    unsafe { gpu.device.end_command_buffer(upload_cmdbuf) }
+        .map_err(Error::VulkanEndCommandBuffer)?;
+
+    let command_buffers = [upload_cmdbuf];
+    let submit_infos = [vk::SubmitInfo::builder()
+        .command_buffers(&command_buffers)
+        .build()];
+    unsafe {
+        gpu.device
+            .queue_submit(gpu.graphics_queue, &submit_infos, finished_upload)
+            .map_err(Error::VulkanQueueSubmit)
+    }?;
+
+    Ok((
+        buffer,
+        allocation,
+        alloc_info,
+        upload_cmdbuf,
+        finished_upload,
+    ))
 }
 
 fn copy_vk_buffer(
