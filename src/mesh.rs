@@ -17,6 +17,7 @@ impl Mesh<'_> {
     /// Creates a new mesh. Ensure that the vertices match the
     /// pipeline. If not `editable`, call [Gpu::wait_mesh_uploads]
     /// after your mesh creation code, before they're rendered.
+    #[profiling::function]
     pub fn new<'a, V, I: IndexType>(
         gpu: &'a Gpu<'_>,
         vertices: &[V],
@@ -51,6 +52,7 @@ impl Mesh<'_> {
 
     /// Updates the vertices of the mesh. The amount of vertices must
     /// be the same as in [Mesh::new].
+    #[profiling::function]
     pub fn update_vertices<V>(&mut self, gpu: &Gpu, new_vertices: &[V]) -> Result<(), Error> {
         self.mesh_buffer.update_data(gpu, new_vertices)
     }

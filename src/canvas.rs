@@ -26,6 +26,7 @@ pub struct Canvas<'a> {
 }
 
 impl Drop for Canvas<'_> {
+    #[profiling::function]
     fn drop(&mut self) {
         let device = &self.gpu.device;
 
@@ -62,6 +63,7 @@ impl Canvas<'_> {
     /// can't get the window size, e.g. when creating a new window in
     /// Wayland (when the window size is specified by the size of the
     /// initial framebuffer).
+    #[profiling::function]
     pub fn new<'a>(
         gpu: &'a Gpu,
         old_canvas: Option<&Canvas>,
@@ -159,6 +161,7 @@ impl Canvas<'_> {
     }
 }
 
+#[profiling::function]
 fn create_swapchain(
     surface_ext: &khr::Surface,
     swapchain_ext: &khr::Swapchain,
@@ -256,6 +259,7 @@ fn create_swapchain(
     ))
 }
 
+#[profiling::function]
 fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderPass, Error> {
     let surface_color_attachment = vk::AttachmentDescription::builder()
         .format(format)
@@ -301,6 +305,7 @@ fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderP
         .map_err(Error::VulkanRenderPassCreation)
 }
 
+#[profiling::function]
 fn create_pipelines(
     device: &Device,
     render_pass: vk::RenderPass,

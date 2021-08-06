@@ -21,6 +21,7 @@ pub struct Driver {
 }
 
 impl Drop for Driver {
+    #[profiling::function]
     fn drop(&mut self) {
         if let Some(debug_utils_messenger) = self.debug_utils_messenger.take() {
             debug_utils::destroy_debug_utils_messenger(
@@ -35,6 +36,7 @@ impl Drop for Driver {
 }
 
 impl Driver {
+    #[profiling::function]
     pub fn new(window: &dyn HasRawWindowHandle) -> Result<Driver, Error> {
         let entry = unsafe { Entry::new().unwrap() };
         let app_info = vk::ApplicationInfo::builder()
@@ -89,6 +91,7 @@ impl Driver {
     }
 }
 
+#[profiling::function]
 fn is_validation_layer_supported(entry: &Entry, target_layer_name: &str) -> bool {
     match entry.enumerate_instance_layer_properties() {
         Err(_) => false,
@@ -100,6 +103,7 @@ fn is_validation_layer_supported(entry: &Entry, target_layer_name: &str) -> bool
     }
 }
 
+#[profiling::function]
 fn is_extension_supported(entry: &Entry, target_extension_name: &str) -> bool {
     match entry.enumerate_instance_extension_properties() {
         Err(_) => false,

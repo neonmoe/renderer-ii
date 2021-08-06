@@ -72,6 +72,7 @@ fn main() -> anyhow::Result<()> {
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut size_changed = false;
     'running: loop {
+        profiling::finish_frame!();
         let frame_start_seconds = (Instant::now() - start_time).as_secs_f32();
 
         let rotor = Rotor3::from_angle_plane(frame_start_seconds * 1.0, Bivec3::new(1.0, 0.0, 0.0));

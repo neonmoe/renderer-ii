@@ -25,6 +25,7 @@ pub struct Buffer<'a> {
 }
 
 impl Drop for Buffer<'_> {
+    #[profiling::function]
     fn drop(&mut self) {
         let _ = self
             .gpu
@@ -40,6 +41,7 @@ impl Buffer<'_> {
     ///
     /// Currently the buffers are always created as INDEX | VERTEX |
     /// UNIFORM buffers.
+    #[profiling::function]
     pub fn new<'a, T>(gpu: &'a Gpu<'_>, data: &[T], editable: bool) -> Result<Buffer<'a>, Error> {
         let buffer_size = (data.len() * mem::size_of::<T>()) as vk::DeviceSize;
         let buffer_create_info = vk::BufferCreateInfo::builder()
@@ -131,6 +133,7 @@ impl Buffer<'_> {
         Ok(buffer)
     }
 
+    #[profiling::function]
     pub fn update_data<T>(&self, gpu: &Gpu, new_data: &[T]) -> Result<(), Error> {
         if !self.editable {
             Err(Error::BufferNotEditable)
@@ -150,12 +153,13 @@ impl Buffer<'_> {
     /// returned. [Gpu::wait_buffer_uploads] needs to be called before
     /// the returned buffer can be used for rendering. If not called
     /// manually, it's called right before rendering.
+    #[profiling::function]
     pub fn buffer(&self, frame_index: u32) -> Result<vk::Buffer, Error> {
         if self.editable {
             let pool_index = self.gpu.frame_mod(frame_index);
             let temp_pool = self.gpu.temp_gpu_buffer_pools[pool_index].clone();
             let (temp_buffer, temp_alloc, _, upload_cmdbuf, finished_upload) =
-                start_buffer_upload(&self.gpu, temp_pool.clone(), self.buffer, self.buffer_size)?;
+                start_buffer_upload(&self.gpu, temp_pool, self.buffer, self.buffer_size)?;
             self.gpu.add_buffer_upload(BufferUpload {
                 finished_upload,
                 upload_cmdbuf,
@@ -171,12 +175,14 @@ impl Buffer<'_> {
     }
 }
 
+#[profiling::function]
 fn copy_buffer_data<T>(data: &[T], dst_ptr: *mut u8) {
     let size = data.len() * mem::size_of::<T>();
     let data_ptr = data.as_ptr() as *const u8;
     unsafe { ptr::copy_nonoverlapping(data_ptr, dst_ptr, size) };
 }
 
+#[profiling::function]
 fn start_buffer_upload(
     gpu: &Gpu,
     pool: vk_mem::AllocatorPool,
@@ -246,6 +252,7 @@ fn start_buffer_upload(
     ))
 }
 
+#[profiling::function]
 fn copy_vk_buffer(
     device: &Device,
     command_buffer: vk::CommandBuffer,

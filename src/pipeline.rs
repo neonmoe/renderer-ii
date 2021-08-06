@@ -74,6 +74,7 @@ pub(crate) struct Descriptors {
 }
 
 impl Descriptors {
+    #[profiling::function]
     pub fn clean_up(&mut self, device: &Device) {
         unsafe { device.destroy_descriptor_pool(self.descriptor_pool, None) };
 
@@ -88,6 +89,7 @@ impl Descriptors {
         }
     }
 
+    #[profiling::function]
     pub fn new(device: &Device, descriptor_set_count: u32) -> Result<Descriptors, Error> {
         let create_descriptor_set_layouts = |sets: &[&[DescriptorSetLayoutParams]]| {
             sets.iter()
@@ -177,6 +179,7 @@ impl Descriptors {
         })
     }
 
+    #[profiling::function]
     pub(crate) fn set_uniform_buffer(
         &self,
         gpu: &Gpu,
@@ -209,6 +212,7 @@ impl Descriptors {
         };
     }
 
+    #[profiling::function]
     pub(crate) fn descriptor_sets(
         &self,
         gpu: &Gpu,

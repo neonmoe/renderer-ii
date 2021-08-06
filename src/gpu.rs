@@ -57,6 +57,7 @@ pub struct Gpu<'a> {
     frame_count: Cell<u32>,
 
     buffer_uploads: (Sender<BufferUpload>, Receiver<BufferUpload>),
+    #[allow(clippy::type_complexity)]
     temporary_buffers: Vec<(
         Sender<(vk::Buffer, vk_mem::Allocation)>,
         Receiver<(vk::Buffer, vk_mem::Allocation)>,
@@ -71,6 +72,7 @@ pub(crate) struct FrameSyncObjects {
 }
 
 impl Drop for Gpu<'_> {
+    #[profiling::function]
     fn drop(&mut self) {
         let _ = self.wait_buffer_uploads();
         let _ = self.wait_idle();
@@ -122,6 +124,7 @@ impl Gpu<'_> {
     /// The inner tuples consist of: whether the gpu is the one picked
     /// in this function call, the display name, and the id passed to
     /// a new [Gpu] when recreating it with a new physical device.
+    #[profiling::function]
     pub fn new(
         driver: &Driver,
         preferred_physical_device: Option<[u8; 16]>,
@@ -454,10 +457,12 @@ impl Gpu<'_> {
         ))
     }
 
+    #[profiling::function]
     pub(crate) fn add_buffer_upload(&self, buffer_upload: BufferUpload) {
         let _ = self.buffer_uploads.0.send(buffer_upload);
     }
 
+    #[profiling::function]
     pub(crate) fn add_temporary_buffer(
         &self,
         frame_index: u32,
@@ -483,6 +488,7 @@ impl Gpu<'_> {
     /// Should be called after recreating new [Buffer]es, though not
     /// needed if the new ones were editable, i.e. allocated in RAM
     /// anyways. This waits for the transfers to GPU-only memory.
+    #[profiling::function]
     pub fn wait_buffer_uploads(&self) -> Result<(), Error> {
         let buffer_uploads = self
             .buffer_uploads
@@ -517,6 +523,7 @@ impl Gpu<'_> {
 
     /// Returns the total bytes used by resources, and the total
     /// allocated bytes.
+    #[profiling::function]
     pub fn vram_usage(&self) -> Result<(vk::DeviceSize, vk::DeviceSize), Error> {
         let stats = self
             .allocator
@@ -530,6 +537,7 @@ impl Gpu<'_> {
 
     /// Wait until the device is idle. Should be called before
     /// swapchain recreation and after the game loop is over.
+    #[profiling::function]
     pub fn wait_idle(&self) -> Result<(), Error> {
         unsafe { self.device.device_wait_idle() }.map_err(Error::VulkanDeviceWaitIdle)
     }
@@ -538,6 +546,7 @@ impl Gpu<'_> {
     ///
     /// After ensuring that the next frame can be rendered, this also
     /// frees the resources that can now be freed up.
+    #[profiling::function]
     pub fn wait_frame(&self) -> Result<FrameIndex, Error> {
         // NOTE: This will cause self.allocator to mis-diagnose lost
         // allocations once per ~828 days (assuming 60 fps) and cause
@@ -565,6 +574,7 @@ impl Gpu<'_> {
     /// The rendered frame will appear on the screen some time in the
     /// future. Use [Gpu::wait_frame] to block until that
     /// happens.
+    #[profiling::function]
     pub fn render_frame(
         &self,
         FrameIndex(frame_index): FrameIndex,
@@ -643,6 +653,7 @@ impl Gpu<'_> {
         Ok(())
     }
 
+    #[profiling::function]
     fn record_commmand_buffer(
         &self,
         frame_index: u32,
@@ -757,6 +768,7 @@ impl Gpu<'_> {
     }
 }
 
+#[profiling::function]
 fn is_extension_supported(
     instance: &Instance,
     physical_device: vk::PhysicalDevice,

@@ -30,6 +30,7 @@ pub struct Camera<'a> {
 }
 
 impl Camera<'_> {
+    #[profiling::function]
     pub fn new<'a>(gpu: &'a Gpu, canvas: &Canvas) -> Result<Camera<'a>, Error> {
         let transforms_buffer = Buffer::new(gpu, &[GlobalTransforms::new(canvas)], true)?;
         Ok(Camera { transforms_buffer })
@@ -37,6 +38,7 @@ impl Camera<'_> {
 
     /// Updates Vulkan buffers with the current state of the
     /// [Camera] and [Canvas].
+    #[profiling::function]
     pub(crate) fn update(&self, canvas: &Canvas, frame_index: u32) -> Result<(), Error> {
         self.transforms_buffer
             .update_data(&canvas.gpu, &[GlobalTransforms::new(canvas)])?;
