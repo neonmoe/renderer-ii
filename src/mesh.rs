@@ -1,5 +1,5 @@
 use crate::buffer::Buffer;
-use crate::{Error, Gpu, Pipeline};
+use crate::{Error, FrameIndex, Gpu, Pipeline};
 use ash::vk;
 use std::{mem, ptr};
 
@@ -20,6 +20,7 @@ impl Mesh<'_> {
     #[profiling::function]
     pub fn new<'a, V, I: IndexType>(
         gpu: &'a Gpu<'_>,
+        frame_index: FrameIndex,
         vertices: &[V],
         indices: &[I],
         pipeline: Pipeline,
@@ -42,7 +43,7 @@ impl Mesh<'_> {
         }
 
         Ok(Mesh {
-            mesh_buffer: Buffer::new(gpu, &data, editable)?,
+            mesh_buffer: Buffer::new(gpu, frame_index, &data, editable)?,
             pipeline,
             index_count: indices.len() as u32,
             indices_offset: vertices_size as vk::DeviceSize,

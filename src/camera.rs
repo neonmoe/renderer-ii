@@ -1,5 +1,5 @@
 use crate::buffer::Buffer;
-use crate::{Canvas, Error, Gpu, Pipeline};
+use crate::{Canvas, Error, FrameIndex, Gpu, Pipeline};
 use ultraviolet::{projection, Mat4, Vec3};
 
 struct GlobalTransforms {
@@ -31,25 +31,29 @@ pub struct Camera<'a> {
 
 impl Camera<'_> {
     #[profiling::function]
-    pub fn new<'a>(gpu: &'a Gpu, canvas: &Canvas) -> Result<Camera<'a>, Error> {
-        let transforms_buffer = Buffer::new(gpu, &[GlobalTransforms::new(canvas)], true)?;
+    pub fn new<'a>(
+        gpu: &'a Gpu,
+        canvas: &Canvas,
+        frame_index: FrameIndex,
+    ) -> Result<Camera<'a>, Error> {
+        let transforms_buffer =
+            Buffer::new(gpu, frame_index, &[GlobalTransforms::new(canvas)], true)?;
         Ok(Camera { transforms_buffer })
     }
 
     /// Updates Vulkan buffers with the current state of the
     /// [Camera] and [Canvas].
     #[profiling::function]
-    pub(crate) fn update(&self, canvas: &Canvas, frame_index: u32) -> Result<(), Error> {
+    pub(crate) fn update(&self, canvas: &Canvas, frame_index: FrameIndex) -> Result<(), Error> {
         self.transforms_buffer
             .update_data(&canvas.gpu, &[GlobalTransforms::new(canvas)])?;
-        let buffer = self.transforms_buffer.buffer(frame_index)?;
         canvas.gpu.descriptors.set_uniform_buffer(
             &canvas.gpu,
-            Pipeline::PlainVertexColor,
             frame_index,
+            Pipeline::PlainVertexColor,
             0,
             0,
-            buffer,
+            self.transforms_buffer.buffer(frame_index)?,
         );
         Ok(())
     }

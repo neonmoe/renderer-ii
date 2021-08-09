@@ -11,6 +11,7 @@ macro_rules! cstr {
 
 mod buffer;
 mod debug_utils;
+mod descriptors;
 
 // public-facing modules:
 
@@ -27,7 +28,7 @@ mod error;
 pub use error::Error;
 
 mod gpu;
-pub use gpu::{Gpu, GpuId, GpuInfo};
+pub use gpu::{FrameIndex, Gpu, GpuId, GpuInfo};
 
 mod mesh;
 pub use mesh::Mesh;

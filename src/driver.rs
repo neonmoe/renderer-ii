@@ -30,8 +30,16 @@ impl Drop for Driver {
                 debug_utils_messenger,
             );
         }
-        unsafe { self.surface_ext.destroy_surface(self.surface, None) };
-        unsafe { self.instance.destroy_instance(None) };
+
+        {
+            profiling::scope!("destroy surface");
+            unsafe { self.surface_ext.destroy_surface(self.surface, None) };
+        }
+
+        {
+            profiling::scope!("destroy vulkan instance");
+            unsafe { self.instance.destroy_instance(None) };
+        }
     }
 }
 

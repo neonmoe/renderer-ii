@@ -73,6 +73,8 @@ pub enum Error {
     VmaPoolCreation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) buffer allocation failed")]
     VmaBufferAllocation(#[source] vk_mem::error::Error),
+    #[error("vma (via vk-mem-rs) buffer destruction failed")]
+    VmaBufferDestruction(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) could not flush allocation")]
     VmaFlushAllocation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) stats calculation failed")]

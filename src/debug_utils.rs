@@ -3,6 +3,7 @@ use ash::{vk, Entry, Instance};
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 
+#[profiling::function]
 pub(crate) fn create_debug_utils_messenger(
     entry: &Entry,
     instance: &Instance,
@@ -17,6 +18,7 @@ pub(crate) fn create_debug_utils_messenger(
     unsafe { debug_utils.create_debug_utils_messenger(&create_info, None) }
 }
 
+#[profiling::function]
 pub(crate) fn destroy_debug_utils_messenger(
     entry: &Entry,
     instance: &Instance,

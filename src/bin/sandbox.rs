@@ -33,14 +33,16 @@ fn main() -> anyhow::Result<()> {
     let driver = neonvk::Driver::new(&window)?;
     let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
     let mut canvas = neonvk::Canvas::new(&gpu, None, width, height)?;
-    let camera = neonvk::Camera::new(&gpu, &canvas)?;
 
+    let loading_frame_index = gpu.wait_frame()?;
+    let camera = neonvk::Camera::new(&gpu, &canvas, loading_frame_index)?;
     let red = Vec3::new(1.0, 0.1, 0.1);
     let yellow = Vec3::new(0.9, 0.9, 0.1);
     let pink = Vec3::new(0.9, 0.1, 0.9);
     let mut meshes = vec![
         neonvk::Mesh::new(
             &gpu,
+            loading_frame_index,
             &[
                 [Vec3::new(-0.5, -0.5, 0.0), red],
                 [Vec3::new(0.5, -0.5, 0.0), pink],
@@ -53,6 +55,7 @@ fn main() -> anyhow::Result<()> {
         )?,
         neonvk::Mesh::new(
             &gpu,
+            loading_frame_index,
             &[
                 [Vec3::new(-1.0, -1.0, 0.0), red],
                 [Vec3::new(-0.5, -1.0, 0.0), pink],
@@ -63,7 +66,9 @@ fn main() -> anyhow::Result<()> {
             false,
         )?,
     ];
-    gpu.wait_buffer_uploads()?;
+    // Get the first frame out of the way, to upload the meshes.
+    // TODO: Add a proper way to upload resources before the game loop
+    gpu.render_frame(loading_frame_index, &canvas, &camera, &meshes)?;
 
     let start_time = Instant::now();
     let mut frame_instants = Vec::with_capacity(10_000);

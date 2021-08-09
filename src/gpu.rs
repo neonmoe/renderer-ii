@@ -1,5 +1,6 @@
 use crate::buffer::BufferUpload;
-use crate::pipeline::{Descriptors, Pipeline};
+use crate::descriptors::Descriptors;
+use crate::pipeline::Pipeline;
 use crate::{Camera, Canvas, Driver, Error, Mesh};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
@@ -10,7 +11,16 @@ use std::ffi::CStr;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 /// Get from [Gpu::wait_frame].
-pub struct FrameIndex(u32);
+#[derive(Clone, Copy)]
+pub struct FrameIndex {
+    index: u32,
+}
+
+impl FrameIndex {
+    fn new(index: u32) -> FrameIndex {
+        FrameIndex { index }
+    }
+}
 
 /// A unique id for every distinct GPU.
 pub struct GpuId([u8; 16]);
@@ -52,53 +62,51 @@ pub struct Gpu<'a> {
 
     pub(crate) descriptors: Descriptors,
 
-    pub(crate) frame_sync_objects_vec: Vec<FrameSyncObjects>,
+    frame_locals: Vec<FrameLocal>,
     frame_index: Cell<u32>,
     frame_count: Cell<u32>,
-
-    buffer_uploads: (Sender<BufferUpload>, Receiver<BufferUpload>),
-    #[allow(clippy::type_complexity)]
-    temporary_buffers: Vec<(
-        Sender<(vk::Buffer, vk_mem::Allocation)>,
-        Receiver<(vk::Buffer, vk_mem::Allocation)>,
-    )>,
+    buffer_upload_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct FrameSyncObjects {
+struct BufferAllocation(vk::Buffer, vk_mem::Allocation);
+
+/// Synchronization objects and buffers used during a single frame,
+/// which is only cleaned up after enough frames have passed that the
+/// specific FrameLocal struct is reused. This allows for processing a
+/// frame while the previous one is still being rendered.
+struct FrameLocal {
     acquired_image_sp: vk::Semaphore,
     finished_command_buffers_sp: vk::Semaphore,
     finished_queue_fence: vk::Fence,
+
+    buffer_uploads: (Sender<BufferUpload>, Receiver<BufferUpload>),
+    temporary_buffers: (Sender<BufferAllocation>, Receiver<BufferAllocation>),
 }
 
 impl Drop for Gpu<'_> {
     #[profiling::function]
     fn drop(&mut self) {
-        let _ = self.wait_buffer_uploads();
         let _ = self.wait_idle();
 
         self.descriptors.clean_up(&self.device);
 
-        for (_, temp_allocs_receiver) in &self.temporary_buffers {
-            for (buffer, allocation) in temp_allocs_receiver.try_iter() {
-                let _ = self.allocator.destroy_buffer(buffer, &allocation);
-            }
-        }
+        for frame_local in &self.frame_locals {
+            profiling::scope!("destroy frame locals");
+            let _ = unsafe {
+                self.device
+                    .wait_for_fences(&[frame_local.finished_queue_fence], true, u64::MAX)
+                    .map_err(Error::VulkanFenceWait)
+            };
 
-        let _ = self.allocator.destroy_pool(&self.staging_cpu_buffer_pool);
-        let _ = self.allocator.destroy_pool(&self.main_gpu_buffer_pool);
-        for temp_gpu_buffer_pool in &self.temp_gpu_buffer_pools {
-            let _ = self.allocator.destroy_pool(temp_gpu_buffer_pool);
-        }
-        self.allocator.destroy();
+            let _ = self.cleanup_buffer_uploads(frame_local);
+            let _ = self.cleanup_temp_buffers(frame_local);
 
-        for frame_sync_objects in &self.frame_sync_objects_vec {
-            let FrameSyncObjects {
+            let &FrameLocal {
                 acquired_image_sp,
                 finished_command_buffers_sp,
                 finished_queue_fence,
-            } = *frame_sync_objects;
-
+                ..
+            } = frame_local;
             unsafe {
                 self.device.destroy_semaphore(acquired_image_sp, None);
                 self.device
@@ -107,9 +115,25 @@ impl Drop for Gpu<'_> {
             }
         }
 
-        unsafe { self.device.destroy_command_pool(self.command_pool, None) };
+        {
+            profiling::scope!("destroy vma allocator");
+            let _ = self.allocator.destroy_pool(&self.staging_cpu_buffer_pool);
+            let _ = self.allocator.destroy_pool(&self.main_gpu_buffer_pool);
+            for temp_gpu_buffer_pool in &self.temp_gpu_buffer_pools {
+                let _ = self.allocator.destroy_pool(temp_gpu_buffer_pool);
+            }
+            self.allocator.destroy();
+        }
 
-        unsafe { self.device.destroy_device(None) };
+        {
+            profiling::scope!("destroy vma command pools");
+            unsafe { self.device.destroy_command_pool(self.command_pool, None) };
+        }
+
+        {
+            profiling::scope!("destroy vulkan device");
+            unsafe { self.device.destroy_device(None) };
+        }
     }
 }
 
@@ -313,7 +337,7 @@ impl Gpu<'_> {
         }
 
         let frame_in_use_count = 3;
-        let frame_sync_objects_vec = (0..frame_in_use_count)
+        let frame_locals = (0..frame_in_use_count)
             .map(|_| {
                 let acquired_image_sp = unsafe {
                     device
@@ -333,13 +357,15 @@ impl Gpu<'_> {
                         )
                         .map_err(Error::VulkanFenceCreation)
                 }?;
-                Ok(FrameSyncObjects {
+                Ok(FrameLocal {
                     acquired_image_sp,
                     finished_command_buffers_sp,
                     finished_queue_fence,
+                    buffer_uploads: mpsc::channel(),
+                    temporary_buffers: mpsc::channel(),
                 })
             })
-            .collect::<Result<Vec<FrameSyncObjects>, Error>>()?;
+            .collect::<Result<Vec<FrameLocal>, Error>>()?;
 
         let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(graphics_family_index)
@@ -446,31 +472,33 @@ impl Gpu<'_> {
 
                 descriptors,
 
-                frame_sync_objects_vec,
+                frame_locals,
                 frame_index: Cell::new(0),
                 frame_count: Cell::new(frame_in_use_count),
-
-                buffer_uploads: mpsc::channel(),
-                temporary_buffers: (0..frame_in_use_count).map(|_| mpsc::channel()).collect(),
+                buffer_upload_semaphores: mpsc::channel(),
             },
             physical_devices,
         ))
     }
 
     #[profiling::function]
-    pub(crate) fn add_buffer_upload(&self, buffer_upload: BufferUpload) {
-        let _ = self.buffer_uploads.0.send(buffer_upload);
+    pub(crate) fn add_buffer_upload(&self, frame_index: FrameIndex, buffer_upload: BufferUpload) {
+        let upload_sp = buffer_upload.finished_upload;
+        let _ = self.buffer_upload_semaphores.0.send(upload_sp);
+        let frame_local = &self.frame_locals[self.frame_mod(frame_index)];
+        let _ = frame_local.buffer_uploads.0.send(buffer_upload);
     }
 
     #[profiling::function]
     pub(crate) fn add_temporary_buffer(
         &self,
-        frame_index: u32,
+        frame_index: FrameIndex,
         buffer: vk::Buffer,
         allocation: vk_mem::Allocation,
     ) {
-        let index = self.frame_mod(frame_index);
-        let _ = self.temporary_buffers[index].0.send((buffer, allocation));
+        let frame_local = &self.frame_locals[self.frame_mod(frame_index)];
+        let buffer_allocation = BufferAllocation(buffer, allocation);
+        let _ = frame_local.temporary_buffers.0.send(buffer_allocation);
     }
 
     pub(crate) fn set_frame_count(&self, new_frame_count: u32) {
@@ -479,44 +507,38 @@ impl Gpu<'_> {
 
     /// Returns the frame index % frame count. Generally everything
     /// frame-specific is a vec that can be indexed into with this.
-    pub(crate) fn frame_mod(&self, frame_index: u32) -> usize {
-        (frame_index % self.frame_count.get()) as usize
+    pub(crate) fn frame_mod(&self, frame_index: FrameIndex) -> usize {
+        (frame_index.index % self.frame_count.get()) as usize
     }
 
-    /// Wait for all non-editable [Buffer]es to upload.
-    ///
-    /// Should be called after recreating new [Buffer]es, though not
-    /// needed if the new ones were editable, i.e. allocated in RAM
-    /// anyways. This waits for the transfers to GPU-only memory.
     #[profiling::function]
-    pub fn wait_buffer_uploads(&self) -> Result<(), Error> {
-        let buffer_uploads = self
-            .buffer_uploads
-            .1
-            .try_iter()
-            .collect::<Vec<BufferUpload>>();
-        let fences = buffer_uploads
-            .iter()
-            .map(|upload| upload.finished_upload)
-            .collect::<Vec<vk::Fence>>();
-        if !fences.is_empty() {
-            unsafe { self.device.wait_for_fences(&fences, true, u64::MAX) }
-                .map_err(Error::VulkanFenceWait)?;
-            for buffer_upload in buffer_uploads {
-                if let Some(buffer) = buffer_upload.staging_buffer {
-                    unsafe { self.device.destroy_buffer(buffer, None) };
-                }
-                if let Some(allocation) = &buffer_upload.staging_allocation {
-                    let _ = self.allocator.free_memory(allocation);
-                }
-                let cmdbufs = [buffer_upload.upload_cmdbuf];
-                unsafe {
-                    self.device
-                        .destroy_fence(buffer_upload.finished_upload, None);
-                    self.device
-                        .free_command_buffers(self.command_pool, &cmdbufs);
-                }
+    fn cleanup_buffer_uploads(&self, frame_local: &FrameLocal) -> Result<(), Error> {
+        for buffer_upload in frame_local.buffer_uploads.1.try_iter() {
+            if let Some(buffer) = buffer_upload.staging_buffer {
+                unsafe { self.device.destroy_buffer(buffer, None) };
             }
+            if let Some(allocation) = &buffer_upload.staging_allocation {
+                self.allocator
+                    .free_memory(allocation)
+                    .map_err(Error::VmaBufferDestruction)?;
+            }
+            let cmdbufs = [buffer_upload.upload_cmdbuf];
+            unsafe {
+                self.device
+                    .destroy_semaphore(buffer_upload.finished_upload, None);
+                self.device
+                    .free_command_buffers(self.command_pool, &cmdbufs);
+            }
+        }
+        Ok(())
+    }
+
+    #[profiling::function]
+    fn cleanup_temp_buffers(&self, frame_local: &FrameLocal) -> Result<(), Error> {
+        for BufferAllocation(buffer, allocation) in frame_local.temporary_buffers.1.try_iter() {
+            self.allocator
+                .destroy_buffer(buffer, &allocation)
+                .map_err(Error::VmaBufferDestruction)?;
         }
         Ok(())
     }
@@ -548,25 +570,22 @@ impl Gpu<'_> {
     /// frees the resources that can now be freed up.
     #[profiling::function]
     pub fn wait_frame(&self) -> Result<FrameIndex, Error> {
-        // NOTE: This will cause self.allocator to mis-diagnose lost
-        // allocations once per ~828 days (assuming 60 fps) and cause
-        // the slowest memory leak ever. The reason it's a u32 is
-        // because that's what VMA uses.
-        let frame_index = self.frame_index.get().wrapping_add(1);
+        let frame_index = FrameIndex::new(self.frame_index.get().wrapping_add(1));
+        let frame_local = &self.frame_locals[self.frame_mod(frame_index)];
 
-        let next_sync_objects = self.frame_sync_objects_vec[self.frame_mod(frame_index)];
-        unsafe {
-            self.device
-                .wait_for_fences(&[next_sync_objects.finished_queue_fence], true, u64::MAX)
-                .map_err(Error::VulkanFenceWait)
-        }?;
-
-        let (_, temp_allocs_receiver) = &self.temporary_buffers[self.frame_mod(frame_index)];
-        for (buffer, allocation) in temp_allocs_receiver.try_iter() {
-            let _ = self.allocator.destroy_buffer(buffer, &allocation);
+        {
+            profiling::scope!("wait for frame fence");
+            unsafe {
+                self.device
+                    .wait_for_fences(&[frame_local.finished_queue_fence], true, u64::MAX)
+                    .map_err(Error::VulkanFenceWait)
+            }?;
         }
 
-        Ok(FrameIndex(frame_index))
+        self.cleanup_temp_buffers(frame_local)?;
+        self.cleanup_buffer_uploads(frame_local)?;
+
+        Ok(frame_index)
     }
 
     /// Queue up all the rendering commands.
@@ -577,23 +596,25 @@ impl Gpu<'_> {
     #[profiling::function]
     pub fn render_frame(
         &self,
-        FrameIndex(frame_index): FrameIndex,
+        frame_index: FrameIndex,
         canvas: &Canvas,
         camera: &Camera,
         meshes: &[Mesh],
     ) -> Result<(), Error> {
-        self.frame_index.set(frame_index);
-        let _ = self.allocator.set_current_frame_index(frame_index);
+        self.frame_index.set(frame_index.index);
+        let _ = self.allocator.set_current_frame_index(frame_index.index);
 
         camera.update(canvas, frame_index)?;
 
-        let FrameSyncObjects {
+        let FrameLocal {
             acquired_image_sp,
             finished_command_buffers_sp,
             finished_queue_fence,
-        } = self.frame_sync_objects_vec[self.frame_mod(frame_index)];
+            ..
+        } = self.frame_locals[self.frame_mod(frame_index)];
 
         let (image_index, _) = unsafe {
+            profiling::scope!("acquire next image");
             self.swapchain_ext
                 .acquire_next_image(
                     canvas.swapchain,
@@ -611,13 +632,14 @@ impl Gpu<'_> {
         let framebuffer = canvas.swapchain_framebuffers[image_index as usize];
         self.record_commmand_buffer(frame_index, command_buffer, framebuffer, canvas, meshes)?;
 
-        // Ensure all the buffers are ready for use during the render.
-        // TODO: Instead of cpu-side sync, wait for buffer uploads on the GPU side, right before usage
-        self.wait_buffer_uploads()?;
+        let mut wait_semaphores = vec![acquired_image_sp];
+        let mut wait_stages = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        for buffer_upload_semaphore in self.buffer_upload_semaphores.1.try_iter() {
+            wait_semaphores.push(buffer_upload_semaphore);
+            wait_stages.push(vk::PipelineStageFlags::VERTEX_INPUT);
+        }
 
-        let wait_semaphores = [acquired_image_sp];
         let signal_semaphores = [finished_command_buffers_sp];
-        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let command_buffers = [command_buffer];
         let submit_infos = [vk::SubmitInfo::builder()
             .wait_semaphores(&wait_semaphores)
@@ -626,6 +648,7 @@ impl Gpu<'_> {
             .command_buffers(&command_buffers)
             .build()];
         unsafe {
+            profiling::scope!("queue render");
             self.device
                 .queue_submit(self.graphics_queue, &submit_infos, finished_queue_fence)
                 .map_err(Error::VulkanQueueSubmit)
@@ -638,6 +661,7 @@ impl Gpu<'_> {
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         let present_result = unsafe {
+            profiling::scope!("queue present");
             self.swapchain_ext
                 .queue_present(self.surface_queue, &present_info)
         };
@@ -656,7 +680,7 @@ impl Gpu<'_> {
     #[profiling::function]
     fn record_commmand_buffer(
         &self,
-        frame_index: u32,
+        frame_index: FrameIndex,
         command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
         canvas: &Canvas,
@@ -709,6 +733,7 @@ impl Gpu<'_> {
         }
 
         for (pipeline_idx, meshes) in meshes_per_pipeline.into_iter().enumerate() {
+            profiling::scope!("pipeline");
             if meshes.is_empty() {
                 continue;
             }
@@ -738,6 +763,7 @@ impl Gpu<'_> {
             }
 
             for mesh in meshes {
+                profiling::scope!("mesh");
                 let mesh_buffer = if let Ok(buffer) = mesh.mesh_buffer.buffer(frame_index) {
                     buffer
                 } else {

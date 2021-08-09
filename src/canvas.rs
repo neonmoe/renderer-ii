@@ -31,23 +31,32 @@ impl Drop for Canvas<'_> {
         let device = &self.gpu.device;
 
         for &pipeline in &self.pipelines {
+            profiling::scope!("destroy pipeline");
             unsafe { device.destroy_pipeline(pipeline, None) };
         }
 
-        unsafe {
-            device.destroy_render_pass(self.final_render_pass, None);
-            device.free_command_buffers(self.gpu.command_pool, &self.command_buffers);
+        {
+            profiling::scope!("destroy render pass");
+            unsafe { device.destroy_render_pass(self.final_render_pass, None) };
+        }
+
+        {
+            profiling::scope!("free command buffers");
+            unsafe { device.free_command_buffers(self.gpu.command_pool, &self.command_buffers) };
         }
 
         for &framebuffer in &self.swapchain_framebuffers {
+            profiling::scope!("destroy framebuffer");
             unsafe { device.destroy_framebuffer(framebuffer, None) };
         }
 
         for &image_view in &self.swapchain_image_views {
+            profiling::scope!("destroy image view");
             unsafe { device.destroy_image_view(image_view, None) };
         }
 
         unsafe {
+            profiling::scope!("destroy swapchain");
             self.gpu
                 .swapchain_ext
                 .destroy_swapchain(self.swapchain, None)
@@ -126,7 +135,7 @@ impl Canvas<'_> {
         let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(gpu.command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(gpu.frame_sync_objects_vec.len() as u32);
+            .command_buffer_count(frame_count);
         let command_buffers = unsafe {
             device
                 .allocate_command_buffers(&command_buffer_allocate_info)
