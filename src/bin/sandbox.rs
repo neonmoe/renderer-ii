@@ -7,10 +7,23 @@ use ultraviolet::{Bivec3, Rotor3, Vec3};
 use logger::Logger;
 static LOGGER: Logger = Logger;
 
+const RED: Vec3 = Vec3::new(1.0, 0.1, 0.1);
+const YELLOW: Vec3 = Vec3::new(0.9, 0.9, 0.1);
+const PINK: Vec3 = Vec3::new(0.9, 0.1, 0.9);
+
 #[derive(thiserror::Error, Debug)]
 enum SandboxError {
     #[error("sdl error: {0}")]
     Sdl(String),
+}
+
+#[profiling::function]
+fn load_png(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
+    let decoder = png::Decoder::new(bytes);
+    let (info, mut reader) = decoder.read_info().unwrap();
+    let mut bytes = vec![0; info.buffer_size()];
+    reader.next_frame(&mut bytes).unwrap();
+    (info.width, info.height, bytes)
 }
 
 #[profiling::function]
@@ -36,36 +49,38 @@ fn main() -> anyhow::Result<()> {
 
     let loading_frame_index = gpu.wait_frame()?;
     let camera = neonvk::Camera::new(&gpu, &canvas, loading_frame_index)?;
-    let red = Vec3::new(1.0, 0.1, 0.1);
-    let yellow = Vec3::new(0.9, 0.9, 0.1);
-    let pink = Vec3::new(0.9, 0.1, 0.9);
-    let mut meshes = vec![
-        neonvk::Mesh::new(
-            &gpu,
-            loading_frame_index,
-            &[
-                [Vec3::new(-0.5, -0.5, 0.0), red],
-                [Vec3::new(0.5, -0.5, 0.0), pink],
-                [Vec3::new(-0.5, 0.5, 0.0), yellow],
-                [Vec3::new(0.5, 0.5, 0.0), red],
-            ],
-            &[0u16, 1, 2, 3, 2, 1],
-            neonvk::Pipeline::PlainVertexColor,
-            true,
-        )?,
-        neonvk::Mesh::new(
-            &gpu,
-            loading_frame_index,
-            &[
-                [Vec3::new(-1.0, -1.0, 0.0), red],
-                [Vec3::new(-0.5, -1.0, 0.0), pink],
-                [Vec3::new(-1.0, -0.5, 0.0), yellow],
-            ],
-            &[0u32, 1, 2],
-            neonvk::Pipeline::PlainVertexColor,
-            false,
-        )?,
-    ];
+    let (tree_w, tree_h, tree_bytes) = load_png(include_bytes!("tree.png"));
+    let tree_texture =
+        neonvk::Texture::new(&gpu, loading_frame_index, &tree_bytes, tree_w, tree_h)?;
+    let mut meshes = {
+        vec![
+            neonvk::Mesh::new(
+                &gpu,
+                loading_frame_index,
+                &[
+                    [Vec3::new(-0.5, -0.5, 0.0), RED],
+                    [Vec3::new(0.5, -0.5, 0.0), PINK],
+                    [Vec3::new(-0.5, 0.5, 0.0), YELLOW],
+                    [Vec3::new(0.5, 0.5, 0.0), RED],
+                ],
+                &[0u16, 1, 2, 3, 2, 1],
+                neonvk::Pipeline::PlainVertexColor,
+                true,
+            )?,
+            neonvk::Mesh::new(
+                &gpu,
+                loading_frame_index,
+                &[
+                    [Vec3::new(-1.0, -1.0, 0.0), RED],
+                    [Vec3::new(-0.5, -1.0, 0.0), PINK],
+                    [Vec3::new(-1.0, -0.5, 0.0), YELLOW],
+                ],
+                &[0u32, 1, 2],
+                neonvk::Pipeline::PlainVertexColor,
+                false,
+            )?,
+        ]
+    };
     // Get the first frame out of the way, to upload the meshes.
     // TODO: Add a proper way to upload resources before the game loop
     gpu.render_frame(loading_frame_index, &canvas, &camera, &meshes)?;
@@ -82,10 +97,10 @@ fn main() -> anyhow::Result<()> {
 
         let rotor = Rotor3::from_angle_plane(frame_start_seconds * 1.0, Bivec3::new(1.0, 0.0, 0.0));
         let vertices = [
-            [Vec3::new(-0.5, -0.5, 0.0).rotated_by(rotor), red],
-            [Vec3::new(0.5, -0.5, 0.0).rotated_by(rotor), pink],
-            [Vec3::new(-0.5, 0.5, 0.0).rotated_by(rotor), yellow],
-            [Vec3::new(0.5, 0.5, 0.0).rotated_by(rotor), red],
+            [Vec3::new(-0.5, -0.5, 0.0).rotated_by(rotor), RED],
+            [Vec3::new(0.5, -0.5, 0.0).rotated_by(rotor), PINK],
+            [Vec3::new(-0.5, 0.5, 0.0).rotated_by(rotor), YELLOW],
+            [Vec3::new(0.5, 0.5, 0.0).rotated_by(rotor), RED],
         ];
         meshes[0].update_vertices(&gpu, &vertices)?;
 

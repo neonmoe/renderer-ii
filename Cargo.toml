@@ -14,7 +14,8 @@ shaders = { path = "shaders" }
 vk-mem = { version = "^0.2.0" }
 ultraviolet = { version = "^0.8.0" }
 
-# TODO: Move anyhow, sdl2, profiling/profile-with-tracy to dev deps
+# TODO: Move anyhow, sdl2, profiling/profile-with-tracy, png to dev deps
 # Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.
-sdl2 = { version = "^0.34.0", features = ["static-link", "bundled", "raw-window-handle"] }
+sdl2 = { version = "^0.34.0", features = ["raw-window-handle"] }
 anyhow = { version = "^1.0.0" }
+png = { version = "^0.16.0" }

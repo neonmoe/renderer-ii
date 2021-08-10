@@ -1,4 +1,4 @@
-use crate::buffer::BufferUpload;
+use crate::buffer_ops::BufferUpload;
 use crate::descriptors::Descriptors;
 use crate::pipeline::Pipeline;
 use crate::{Camera, Canvas, Driver, Error, Mesh};
@@ -33,6 +33,8 @@ pub struct GpuInfo {
     pub id: GpuId,
 }
 
+struct WaitSemaphore(vk::Semaphore, vk::PipelineStageFlags);
+
 /// The main half of the rendering pair, along with [Canvas].
 ///
 /// Each instance of [Gpu] contains a handle to a single physical
@@ -53,6 +55,7 @@ pub struct Gpu<'a> {
 
     pub(crate) staging_cpu_buffer_pool: vk_mem::AllocatorPool,
     pub(crate) main_gpu_buffer_pool: vk_mem::AllocatorPool,
+    pub(crate) main_gpu_texture_pool: vk_mem::AllocatorPool,
     pub(crate) temp_gpu_buffer_pools: Vec<vk_mem::AllocatorPool>,
 
     pub(crate) graphics_family_index: u32,
@@ -65,7 +68,7 @@ pub struct Gpu<'a> {
     frame_locals: Vec<FrameLocal>,
     frame_index: Cell<u32>,
     frame_count: Cell<u32>,
-    buffer_upload_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
+    buffer_upload_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
 }
 
 struct BufferAllocation(vk::Buffer, vk_mem::Allocation);
@@ -119,6 +122,7 @@ impl Drop for Gpu<'_> {
             profiling::scope!("destroy vma allocator");
             let _ = self.allocator.destroy_pool(&self.staging_cpu_buffer_pool);
             let _ = self.allocator.destroy_pool(&self.main_gpu_buffer_pool);
+            let _ = self.allocator.destroy_pool(&self.main_gpu_texture_pool);
             for temp_gpu_buffer_pool in &self.temp_gpu_buffer_pools {
                 let _ = self.allocator.destroy_pool(temp_gpu_buffer_pool);
             }
@@ -419,6 +423,20 @@ impl Gpu<'_> {
             .size(1024)
             .usage(vk::BufferUsageFlags::TRANSFER_DST | uniform_usage | mesh_usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let gpu_image_info = vk::ImageCreateInfo::builder()
+            .image_type(vk::ImageType::TYPE_2D)
+            .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .format(vk::Format::R8G8B8A8_SRGB)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .extent(vk::Extent3D {
+                width: 1024,
+                height: 1024,
+                depth: 1,
+            })
+            .mip_levels(9)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1);
         let gpu_alloc_info = vk_mem::AllocationCreateInfo {
             required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
             ..Default::default()
@@ -427,6 +445,14 @@ impl Gpu<'_> {
             .create_pool(&vk_mem::AllocatorPoolCreateInfo {
                 memory_type_index: allocator
                     .find_memory_type_index_for_buffer_info(&gpu_buffer_info, &gpu_alloc_info)
+                    .map_err(Error::VmaFindMemoryType)?,
+                ..pool_defaults
+            })
+            .map_err(Error::VmaPoolCreation)?;
+        let main_gpu_texture_pool = allocator
+            .create_pool(&vk_mem::AllocatorPoolCreateInfo {
+                memory_type_index: allocator
+                    .find_memory_type_index_for_image_info(&gpu_image_info, &gpu_alloc_info)
                     .map_err(Error::VmaFindMemoryType)?,
                 ..pool_defaults
             })
@@ -463,6 +489,7 @@ impl Gpu<'_> {
 
                 staging_cpu_buffer_pool,
                 main_gpu_buffer_pool,
+                main_gpu_texture_pool,
                 temp_gpu_buffer_pools,
 
                 graphics_family_index,
@@ -483,8 +510,8 @@ impl Gpu<'_> {
 
     #[profiling::function]
     pub(crate) fn add_buffer_upload(&self, frame_index: FrameIndex, buffer_upload: BufferUpload) {
-        let upload_sp = buffer_upload.finished_upload;
-        let _ = self.buffer_upload_semaphores.0.send(upload_sp);
+        let upload_wait = WaitSemaphore(buffer_upload.finished_upload, buffer_upload.wait_stage);
+        let _ = self.buffer_upload_semaphores.0.send(upload_wait);
         let frame_local = &self.frame_locals[self.frame_mod(frame_index)];
         let _ = frame_local.buffer_uploads.0.send(buffer_upload);
     }
@@ -634,9 +661,9 @@ impl Gpu<'_> {
 
         let mut wait_semaphores = vec![acquired_image_sp];
         let mut wait_stages = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        for buffer_upload_semaphore in self.buffer_upload_semaphores.1.try_iter() {
-            wait_semaphores.push(buffer_upload_semaphore);
-            wait_stages.push(vk::PipelineStageFlags::VERTEX_INPUT);
+        for WaitSemaphore(semaphore, wait_stage) in self.buffer_upload_semaphores.1.try_iter() {
+            wait_semaphores.push(semaphore);
+            wait_stages.push(wait_stage);
         }
 
         let signal_semaphores = [finished_command_buffers_sp];
