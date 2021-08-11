@@ -34,12 +34,16 @@ fn main() -> anyhow::Result<()> {
 
     let sdl_context = sdl2::init().map_err(SandboxError::Sdl)?;
     let video_subsystem = sdl_context.video().map_err(SandboxError::Sdl)?;
+
+    // TODO: Another window for a loading splash screen?
+
     let mut window = video_subsystem
         .window("neonvk sandbox", 640, 480)
         .position_centered()
         .resizable()
         .allow_highdpi()
         .vulkan()
+        .hidden()
         .build()?;
     let (width, height) = window.vulkan_drawable_size();
 
@@ -89,6 +93,7 @@ fn main() -> anyhow::Result<()> {
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
 
+    window.show();
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut size_changed = false;
     'running: loop {
