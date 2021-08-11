@@ -5,6 +5,7 @@ use ultraviolet::Vec3;
 #[derive(Clone, Copy)]
 pub enum Pipeline {
     PlainVertexColor,
+    Textured,
     #[doc(hidden)]
     Count,
 }
@@ -37,8 +38,8 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[DescriptorSetLa
     stage_flags: vk::ShaderStageFlags::VERTEX,
 }];
 
-pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as usize] =
-    [PipelineParameters {
+pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as usize] = [
+    PipelineParameters {
         vertex_shader: shaders::include_spirv!("shaders/plain_color.vert"),
         fragment_shader: shaders::include_spirv!("shaders/plain_color.frag"),
         bindings: &[vk::VertexInputBindingDescription {
@@ -57,8 +58,40 @@ pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as u
                 binding: 0,
                 location: 1,
                 format: vk::Format::R32G32B32_SFLOAT,
-                offset: mem::size_of::<[Vec3; 1]>() as u32,
+                offset: mem::size_of::<Vec3>() as u32,
             },
         ],
         descriptor_sets: &[SHARED_DESCRIPTOR_SET_0],
-    }];
+    },
+    PipelineParameters {
+        vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
+        fragment_shader: shaders::include_spirv!("shaders/textured.frag"),
+        bindings: &[vk::VertexInputBindingDescription {
+            binding: 0,
+            stride: mem::size_of::<[Vec3; 2]>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        }],
+        attributes: &[
+            vk::VertexInputAttributeDescription {
+                binding: 0,
+                location: 0,
+                format: vk::Format::R32G32B32_SFLOAT,
+                offset: 0,
+            },
+            vk::VertexInputAttributeDescription {
+                binding: 0,
+                location: 1,
+                format: vk::Format::R32G32_SFLOAT,
+                offset: mem::size_of::<Vec3>() as u32,
+            },
+        ],
+        descriptor_sets: &[
+            SHARED_DESCRIPTOR_SET_0,
+            &[DescriptorSetLayoutParams {
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            }],
+        ],
+    },
+];

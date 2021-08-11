@@ -1,16 +1,19 @@
 use crate::buffer_ops::{self, BufferUpload};
 use crate::{Error, FrameIndex, Gpu};
+use ash::version::DeviceV1_0;
 use ash::vk;
 
 pub struct Texture<'a> {
     gpu: &'a Gpu<'a>,
     image: vk::Image,
+    pub(crate) image_view: vk::ImageView,
     allocation: vk_mem::Allocation,
 }
 
 impl Drop for Texture<'_> {
     #[profiling::function]
     fn drop(&mut self) {
+        unsafe { self.gpu.device.destroy_image_view(self.image_view, None) };
         let _ = self
             .gpu
             .allocator
@@ -26,6 +29,7 @@ impl Texture<'_> {
         pixels: &[u8],
         width: u32,
         height: u32,
+        format: vk::Format,
     ) -> Result<Texture<'a>, Error> {
         let buffer_size = pixels.len() as vk::DeviceSize;
         let buffer_create_info = vk::BufferCreateInfo::builder()
@@ -42,17 +46,29 @@ impl Texture<'_> {
             .create_buffer(&buffer_create_info, &allocation_create_info)
             .map_err(Error::VmaBufferAllocation)?;
         buffer_ops::copy_to_allocation(pixels, gpu, &staging_allocation, &staging_alloc_info)?;
+
+        let image_pool = gpu.main_gpu_texture_pool.clone();
+        let image_extent = vk::Extent3D {
+            width,
+            height,
+            depth: 1,
+        };
         let (image, allocation, upload_cmdbuf, finished_upload, wait_stage) =
-            buffer_ops::start_image_upload(
+            match buffer_ops::start_image_upload(
                 gpu,
-                gpu.main_gpu_texture_pool.clone(),
+                image_pool,
                 staging_buffer,
-                vk::Extent3D {
-                    width,
-                    height,
-                    depth: 1,
-                },
-            )?;
+                image_extent,
+                format,
+            ) {
+                Ok(result) => result,
+                Err(err) => {
+                    let _ = gpu
+                        .allocator
+                        .destroy_buffer(staging_buffer, &staging_allocation);
+                    return Err(err);
+                }
+            };
 
         gpu.add_buffer_upload(
             frame_index,
@@ -65,9 +81,25 @@ impl Texture<'_> {
             },
         );
 
+        let subresource_range = vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(0)
+            .level_count(1)
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
+        let image_view_create_info = vk::ImageViewCreateInfo::builder()
+            .image(image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(format)
+            .subresource_range(subresource_range);
+        let image_view = unsafe { gpu.device.create_image_view(&image_view_create_info, None) }
+            .map_err(Error::VulkanImageViewCreation)?;
+
         Ok(Texture {
             gpu,
             image,
+            image_view,
             allocation,
         })
     }

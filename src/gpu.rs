@@ -1,7 +1,7 @@
 use crate::buffer_ops::BufferUpload;
 use crate::descriptors::Descriptors;
 use crate::pipeline::Pipeline;
-use crate::{Camera, Canvas, Driver, Error, Mesh};
+use crate::{Camera, Canvas, Driver, Error, Mesh, Texture};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
@@ -173,6 +173,16 @@ impl Gpu<'_> {
                 if !is_extension_supported(&driver.instance, physical_device, "VK_KHR_swapchain") {
                     return None;
                 }
+                let properties = unsafe {
+                    driver
+                        .instance
+                        .get_physical_device_properties(physical_device)
+                };
+                let features = unsafe {
+                    driver
+                        .instance
+                        .get_physical_device_features(physical_device)
+                };
                 let queue_families = unsafe {
                     driver
                         .instance
@@ -195,21 +205,36 @@ impl Gpu<'_> {
                 if let (Some(graphics_family_index), Some(surface_family_index)) =
                     (graphics_family_index, surface_family_index)
                 {
-                    Some((physical_device, graphics_family_index, surface_family_index))
+                    Some((
+                        physical_device,
+                        properties,
+                        features,
+                        graphics_family_index,
+                        surface_family_index,
+                    ))
                 } else {
                     None
                 }
             })
-            .collect::<Vec<(vk::PhysicalDevice, u32, u32)>>();
+            .collect::<Vec<(
+                vk::PhysicalDevice,
+                vk::PhysicalDeviceProperties,
+                vk::PhysicalDeviceFeatures,
+                u32,
+                u32,
+            )>>();
 
-        let (physical_device, graphics_family_index, surface_family_index) = if let Some(uuid) =
-            preferred_physical_device
-        {
+        let (
+            physical_device,
+            physical_device_properties,
+            physical_device_features,
+            graphics_family_index,
+            surface_family_index,
+        ) = if let Some(uuid) = preferred_physical_device {
             physical_devices
                 .iter()
                 .find_map(|tuple| {
-                    let properties =
-                        unsafe { driver.instance.get_physical_device_properties(tuple.0) };
+                    let (_, properties, _, _, _) = tuple;
                     if properties.pipeline_cache_uuid == uuid {
                         Some(*tuple)
                     } else {
@@ -218,44 +243,38 @@ impl Gpu<'_> {
                 })
                 .ok_or(Error::VulkanPhysicalDeviceMissing)?
         } else {
-            physical_devices.sort_by(|(a, a_gfx, a_surf), (b, b_gfx, b_surf)| {
-                let a_properties = unsafe { driver.instance.get_physical_device_properties(*a) };
-                let b_properties = unsafe { driver.instance.get_physical_device_properties(*b) };
-                let type_score =
-                    |properties: vk::PhysicalDeviceProperties| match properties.device_type {
-                        vk::PhysicalDeviceType::DISCRETE_GPU => 30,
-                        vk::PhysicalDeviceType::INTEGRATED_GPU => 20,
-                        vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
-                        vk::PhysicalDeviceType::CPU => 0,
-                        _ => 0,
+            physical_devices.sort_by(
+                |(_, a_props, _, a_gfx, a_surf), (_, b_props, _, b_gfx, b_surf)| {
+                    let type_score =
+                        |properties: vk::PhysicalDeviceProperties| match properties.device_type {
+                            vk::PhysicalDeviceType::DISCRETE_GPU => 30,
+                            vk::PhysicalDeviceType::INTEGRATED_GPU => 20,
+                            vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
+                            vk::PhysicalDeviceType::CPU => 0,
+                            _ => 0,
+                        };
+                    let queue_score = |graphics_queue, surface_queue| {
+                        if graphics_queue == surface_queue {
+                            1
+                        } else {
+                            0
+                        }
                     };
-                let queue_score = |graphics_queue, surface_queue| {
-                    if graphics_queue == surface_queue {
-                        1
-                    } else {
-                        0
-                    }
-                };
-                let a_score = type_score(a_properties) + queue_score(a_gfx, a_surf);
-                let b_score = type_score(b_properties) + queue_score(b_gfx, b_surf);
-                // Highest score first.
-                b_score.cmp(&a_score)
-            });
+                    let a_score = type_score(*a_props) + queue_score(a_gfx, a_surf);
+                    let b_score = type_score(*b_props) + queue_score(b_gfx, b_surf);
+                    // Highest score first.
+                    b_score.cmp(&a_score)
+                },
+            );
             physical_devices
                 .get(0)
                 .copied()
                 .ok_or(Error::VulkanPhysicalDeviceMissing)?
         };
-        let physical_device_properties = unsafe {
-            driver
-                .instance
-                .get_physical_device_properties(physical_device)
-        };
 
         let physical_devices = physical_devices
             .into_iter()
-            .map(|(pd, _, _)| {
-                let properties = unsafe { driver.instance.get_physical_device_properties(pd) };
+            .map(|(_, properties, _, _, _)| {
                 let name = unsafe { CStr::from_ptr((&properties.device_name[..]).as_ptr()) }
                     .to_string_lossy();
                 let pd_type = match properties.device_type {
@@ -291,7 +310,6 @@ impl Gpu<'_> {
                     .build(),
             ]
         };
-        let physical_device_features = vk::PhysicalDeviceFeatures::default();
         let mut extensions = vec![cstr!("VK_KHR_swapchain").as_ptr()];
         log::debug!("Device extension: VK_KHR_swapchain");
         if is_extension_supported(&driver.instance, physical_device, "VK_EXT_memory_budget") {
@@ -380,7 +398,12 @@ impl Gpu<'_> {
         let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
             .map_err(Error::VulkanCommandPoolCreation)?;
 
-        let descriptors = Descriptors::new(&device, frame_in_use_count)?;
+        let descriptors = Descriptors::new(
+            &device,
+            &physical_device_properties,
+            &physical_device_features,
+            frame_in_use_count,
+        )?;
 
         let allocator_create_info = vk_mem::AllocatorCreateInfo {
             physical_device,
@@ -613,6 +636,19 @@ impl Gpu<'_> {
         self.cleanup_buffer_uploads(frame_local)?;
 
         Ok(frame_index)
+    }
+
+    /// Updates the texture(s) for the pipeline.
+    ///
+    /// The amount of textures to pass depends on the pipeline.
+    pub fn set_pipeline_textures(
+        &self,
+        frame_index: FrameIndex,
+        pipeline: Pipeline,
+        textures: &[&Texture<'_>],
+    ) {
+        self.descriptors
+            .set_uniform_images(&self, frame_index, pipeline, 1, 0, textures);
     }
 
     /// Queue up all the rendering commands.

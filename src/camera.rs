@@ -17,7 +17,7 @@ impl GlobalTransforms {
                 100.0,
             ),
             _view: Mat4::look_at(
-                Vec3::new(0.75, 0.0, 1.5),
+                Vec3::new(0.0, 0.0, 1.5),
                 Vec3::zero(),
                 Vec3::new(0.0, 1.0, 0.0),
             ),

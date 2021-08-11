@@ -68,6 +68,7 @@ pub(crate) fn start_image_upload(
     pool: vk_mem::AllocatorPool,
     pixels: vk::Buffer,
     extent: vk::Extent3D,
+    format: vk::Format,
 ) -> Result<
     (
         vk::Image,
@@ -80,8 +81,17 @@ pub(crate) fn start_image_upload(
 > {
     let ((image, allocation), upload_cmdbuf, finished_upload) =
         run_with_command_buffer(gpu, |cb| {
-            queue_image_copy(&gpu.device, cb, &gpu.allocator, pool, pixels, extent)
+            queue_image_copy(
+                &gpu.device,
+                cb,
+                &gpu.allocator,
+                pool,
+                pixels,
+                extent,
+                format,
+            )
         })?;
+
     Ok((
         image,
         allocation,
@@ -182,13 +192,14 @@ fn queue_image_copy(
     pool: vk_mem::AllocatorPool,
     pixel_buffer: vk::Buffer,
     extent: vk::Extent3D,
+    format: vk::Format,
 ) -> Result<(vk::Image, vk_mem::Allocation), Error> {
     let image_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::TYPE_2D)
         .extent(extent)
         .mip_levels(1)
         .array_layers(1)
-        .format(vk::Format::R8G8B8A8_SRGB)
+        .format(format)
         .tiling(vk::ImageTiling::OPTIMAL)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)

@@ -39,3 +39,5 @@ pub use pipeline::Pipeline;
 
 mod texture;
 pub use texture::Texture;
+
+pub use ash::vk;

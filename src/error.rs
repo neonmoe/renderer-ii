@@ -67,6 +67,10 @@ pub enum Error {
     VulkanDescriptorPoolCreation(#[source] vk::Result),
     #[error("could not allocate descriptor sets")]
     VulkanAllocateDescriptorSets(#[source] vk::Result),
+    #[error("could not create image view")]
+    VulkanImageViewCreation(#[source] vk::Result),
+    #[error("could not create sampler")]
+    VulkanSamplerCreation(#[source] vk::Result),
     #[error("vma (via vk-mem-rs) allocator creation failed")]
     VmaAllocatorCreation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) allocator pool creation failed")]

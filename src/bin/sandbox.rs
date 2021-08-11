@@ -1,4 +1,5 @@
 use log::LevelFilter;
+use neonvk::vk;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use std::time::{Duration, Instant};
@@ -18,12 +19,13 @@ enum SandboxError {
 }
 
 #[profiling::function]
-fn load_png(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
+fn load_png(bytes: &[u8]) -> (u32, u32, Vec<u8>, vk::Format) {
     let decoder = png::Decoder::new(bytes);
     let (info, mut reader) = decoder.read_info().unwrap();
     let mut bytes = vec![0; info.buffer_size()];
     reader.next_frame(&mut bytes).unwrap();
-    (info.width, info.height, bytes)
+    debug_assert_eq!((info.width * info.height * 4) as usize, bytes.len());
+    (info.width, info.height, bytes, vk::Format::R8G8B8A8_SRGB)
 }
 
 #[profiling::function]
@@ -53,22 +55,29 @@ fn main() -> anyhow::Result<()> {
 
     let loading_frame_index = gpu.wait_frame()?;
     let camera = neonvk::Camera::new(&gpu, &canvas, loading_frame_index)?;
-    let (tree_w, tree_h, tree_bytes) = load_png(include_bytes!("tree.png"));
-    let tree_texture =
-        neonvk::Texture::new(&gpu, loading_frame_index, &tree_bytes, tree_w, tree_h)?;
+    let (tree_w, tree_h, tree_bytes, tree_format) = load_png(include_bytes!("tree.png"));
+    let tree_texture = neonvk::Texture::new(
+        &gpu,
+        loading_frame_index,
+        &tree_bytes,
+        tree_w,
+        tree_h,
+        tree_format,
+    )?;
+    let quad_vertices = &[
+        [Vec3::new(-0.5, 0.5, 0.0), Vec3::new(0.0, 0.0, 0.0)],
+        [Vec3::new(-0.5, -0.5, 0.0), Vec3::new(0.0, 1.0, 0.0)],
+        [Vec3::new(0.5, 0.5, 0.0), Vec3::new(1.0, 0.0, 0.0)],
+        [Vec3::new(0.5, -0.5, 0.0), Vec3::new(1.0, 1.0, 0.0)],
+    ];
     let mut meshes = {
         vec![
             neonvk::Mesh::new(
                 &gpu,
                 loading_frame_index,
-                &[
-                    [Vec3::new(-0.5, -0.5, 0.0), RED],
-                    [Vec3::new(0.5, -0.5, 0.0), PINK],
-                    [Vec3::new(-0.5, 0.5, 0.0), YELLOW],
-                    [Vec3::new(0.5, 0.5, 0.0), RED],
-                ],
+                quad_vertices,
                 &[0u16, 1, 2, 3, 2, 1],
-                neonvk::Pipeline::PlainVertexColor,
+                neonvk::Pipeline::Textured,
                 true,
             )?,
             neonvk::Mesh::new(
@@ -87,6 +96,11 @@ fn main() -> anyhow::Result<()> {
     };
     // Get the first frame out of the way, to upload the meshes.
     // TODO: Add a proper way to upload resources before the game loop
+    gpu.set_pipeline_textures(
+        loading_frame_index,
+        neonvk::Pipeline::Textured,
+        &[&tree_texture],
+    );
     gpu.render_frame(loading_frame_index, &canvas, &camera, &meshes)?;
 
     let start_time = Instant::now();
@@ -100,12 +114,15 @@ fn main() -> anyhow::Result<()> {
         profiling::finish_frame!();
         let frame_start_seconds = (Instant::now() - start_time).as_secs_f32();
 
-        let rotor = Rotor3::from_angle_plane(frame_start_seconds * 1.0, Bivec3::new(1.0, 0.0, 0.0));
+        let rotor = Rotor3::from_angle_plane(
+            (frame_start_seconds).sin() * 0.1,
+            Bivec3::new(1.0, 0.0, 0.0),
+        );
         let vertices = [
-            [Vec3::new(-0.5, -0.5, 0.0).rotated_by(rotor), RED],
-            [Vec3::new(0.5, -0.5, 0.0).rotated_by(rotor), PINK],
-            [Vec3::new(-0.5, 0.5, 0.0).rotated_by(rotor), YELLOW],
-            [Vec3::new(0.5, 0.5, 0.0).rotated_by(rotor), RED],
+            [quad_vertices[0][0].rotated_by(rotor), quad_vertices[0][1]],
+            [quad_vertices[1][0].rotated_by(rotor), quad_vertices[1][1]],
+            [quad_vertices[2][0].rotated_by(rotor), quad_vertices[2][1]],
+            [quad_vertices[3][0].rotated_by(rotor), quad_vertices[3][1]],
         ];
         meshes[0].update_vertices(&gpu, &vertices)?;
 
@@ -134,6 +151,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         let frame_index = gpu.wait_frame()?;
+        gpu.set_pipeline_textures(frame_index, neonvk::Pipeline::Textured, &[&tree_texture]);
         match gpu.render_frame(frame_index, &canvas, &camera, &meshes) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
