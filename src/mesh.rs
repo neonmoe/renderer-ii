@@ -25,7 +25,6 @@ impl Mesh<'_> {
         vertices: &[V],
         indices: &[I],
         pipeline: Pipeline,
-        editable: bool,
     ) -> Result<Mesh<'a>, Error> {
         let vertices_size = vertices.len() * mem::size_of::<V>();
         let indices_size = indices.len() * mem::size_of::<I>();
@@ -44,7 +43,7 @@ impl Mesh<'_> {
         }
 
         Ok(Mesh {
-            mesh_buffer: Buffer::new(gpu, frame_index, &data, editable)?,
+            mesh_buffer: Buffer::new(gpu, frame_index, &data)?,
             pipeline,
             index_count: indices.len() as u32,
             indices_offset: vertices_size as vk::DeviceSize,
@@ -52,11 +51,8 @@ impl Mesh<'_> {
         })
     }
 
-    /// Updates the vertices of the mesh. The amount of vertices must
-    /// be the same as in [Mesh::new].
-    #[profiling::function]
-    pub fn update_vertices<V>(&mut self, gpu: &Gpu, new_vertices: &[V]) -> Result<(), Error> {
-        self.mesh_buffer.update_data(gpu, new_vertices)
+    pub(crate) fn buffer(&self) -> vk::Buffer {
+        self.mesh_buffer.buffer
     }
 }
 

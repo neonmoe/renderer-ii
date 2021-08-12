@@ -1,5 +1,7 @@
-use crate::buffer::Buffer;
-use crate::{Canvas, Error, FrameIndex, Gpu, Pipeline};
+use crate::buffer_ops;
+use crate::{Canvas, Error, FrameIndex, Pipeline};
+use ash::vk;
+use std::mem;
 use ultraviolet::{projection, Mat4, Vec3};
 
 struct GlobalTransforms {
@@ -25,35 +27,49 @@ impl GlobalTransforms {
     }
 }
 
-pub struct Camera<'a> {
-    pub(crate) transforms_buffer: Buffer<'a>,
-}
+pub struct Camera {}
 
-impl Camera<'_> {
+impl Camera {
     #[profiling::function]
-    pub fn new<'a>(
-        gpu: &'a Gpu,
-        canvas: &Canvas,
-        frame_index: FrameIndex,
-    ) -> Result<Camera<'a>, Error> {
-        let transforms_buffer =
-            Buffer::new(gpu, frame_index, &[GlobalTransforms::new(canvas)], true)?;
-        Ok(Camera { transforms_buffer })
+    pub fn new<'a>() -> Camera {
+        Camera {}
     }
 
     /// Updates Vulkan buffers with the current state of the
     /// [Camera] and [Canvas].
     #[profiling::function]
     pub(crate) fn update(&self, canvas: &Canvas, frame_index: FrameIndex) -> Result<(), Error> {
-        self.transforms_buffer
-            .update_data(&canvas.gpu, &[GlobalTransforms::new(canvas)])?;
-        canvas.gpu.descriptors.set_uniform_buffer(
-            &canvas.gpu,
+        let gpu = &canvas.gpu;
+        let (buffer, allocation, alloc_info) = {
+            profiling::scope!("create uniform buffer");
+            let buffer_size = mem::size_of::<GlobalTransforms>() as vk::DeviceSize;
+            let buffer_create_info = vk::BufferCreateInfo::builder()
+                .size(buffer_size)
+                .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE);
+            let allocation_create_info = vk_mem::AllocationCreateInfo {
+                flags: vk_mem::AllocationCreateFlags::MAPPED,
+                pool: Some(gpu.get_temp_buffer_pool(frame_index)),
+                ..Default::default()
+            };
+            gpu.allocator
+                .create_buffer(&buffer_create_info, &allocation_create_info)
+                .map_err(Error::VmaBufferAllocation)?
+        };
+        gpu.add_temporary_buffer(frame_index, buffer, allocation);
+        buffer_ops::copy_to_allocation(
+            &[GlobalTransforms::new(canvas)],
+            gpu,
+            &allocation,
+            &alloc_info,
+        )?;
+        gpu.descriptors.set_uniform_buffer(
+            gpu,
             frame_index,
             Pipeline::PlainVertexColor,
             0,
             0,
-            self.transforms_buffer.buffer(frame_index)?,
+            buffer,
         );
         Ok(())
     }

@@ -11,6 +11,12 @@ pub struct Scene<'a> {
     pub pipeline_map: PipelineMap<'a>,
 }
 
+impl<'a> Default for Scene<'a> {
+    fn default() -> Scene<'a> {
+        Scene::new()
+    }
+}
+
 impl<'a> Scene<'a> {
     pub fn new() -> Scene<'a> {
         Scene {

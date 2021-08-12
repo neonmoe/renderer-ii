@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
     let mut canvas = neonvk::Canvas::new(&gpu, None, width, height)?;
 
     let loading_frame_index = gpu.wait_frame()?;
-    let camera = neonvk::Camera::new(&gpu, &canvas, loading_frame_index)?;
+    let camera = neonvk::Camera::new();
     let (tree_w, tree_h, tree_bytes, tree_format) = load_png(include_bytes!("tree.png"));
     let tree_texture = neonvk::Texture::new(
         &gpu,
@@ -72,7 +72,6 @@ fn main() -> anyhow::Result<()> {
         quad_vertices,
         &[0u16, 1, 2, 3, 2, 1],
         neonvk::Pipeline::Textured,
-        false,
     )?;
     // Get the first frame out of the way, to upload the meshes.
     // TODO: Add a proper way to upload resources before the game loop

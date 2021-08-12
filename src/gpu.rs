@@ -56,9 +56,9 @@ pub struct Gpu<'a> {
     pub(crate) command_pool: vk::CommandPool,
 
     pub(crate) staging_cpu_buffer_pool: vk_mem::AllocatorPool,
+    temp_cpu_buffer_pools: Vec<vk_mem::AllocatorPool>,
     pub(crate) main_gpu_buffer_pool: vk_mem::AllocatorPool,
     pub(crate) main_gpu_texture_pool: vk_mem::AllocatorPool,
-    pub(crate) temp_gpu_buffer_pools: Vec<vk_mem::AllocatorPool>,
 
     pub(crate) graphics_family_index: u32,
     pub(crate) surface_family_index: u32,
@@ -125,8 +125,8 @@ impl Drop for Gpu<'_> {
             let _ = self.allocator.destroy_pool(&self.staging_cpu_buffer_pool);
             let _ = self.allocator.destroy_pool(&self.main_gpu_buffer_pool);
             let _ = self.allocator.destroy_pool(&self.main_gpu_texture_pool);
-            for temp_gpu_buffer_pool in &self.temp_gpu_buffer_pools {
-                let _ = self.allocator.destroy_pool(temp_gpu_buffer_pool);
+            for temp_cpu_buffer_pool in &self.temp_cpu_buffer_pools {
+                let _ = self.allocator.destroy_pool(temp_cpu_buffer_pool);
             }
             self.allocator.destroy();
         }
@@ -429,6 +429,10 @@ impl Gpu<'_> {
 
         let cpu_buffer_info = vk::BufferCreateInfo::builder()
             .size(1024)
+            .usage(mesh_usage | uniform_usage)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let cpu_staging_buffer_info = vk::BufferCreateInfo::builder()
+            .size(1024)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let cpu_alloc_info = vk_mem::AllocationCreateInfo {
@@ -438,11 +442,31 @@ impl Gpu<'_> {
         let staging_cpu_buffer_pool = allocator
             .create_pool(&vk_mem::AllocatorPoolCreateInfo {
                 memory_type_index: allocator
-                    .find_memory_type_index_for_buffer_info(&cpu_buffer_info, &cpu_alloc_info)
+                    .find_memory_type_index_for_buffer_info(
+                        &cpu_staging_buffer_info,
+                        &cpu_alloc_info,
+                    )
                     .map_err(Error::VmaFindMemoryType)?,
                 ..pool_defaults
             })
             .map_err(Error::VmaPoolCreation)?;
+        let temp_cpu_buffer_pools = (0..frame_in_use_count)
+            .map(|_| {
+                allocator
+                    .create_pool(&vk_mem::AllocatorPoolCreateInfo {
+                        memory_type_index: allocator
+                            .find_memory_type_index_for_buffer_info(
+                                &cpu_buffer_info,
+                                &cpu_alloc_info,
+                            )
+                            .map_err(Error::VmaFindMemoryType)?,
+                        flags: pool_defaults.flags
+                            | vk_mem::AllocatorPoolCreateFlags::LINEAR_ALGORITHM,
+                        ..pool_defaults
+                    })
+                    .map_err(Error::VmaPoolCreation)
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
 
         let gpu_buffer_info = vk::BufferCreateInfo::builder()
             .size(1024)
@@ -482,23 +506,6 @@ impl Gpu<'_> {
                 ..pool_defaults
             })
             .map_err(Error::VmaPoolCreation)?;
-        let temp_gpu_buffer_pools = (0..frame_in_use_count)
-            .map(|_| {
-                allocator
-                    .create_pool(&vk_mem::AllocatorPoolCreateInfo {
-                        memory_type_index: allocator
-                            .find_memory_type_index_for_buffer_info(
-                                &gpu_buffer_info,
-                                &gpu_alloc_info,
-                            )
-                            .map_err(Error::VmaFindMemoryType)?,
-                        flags: pool_defaults.flags
-                            | vk_mem::AllocatorPoolCreateFlags::LINEAR_ALGORITHM,
-                        ..pool_defaults
-                    })
-                    .map_err(Error::VmaPoolCreation)
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
 
         Ok((
             Gpu {
@@ -513,9 +520,9 @@ impl Gpu<'_> {
                 command_pool,
 
                 staging_cpu_buffer_pool,
+                temp_cpu_buffer_pools,
                 main_gpu_buffer_pool,
                 main_gpu_texture_pool,
-                temp_gpu_buffer_pools,
 
                 graphics_family_index,
                 surface_family_index,
@@ -561,6 +568,10 @@ impl Gpu<'_> {
     /// frame-specific is a vec that can be indexed into with this.
     pub(crate) fn frame_mod(&self, frame_index: FrameIndex) -> usize {
         (frame_index.index % self.frame_count.get()) as usize
+    }
+
+    pub(crate) fn get_temp_buffer_pool(&self, frame_index: FrameIndex) -> vk_mem::AllocatorPool {
+        self.temp_cpu_buffer_pools[self.frame_mod(frame_index)].clone()
     }
 
     #[profiling::function]
@@ -751,11 +762,16 @@ impl Gpu<'_> {
         canvas: &Canvas,
         scene: &Scene,
     ) -> Result<(), Error> {
-        let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {
+            profiling::scope!("reset command buffer");
             self.device
                 .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
                 .map_err(Error::VulkanResetCommandBuffer)?;
+        }
+
+        let begin_info = vk::CommandBufferBeginInfo::default();
+        unsafe {
+            profiling::scope!("begin command buffer");
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)
                 .map_err(Error::VulkanBeginCommandBuffer)?;
@@ -769,16 +785,18 @@ impl Gpu<'_> {
             .render_area(render_area)
             .clear_values(&clear_colors);
         unsafe {
+            profiling::scope!("begin render pass");
             self.device.cmd_begin_render_pass(
                 command_buffer,
                 &render_pass_begin_info,
                 vk::SubpassContents::INLINE,
-            )
-        };
+            );
+        }
 
         // Bind the shared descriptor set (#0)
         let shared_descriptor_set = self.descriptors.descriptor_sets(&self, frame_index, 0)[0];
         unsafe {
+            profiling::scope!("bind shared descriptor set");
             self.device.cmd_bind_descriptor_sets(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -786,8 +804,8 @@ impl Gpu<'_> {
                 0,
                 &[shared_descriptor_set],
                 &[],
-            )
-        };
+            );
+        }
 
         for (pipeline, meshes) in &scene.pipeline_map {
             profiling::scope!("pipeline");
@@ -822,13 +840,7 @@ impl Gpu<'_> {
 
             for (mesh, transforms) in meshes {
                 profiling::scope!("mesh");
-                let mesh_buffer = if let Ok(buffer) = mesh.mesh_buffer.buffer(frame_index) {
-                    buffer
-                } else {
-                    continue;
-                };
-
-                let transform_buffer = {
+                let (transform_buffer, allocation, alloc_info) = {
                     profiling::scope!("transform buffer creation");
                     let buffer_size = (transforms.len() * mem::size_of::<Mat4>()) as vk::DeviceSize;
                     let buffer_create_info = vk::BufferCreateInfo::builder()
@@ -837,28 +849,26 @@ impl Gpu<'_> {
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
                     let allocation_create_info = vk_mem::AllocationCreateInfo {
                         flags: vk_mem::AllocationCreateFlags::MAPPED,
-                        pool: Some(self.staging_cpu_buffer_pool.clone()),
+                        pool: Some(self.get_temp_buffer_pool(frame_index)),
                         ..Default::default()
                     };
-                    let (transform_buffer, allocation, alloc_info) = self
-                        .allocator
+                    self.allocator
                         .create_buffer(&buffer_create_info, &allocation_create_info)
-                        .map_err(Error::VmaBufferAllocation)?;
-                    buffer_ops::copy_to_allocation(transforms, &self, &allocation, &alloc_info)?;
-                    self.add_temporary_buffer(frame_index, transform_buffer, allocation);
-                    transform_buffer
+                        .map_err(Error::VmaBufferAllocation)?
                 };
+                self.add_temporary_buffer(frame_index, transform_buffer, allocation);
+                buffer_ops::copy_to_allocation(transforms, &self, &allocation, &alloc_info)?;
 
                 unsafe {
                     self.device.cmd_bind_vertex_buffers(
                         command_buffer,
                         0,
-                        &[mesh_buffer, transform_buffer],
+                        &[mesh.buffer(), transform_buffer],
                         &[0, 0],
                     );
                     self.device.cmd_bind_index_buffer(
                         command_buffer,
-                        mesh_buffer,
+                        mesh.buffer(),
                         mesh.indices_offset,
                         mesh.index_type,
                     );
@@ -875,11 +885,17 @@ impl Gpu<'_> {
         }
 
         unsafe {
+            profiling::scope!("end render pass");
             self.device.cmd_end_render_pass(command_buffer);
         }
 
-        unsafe { self.device.end_command_buffer(command_buffer) }
-            .map_err(Error::VulkanEndCommandBuffer)?;
+        unsafe {
+            profiling::scope!("end command buffer");
+            self.device
+                .end_command_buffer(command_buffer)
+                .map_err(Error::VulkanEndCommandBuffer)?;
+        }
+
         Ok(())
     }
 }

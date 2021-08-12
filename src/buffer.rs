@@ -8,11 +8,8 @@ pub struct Buffer<'a> {
     /// Held by [Buffer] to be able to destroy resources on drop.
     pub gpu: &'a Gpu<'a>,
 
-    buffer: vk::Buffer,
-    buffer_size: vk::DeviceSize,
+    pub buffer: vk::Buffer,
     allocation: vk_mem::Allocation,
-    alloc_info: vk_mem::AllocationInfo,
-    pub(crate) editable: bool,
 }
 
 impl PartialEq for Buffer<'_> {
@@ -51,7 +48,6 @@ impl Buffer<'_> {
         gpu: &'a Gpu<'_>,
         frame_index: FrameIndex,
         data: &[T],
-        editable: bool,
     ) -> Result<Buffer<'a>, Error> {
         let buffer_size = (data.len() * mem::size_of::<T>()) as vk::DeviceSize;
         let buffer_create_info = vk::BufferCreateInfo::builder()
@@ -63,93 +59,39 @@ impl Buffer<'_> {
             pool: Some(gpu.staging_cpu_buffer_pool.clone()),
             ..Default::default()
         };
-        let (vk_buffer, allocation, alloc_info) = gpu
+        let (staging_buffer, staging_allocation, staging_alloc_info) = gpu
             .allocator
             .create_buffer(&buffer_create_info, &allocation_create_info)
             .map_err(Error::VmaBufferAllocation)?;
-        buffer_ops::copy_to_allocation(data, gpu, &allocation, &alloc_info)?;
-        let mut buffer = Buffer {
-            gpu,
-            buffer: vk_buffer,
-            buffer_size,
-            allocation,
-            alloc_info,
-            editable,
-        };
+        buffer_ops::copy_to_allocation(data, gpu, &staging_allocation, &staging_alloc_info)?;
 
-        if !editable {
-            let pool = gpu.main_gpu_buffer_pool.clone();
-            let (
-                gpu_buffer,
-                gpu_allocation,
-                gpu_alloc_info,
-                upload_cmdbuf,
+        let pool = gpu.main_gpu_buffer_pool.clone();
+        let (buffer, allocation, _, upload_cmdbuf, finished_upload, wait_stage) =
+            match buffer_ops::start_buffer_upload(gpu, pool, staging_buffer, buffer_size) {
+                Ok(result) => result,
+                Err(err) => {
+                    let _ = gpu
+                        .allocator
+                        .destroy_buffer(staging_buffer, &staging_allocation);
+                    return Err(err);
+                }
+            };
+
+        gpu.add_buffer_upload(
+            frame_index,
+            BufferUpload {
                 finished_upload,
                 wait_stage,
-            ) = buffer_ops::start_buffer_upload(gpu, pool, vk_buffer, buffer_size)?;
+                upload_cmdbuf,
+                staging_buffer: Some(staging_buffer),
+                staging_allocation: Some(staging_allocation),
+            },
+        );
 
-            gpu.add_buffer_upload(
-                frame_index,
-                BufferUpload {
-                    finished_upload,
-                    wait_stage,
-                    upload_cmdbuf,
-                    staging_buffer: Some(buffer.buffer),
-                    staging_allocation: Some(buffer.allocation),
-                },
-            );
-
-            buffer.buffer = gpu_buffer;
-            buffer.allocation = gpu_allocation;
-            buffer.alloc_info = gpu_alloc_info;
-        }
-
-        Ok(buffer)
-    }
-
-    #[profiling::function]
-    pub fn update_data<T>(&self, gpu: &Gpu, new_data: &[T]) -> Result<(), Error> {
-        if !self.editable {
-            Err(Error::BufferNotEditable)
-        } else {
-            buffer_ops::copy_to_allocation(new_data, gpu, &self.allocation, &self.alloc_info)
-        }
-    }
-
-    /// Returns a [vk::Buffer] which contains the contents of this
-    /// [Buffer].
-    ///
-    /// If self is editable, a temporary copy will be
-    /// returned. [Gpu::wait_buffer_uploads] needs to be called before
-    /// the returned buffer can be used for rendering. If not called
-    /// manually, it's called right before rendering.
-    #[profiling::function]
-    pub fn buffer(&self, frame_index: FrameIndex) -> Result<vk::Buffer, Error> {
-        if self.editable {
-            let pool_index = self.gpu.frame_mod(frame_index);
-            let temp_pool = self.gpu.temp_gpu_buffer_pools[pool_index].clone();
-            let (temp_buffer, temp_alloc, _, upload_cmdbuf, finished_upload, wait_stage) =
-                buffer_ops::start_buffer_upload(
-                    &self.gpu,
-                    temp_pool,
-                    self.buffer,
-                    self.buffer_size,
-                )?;
-            self.gpu.add_buffer_upload(
-                frame_index,
-                BufferUpload {
-                    finished_upload,
-                    wait_stage,
-                    upload_cmdbuf,
-                    staging_buffer: None,
-                    staging_allocation: None,
-                },
-            );
-            self.gpu
-                .add_temporary_buffer(frame_index, temp_buffer, temp_alloc);
-            Ok(temp_buffer)
-        } else {
-            Ok(self.buffer)
-        }
+        Ok(Buffer {
+            gpu,
+            buffer,
+            allocation,
+        })
     }
 }
