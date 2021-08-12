@@ -16,6 +16,8 @@ mod descriptors;
 
 // public-facing modules:
 
+pub use ash::vk;
+
 mod camera;
 pub use camera::Camera;
 
@@ -37,7 +39,8 @@ pub use mesh::Mesh;
 mod pipeline;
 pub use pipeline::Pipeline;
 
+mod scene;
+pub use scene::Scene;
+
 mod texture;
 pub use texture::Texture;
-
-pub use ash::vk;

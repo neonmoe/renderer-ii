@@ -1,14 +1,16 @@
-use crate::buffer_ops::BufferUpload;
+use crate::buffer_ops::{self, BufferUpload};
 use crate::descriptors::Descriptors;
 use crate::pipeline::Pipeline;
-use crate::{Camera, Canvas, Driver, Error, Mesh, Texture};
+use crate::{Camera, Canvas, Driver, Error, Scene, Texture};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
 use ash::{vk, Device, Instance};
 use std::cell::Cell;
 use std::ffi::CStr;
+use std::mem;
 use std::sync::mpsc::{self, Receiver, Sender};
+use ultraviolet::Mat4;
 
 /// Get from [Gpu::wait_frame].
 #[derive(Clone, Copy)]
@@ -662,7 +664,7 @@ impl Gpu<'_> {
         frame_index: FrameIndex,
         canvas: &Canvas,
         camera: &Camera,
-        meshes: &[Mesh],
+        scene: &Scene,
     ) -> Result<(), Error> {
         self.frame_index.set(frame_index.index);
         let _ = self.allocator.set_current_frame_index(frame_index.index);
@@ -693,7 +695,7 @@ impl Gpu<'_> {
 
         let command_buffer = canvas.command_buffers[image_index as usize];
         let framebuffer = canvas.swapchain_framebuffers[image_index as usize];
-        self.record_commmand_buffer(frame_index, command_buffer, framebuffer, canvas, meshes)?;
+        self.record_commmand_buffer(frame_index, command_buffer, framebuffer, canvas, scene)?;
 
         let mut wait_semaphores = vec![acquired_image_sp];
         let mut wait_stages = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -747,7 +749,7 @@ impl Gpu<'_> {
         command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
         canvas: &Canvas,
-        meshes: &[Mesh],
+        scene: &Scene,
     ) -> Result<(), Error> {
         let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {
@@ -787,16 +789,9 @@ impl Gpu<'_> {
             )
         };
 
-        let mut meshes_per_pipeline = (0..(Pipeline::Count as usize))
-            .map(|_| Vec::with_capacity(meshes.len()))
-            .collect::<Vec<Vec<&Mesh<'_>>>>();
-        for mesh in meshes {
-            let bucket = unsafe { meshes_per_pipeline.get_unchecked_mut(mesh.pipeline as usize) };
-            bucket.push(mesh);
-        }
-
-        for (pipeline_idx, meshes) in meshes_per_pipeline.into_iter().enumerate() {
+        for (pipeline, meshes) in &scene.pipeline_map {
             profiling::scope!("pipeline");
+            let pipeline_idx = *pipeline as usize;
             if meshes.is_empty() {
                 continue;
             }
@@ -825,24 +820,56 @@ impl Gpu<'_> {
                 };
             }
 
-            for mesh in meshes {
+            for (mesh, transforms) in meshes {
                 profiling::scope!("mesh");
                 let mesh_buffer = if let Ok(buffer) = mesh.mesh_buffer.buffer(frame_index) {
                     buffer
                 } else {
                     continue;
                 };
+
+                let transform_buffer = {
+                    profiling::scope!("transform buffer creation");
+                    let buffer_size = (transforms.len() * mem::size_of::<Mat4>()) as vk::DeviceSize;
+                    let buffer_create_info = vk::BufferCreateInfo::builder()
+                        .size(buffer_size)
+                        .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+                        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+                    let allocation_create_info = vk_mem::AllocationCreateInfo {
+                        flags: vk_mem::AllocationCreateFlags::MAPPED,
+                        pool: Some(self.staging_cpu_buffer_pool.clone()),
+                        ..Default::default()
+                    };
+                    let (transform_buffer, allocation, alloc_info) = self
+                        .allocator
+                        .create_buffer(&buffer_create_info, &allocation_create_info)
+                        .map_err(Error::VmaBufferAllocation)?;
+                    buffer_ops::copy_to_allocation(transforms, &self, &allocation, &alloc_info)?;
+                    self.add_temporary_buffer(frame_index, transform_buffer, allocation);
+                    transform_buffer
+                };
+
                 unsafe {
-                    self.device
-                        .cmd_bind_vertex_buffers(command_buffer, 0, &[mesh_buffer], &[0]);
+                    self.device.cmd_bind_vertex_buffers(
+                        command_buffer,
+                        0,
+                        &[mesh_buffer, transform_buffer],
+                        &[0, 0],
+                    );
                     self.device.cmd_bind_index_buffer(
                         command_buffer,
                         mesh_buffer,
                         mesh.indices_offset,
                         mesh.index_type,
                     );
-                    self.device
-                        .cmd_draw_indexed(command_buffer, mesh.index_count, 1, 0, 0, 0);
+                    self.device.cmd_draw_indexed(
+                        command_buffer,
+                        mesh.index_count,
+                        transforms.len() as u32,
+                        0,
+                        0,
+                        0,
+                    );
                 }
             }
         }

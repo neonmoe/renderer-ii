@@ -3,14 +3,10 @@ use neonvk::vk;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use std::time::{Duration, Instant};
-use ultraviolet::{Bivec3, Rotor3, Vec3};
+use ultraviolet::{Mat4, Vec3};
 
 use logger::Logger;
 static LOGGER: Logger = Logger;
-
-const RED: Vec3 = Vec3::new(1.0, 0.1, 0.1);
-const YELLOW: Vec3 = Vec3::new(0.9, 0.9, 0.1);
-const PINK: Vec3 = Vec3::new(0.9, 0.1, 0.9);
 
 #[derive(thiserror::Error, Debug)]
 enum SandboxError {
@@ -70,30 +66,14 @@ fn main() -> anyhow::Result<()> {
         [Vec3::new(0.5, 0.5, 0.0), Vec3::new(1.0, 0.0, 0.0)],
         [Vec3::new(0.5, -0.5, 0.0), Vec3::new(1.0, 1.0, 0.0)],
     ];
-    let mut meshes = {
-        vec![
-            neonvk::Mesh::new(
-                &gpu,
-                loading_frame_index,
-                quad_vertices,
-                &[0u16, 1, 2, 3, 2, 1],
-                neonvk::Pipeline::Textured,
-                true,
-            )?,
-            neonvk::Mesh::new(
-                &gpu,
-                loading_frame_index,
-                &[
-                    [Vec3::new(-1.0, -1.0, 0.0), RED],
-                    [Vec3::new(-0.5, -1.0, 0.0), PINK],
-                    [Vec3::new(-1.0, -0.5, 0.0), YELLOW],
-                ],
-                &[0u32, 1, 2],
-                neonvk::Pipeline::PlainVertexColor,
-                false,
-            )?,
-        ]
-    };
+    let quad = neonvk::Mesh::new(
+        &gpu,
+        loading_frame_index,
+        quad_vertices,
+        &[0u16, 1, 2, 3, 2, 1],
+        neonvk::Pipeline::Textured,
+        false,
+    )?;
     // Get the first frame out of the way, to upload the meshes.
     // TODO: Add a proper way to upload resources before the game loop
     gpu.set_pipeline_textures(
@@ -101,7 +81,7 @@ fn main() -> anyhow::Result<()> {
         neonvk::Pipeline::Textured,
         &[&tree_texture],
     );
-    gpu.render_frame(loading_frame_index, &canvas, &camera, &meshes)?;
+    gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new())?;
 
     let start_time = Instant::now();
     let mut frame_instants = Vec::with_capacity(10_000);
@@ -113,18 +93,6 @@ fn main() -> anyhow::Result<()> {
     'running: loop {
         profiling::finish_frame!();
         let frame_start_seconds = (Instant::now() - start_time).as_secs_f32();
-
-        let rotor = Rotor3::from_angle_plane(
-            (frame_start_seconds).sin() * 0.1,
-            Bivec3::new(1.0, 0.0, 0.0),
-        );
-        let vertices = [
-            [quad_vertices[0][0].rotated_by(rotor), quad_vertices[0][1]],
-            [quad_vertices[1][0].rotated_by(rotor), quad_vertices[1][1]],
-            [quad_vertices[2][0].rotated_by(rotor), quad_vertices[2][1]],
-            [quad_vertices[3][0].rotated_by(rotor), quad_vertices[3][1]],
-        ];
-        meshes[0].update_vertices(&gpu, &vertices)?;
 
         for event in event_pump.poll_iter() {
             match event {
@@ -150,9 +118,21 @@ fn main() -> anyhow::Result<()> {
             size_changed = false;
         }
 
+        let mut scene = neonvk::Scene::new();
+        let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1);
+        scene.queue(&quad, rotation);
+        scene.queue(
+            &quad,
+            Mat4::from_translation(Vec3::new(0.5, 0.0, 0.5)) * rotation,
+        );
+        scene.queue(
+            &quad,
+            Mat4::from_translation(Vec3::new(-0.5, 0.0, -0.5)) * rotation,
+        );
+
         let frame_index = gpu.wait_frame()?;
         gpu.set_pipeline_textures(frame_index, neonvk::Pipeline::Textured, &[&tree_texture]);
-        match gpu.render_frame(frame_index, &canvas, &camera, &meshes) {
+        match gpu.render_frame(frame_index, &canvas, &camera, &scene) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),

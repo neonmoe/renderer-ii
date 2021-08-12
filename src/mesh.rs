@@ -3,6 +3,7 @@ use crate::{Error, FrameIndex, Gpu, Pipeline};
 use ash::vk;
 use std::{mem, ptr};
 
+#[derive(PartialEq, Eq, Hash)]
 pub struct Mesh<'a> {
     /// Contains the vertices and indices.
     pub(crate) mesh_buffer: Buffer<'a>,

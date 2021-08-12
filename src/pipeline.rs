@@ -1,8 +1,8 @@
 use ash::vk;
 use std::mem;
-use ultraviolet::Vec3;
+use ultraviolet::{Mat4, Vec3, Vec4};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pipeline {
     PlainVertexColor,
     Textured,
@@ -38,15 +38,52 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[DescriptorSetLa
     stage_flags: vk::ShaderStageFlags::VERTEX,
 }];
 
+static INSTANCED_TRANSFORM_BINDING_1: vk::VertexInputBindingDescription =
+    vk::VertexInputBindingDescription {
+        binding: 1,
+        stride: mem::size_of::<Mat4>() as u32,
+        input_rate: vk::VertexInputRate::INSTANCE,
+    };
+
+static INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES: [vk::VertexInputAttributeDescription; 4] = [
+    vk::VertexInputAttributeDescription {
+        binding: 1,
+        location: 2,
+        format: vk::Format::R32G32B32A32_SFLOAT,
+        offset: 0,
+    },
+    vk::VertexInputAttributeDescription {
+        binding: 1,
+        location: 3,
+        format: vk::Format::R32G32B32A32_SFLOAT,
+        offset: std::mem::size_of::<[Vec4; 1]>() as u32,
+    },
+    vk::VertexInputAttributeDescription {
+        binding: 1,
+        location: 4,
+        format: vk::Format::R32G32B32A32_SFLOAT,
+        offset: std::mem::size_of::<[Vec4; 2]>() as u32,
+    },
+    vk::VertexInputAttributeDescription {
+        binding: 1,
+        location: 5,
+        format: vk::Format::R32G32B32A32_SFLOAT,
+        offset: std::mem::size_of::<[Vec4; 3]>() as u32,
+    },
+];
+
 pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as usize] = [
     PipelineParameters {
         vertex_shader: shaders::include_spirv!("shaders/plain_color.vert"),
         fragment_shader: shaders::include_spirv!("shaders/plain_color.frag"),
-        bindings: &[vk::VertexInputBindingDescription {
-            binding: 0,
-            stride: mem::size_of::<[Vec3; 2]>() as u32,
-            input_rate: vk::VertexInputRate::VERTEX,
-        }],
+        bindings: &[
+            vk::VertexInputBindingDescription {
+                binding: 0,
+                stride: mem::size_of::<[Vec3; 2]>() as u32,
+                input_rate: vk::VertexInputRate::VERTEX,
+            },
+            INSTANCED_TRANSFORM_BINDING_1,
+        ],
         attributes: &[
             vk::VertexInputAttributeDescription {
                 binding: 0,
@@ -60,17 +97,24 @@ pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as u
                 format: vk::Format::R32G32B32_SFLOAT,
                 offset: mem::size_of::<Vec3>() as u32,
             },
+            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[0],
+            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[1],
+            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[2],
+            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[3],
         ],
         descriptor_sets: &[SHARED_DESCRIPTOR_SET_0],
     },
     PipelineParameters {
         vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
         fragment_shader: shaders::include_spirv!("shaders/textured.frag"),
-        bindings: &[vk::VertexInputBindingDescription {
-            binding: 0,
-            stride: mem::size_of::<[Vec3; 2]>() as u32,
-            input_rate: vk::VertexInputRate::VERTEX,
-        }],
+        bindings: &[
+            vk::VertexInputBindingDescription {
+                binding: 0,
+                stride: mem::size_of::<[Vec3; 2]>() as u32,
+                input_rate: vk::VertexInputRate::VERTEX,
+            },
+            INSTANCED_TRANSFORM_BINDING_1,
+        ],
         attributes: &[
             vk::VertexInputAttributeDescription {
                 binding: 0,
@@ -84,6 +128,10 @@ pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as u
                 format: vk::Format::R32G32_SFLOAT,
                 offset: mem::size_of::<Vec3>() as u32,
             },
+            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[0],
+            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[1],
+            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[2],
+            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[3],
         ],
         descriptor_sets: &[
             SHARED_DESCRIPTOR_SET_0,

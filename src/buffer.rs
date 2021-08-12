@@ -1,6 +1,7 @@
 use crate::buffer_ops::{self, BufferUpload};
 use crate::{Error, FrameIndex, Gpu};
 use ash::vk;
+use std::hash::{Hash, Hasher};
 use std::mem;
 
 pub struct Buffer<'a> {
@@ -12,6 +13,20 @@ pub struct Buffer<'a> {
     allocation: vk_mem::Allocation,
     alloc_info: vk_mem::AllocationInfo,
     pub(crate) editable: bool,
+}
+
+impl PartialEq for Buffer<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.buffer == other.buffer
+    }
+}
+
+impl Eq for Buffer<'_> {}
+
+impl Hash for Buffer<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.buffer.hash(state);
+    }
 }
 
 impl Drop for Buffer<'_> {
