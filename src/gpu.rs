@@ -6,7 +6,6 @@ use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
 use ash::{vk, Device, Instance};
-use std::cell::Cell;
 use std::ffi::CStr;
 use std::mem;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -64,12 +63,11 @@ pub struct Gpu<'a> {
     pub(crate) surface_family_index: u32,
     pub(crate) graphics_queue: vk::Queue,
     surface_queue: vk::Queue,
+    frame_start_fence: vk::Fence,
 
     pub(crate) descriptors: Descriptors,
 
     frame_locals: Vec<FrameLocal>,
-    frame_index: Cell<u32>,
-    frame_count: Cell<u32>,
     buffer_upload_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
 }
 
@@ -80,10 +78,8 @@ struct BufferAllocation(vk::Buffer, vk_mem::Allocation);
 /// specific FrameLocal struct is reused. This allows for processing a
 /// frame while the previous one is still being rendered.
 struct FrameLocal {
-    acquired_image_sp: vk::Semaphore,
     finished_command_buffers_sp: vk::Semaphore,
-    finished_queue_fence: vk::Fence,
-
+    frame_end_fence: vk::Fence,
     buffer_uploads: (Sender<BufferUpload>, Receiver<BufferUpload>),
     temporary_buffers: (Sender<BufferAllocation>, Receiver<BufferAllocation>),
 }
@@ -94,29 +90,18 @@ impl Drop for Gpu<'_> {
         let _ = self.wait_idle();
 
         self.descriptors.clean_up(&self.device);
+        unsafe { self.device.destroy_fence(self.frame_start_fence, None) };
 
         for frame_local in &self.frame_locals {
             profiling::scope!("destroy frame locals");
-            let _ = unsafe {
-                self.device
-                    .wait_for_fences(&[frame_local.finished_queue_fence], true, u64::MAX)
-                    .map_err(Error::VulkanFenceWait)
-            };
 
             let _ = self.cleanup_buffer_uploads(frame_local);
             let _ = self.cleanup_temp_buffers(frame_local);
 
-            let &FrameLocal {
-                acquired_image_sp,
-                finished_command_buffers_sp,
-                finished_queue_fence,
-                ..
-            } = frame_local;
             unsafe {
-                self.device.destroy_semaphore(acquired_image_sp, None);
                 self.device
-                    .destroy_semaphore(finished_command_buffers_sp, None);
-                self.device.destroy_fence(finished_queue_fence, None);
+                    .destroy_semaphore(frame_local.finished_command_buffers_sp, None);
+                self.device.destroy_fence(frame_local.frame_end_fence, None);
             }
         }
 
@@ -363,33 +348,32 @@ impl Gpu<'_> {
         let frame_in_use_count = 3;
         let frame_locals = (0..frame_in_use_count)
             .map(|_| {
-                let acquired_image_sp = unsafe {
-                    device
-                        .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                        .map_err(Error::VulkanSemaphoreCreation)
-                }?;
                 let finished_command_buffers_sp = unsafe {
                     device
                         .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
                         .map_err(Error::VulkanSemaphoreCreation)
                 }?;
-                let finished_queue_fence = unsafe {
+                let fence_create_info =
+                    vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+                let frame_end_fence = unsafe {
                     device
-                        .create_fence(
-                            &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
-                            None,
-                        )
-                        .map_err(Error::VulkanFenceCreation)
+                        .create_fence(&fence_create_info, None)
+                        .map_err(Error::VulkanSemaphoreCreation)
                 }?;
                 Ok(FrameLocal {
-                    acquired_image_sp,
                     finished_command_buffers_sp,
-                    finished_queue_fence,
+                    frame_end_fence,
                     buffer_uploads: mpsc::channel(),
                     temporary_buffers: mpsc::channel(),
                 })
             })
             .collect::<Result<Vec<FrameLocal>, Error>>()?;
+
+        let frame_start_fence = unsafe {
+            device
+                .create_fence(&vk::FenceCreateInfo::default(), None)
+                .map_err(Error::VulkanSemaphoreCreation)
+        }?;
 
         let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(graphics_family_index)
@@ -528,24 +512,36 @@ impl Gpu<'_> {
                 surface_family_index,
                 graphics_queue,
                 surface_queue,
+                frame_start_fence,
 
                 descriptors,
 
                 frame_locals,
-                frame_index: Cell::new(0),
-                frame_count: Cell::new(frame_in_use_count),
                 buffer_upload_semaphores: mpsc::channel(),
             },
             physical_devices,
         ))
     }
 
+    pub(crate) fn image_index(&self, frame_index: FrameIndex) -> usize {
+        frame_index.index as usize
+    }
+
+    fn frame_local(&self, frame_index: FrameIndex) -> &FrameLocal {
+        &self.frame_locals[self.image_index(frame_index)]
+    }
+
+    pub(crate) fn get_temp_buffer_pool(&self, frame_index: FrameIndex) -> vk_mem::AllocatorPool {
+        self.temp_cpu_buffer_pools[self.image_index(frame_index)].clone()
+    }
+
     #[profiling::function]
     pub(crate) fn add_buffer_upload(&self, frame_index: FrameIndex, buffer_upload: BufferUpload) {
         let upload_wait = WaitSemaphore(buffer_upload.finished_upload, buffer_upload.wait_stage);
-        let _ = self.buffer_upload_semaphores.0.send(upload_wait);
-        let frame_local = &self.frame_locals[self.frame_mod(frame_index)];
-        let _ = frame_local.buffer_uploads.0.send(buffer_upload);
+        let upload_sender = &self.frame_local(frame_index).buffer_uploads.0;
+        let semaphore_sender = &self.buffer_upload_semaphores.0;
+        let _ = semaphore_sender.send(upload_wait);
+        let _ = upload_sender.send(buffer_upload);
     }
 
     #[profiling::function]
@@ -555,23 +551,9 @@ impl Gpu<'_> {
         buffer: vk::Buffer,
         allocation: vk_mem::Allocation,
     ) {
-        let frame_local = &self.frame_locals[self.frame_mod(frame_index)];
         let buffer_allocation = BufferAllocation(buffer, allocation);
-        let _ = frame_local.temporary_buffers.0.send(buffer_allocation);
-    }
-
-    pub(crate) fn set_frame_count(&self, new_frame_count: u32) {
-        self.frame_count.set(new_frame_count);
-    }
-
-    /// Returns the frame index % frame count. Generally everything
-    /// frame-specific is a vec that can be indexed into with this.
-    pub(crate) fn frame_mod(&self, frame_index: FrameIndex) -> usize {
-        (frame_index.index % self.frame_count.get()) as usize
-    }
-
-    pub(crate) fn get_temp_buffer_pool(&self, frame_index: FrameIndex) -> vk_mem::AllocatorPool {
-        self.temp_cpu_buffer_pools[self.frame_mod(frame_index)].clone()
+        let temp_buffer_sender = &self.frame_local(frame_index).temporary_buffers.0;
+        let _ = temp_buffer_sender.send(buffer_allocation);
     }
 
     #[profiling::function]
@@ -632,17 +614,30 @@ impl Gpu<'_> {
     /// After ensuring that the next frame can be rendered, this also
     /// frees the resources that can now be freed up.
     #[profiling::function]
-    pub fn wait_frame(&self) -> Result<FrameIndex, Error> {
-        let frame_index = FrameIndex::new(self.frame_index.get().wrapping_add(1));
-        let frame_local = &self.frame_locals[self.frame_mod(frame_index)];
+    pub fn wait_frame(&self, canvas: &Canvas) -> Result<FrameIndex, Error> {
+        let (image_index, _) = unsafe {
+            profiling::scope!("acquire next image");
+            self.swapchain_ext
+                .acquire_next_image(
+                    canvas.swapchain,
+                    u64::MAX,
+                    vk::Semaphore::null(),
+                    self.frame_start_fence,
+                )
+                .map_err(Error::VulkanAcquireImage)
+        }?;
+        let frame_index = FrameIndex::new(image_index);
+        let frame_local = self.frame_local(frame_index);
 
-        {
-            profiling::scope!("wait for frame fence");
-            unsafe {
-                self.device
-                    .wait_for_fences(&[frame_local.finished_queue_fence], true, u64::MAX)
-                    .map_err(Error::VulkanFenceWait)
-            }?;
+        let fences = [self.frame_start_fence, frame_local.frame_end_fence];
+        unsafe {
+            profiling::scope!("wait for the image");
+            self.device
+                .wait_for_fences(&fences, true, u64::MAX)
+                .map_err(Error::VulkanFenceWait)?;
+            self.device
+                .reset_fences(&fences)
+                .map_err(Error::VulkanFenceReset)?;
         }
 
         self.cleanup_temp_buffers(frame_local)?;
@@ -677,45 +672,27 @@ impl Gpu<'_> {
         camera: &Camera,
         scene: &Scene,
     ) -> Result<(), Error> {
-        self.frame_index.set(frame_index.index);
-        let _ = self.allocator.set_current_frame_index(frame_index.index);
-
+        let frame_local = self.frame_local(frame_index);
         camera.update(canvas, frame_index)?;
 
-        let FrameLocal {
-            acquired_image_sp,
-            finished_command_buffers_sp,
-            finished_queue_fence,
-            ..
-        } = self.frame_locals[self.frame_mod(frame_index)];
-
-        let (image_index, _) = unsafe {
-            profiling::scope!("acquire next image");
-            self.swapchain_ext
-                .acquire_next_image(
-                    canvas.swapchain,
-                    u64::MAX,
-                    acquired_image_sp,
-                    vk::Fence::null(),
-                )
-                .map_err(Error::VulkanAcquireImage)
-        }?;
-
-        unsafe { self.device.reset_fences(&[finished_queue_fence]) }
-            .map_err(Error::VulkanFenceReset)?;
-
-        let command_buffer = canvas.command_buffers[image_index as usize];
-        let framebuffer = canvas.swapchain_framebuffers[image_index as usize];
+        let image_index = self.image_index(frame_index);
+        let command_buffer = canvas.command_buffers[image_index];
+        let framebuffer = canvas.swapchain_framebuffers[image_index];
         self.record_commmand_buffer(frame_index, command_buffer, framebuffer, canvas, scene)?;
 
-        let mut wait_semaphores = vec![acquired_image_sp];
-        let mut wait_stages = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        for WaitSemaphore(semaphore, wait_stage) in self.buffer_upload_semaphores.1.try_iter() {
+        let upload_semaphores = self
+            .buffer_upload_semaphores
+            .1
+            .try_iter()
+            .collect::<Vec<WaitSemaphore>>();
+        let mut wait_semaphores = Vec::with_capacity(upload_semaphores.len());
+        let mut wait_stages = Vec::with_capacity(upload_semaphores.len());
+        for WaitSemaphore(semaphore, wait_stage) in upload_semaphores {
             wait_semaphores.push(semaphore);
             wait_stages.push(wait_stage);
         }
 
-        let signal_semaphores = [finished_command_buffers_sp];
+        let signal_semaphores = [frame_local.finished_command_buffers_sp];
         let command_buffers = [command_buffer];
         let submit_infos = [vk::SubmitInfo::builder()
             .wait_semaphores(&wait_semaphores)
@@ -726,12 +703,16 @@ impl Gpu<'_> {
         unsafe {
             profiling::scope!("queue render");
             self.device
-                .queue_submit(self.graphics_queue, &submit_infos, finished_queue_fence)
+                .queue_submit(
+                    self.graphics_queue,
+                    &submit_infos,
+                    frame_local.frame_end_fence,
+                )
                 .map_err(Error::VulkanQueueSubmit)
         }?;
 
         let swapchains = [canvas.swapchain];
-        let image_indices = [image_index];
+        let image_indices = [image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&signal_semaphores)
             .swapchains(&swapchains)

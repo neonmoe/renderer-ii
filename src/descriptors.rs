@@ -161,7 +161,7 @@ impl Descriptors {
         binding: u32,
         buffer: vk::Buffer,
     ) {
-        let frame_idx = gpu.frame_mod(frame_index);
+        let frame_idx = gpu.image_index(frame_index);
         let pipeline_idx = pipeline as usize;
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[frame_idx][pipeline_idx][set_idx];
@@ -194,7 +194,7 @@ impl Descriptors {
         first_binding: u32,
         textures: &[&Texture<'_>],
     ) {
-        let frame_idx = gpu.frame_mod(frame_index);
+        let frame_idx = gpu.image_index(frame_index);
         let pipeline_idx = pipeline as usize;
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[frame_idx][pipeline_idx][set_idx];
@@ -237,6 +237,6 @@ impl Descriptors {
         frame_index: FrameIndex,
         pipeline_idx: usize,
     ) -> &[vk::DescriptorSet] {
-        &self.descriptor_sets[gpu.frame_mod(frame_index)][pipeline_idx]
+        &self.descriptor_sets[gpu.image_index(frame_index)][pipeline_idx]
     }
 }

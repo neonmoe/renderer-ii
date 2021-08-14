@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
     let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
     let mut canvas = neonvk::Canvas::new(&gpu, None, width, height)?;
 
-    let loading_frame_index = gpu.wait_frame()?;
+    let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::new();
     let (tree_w, tree_h, tree_bytes, tree_format) = load_png(include_bytes!("tree.png"));
     let tree_texture = neonvk::Texture::new(
@@ -129,7 +129,7 @@ fn main() -> anyhow::Result<()> {
             Mat4::from_translation(Vec3::new(-0.5, 0.0, -0.5)) * rotation,
         );
 
-        let frame_index = gpu.wait_frame()?;
+        let frame_index = gpu.wait_frame(&canvas)?;
         gpu.set_pipeline_textures(frame_index, neonvk::Pipeline::Textured, &[&tree_texture]);
         match gpu.render_frame(frame_index, &canvas, &camera, &scene) {
             Ok(_) => {}
@@ -184,7 +184,6 @@ fn display_bytes(bytes: u64) -> String {
 mod logger {
     use log::{Level, Log, Metadata, Record};
     use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
-    use std::thread;
 
     pub struct Logger;
 
@@ -219,26 +218,15 @@ mod logger {
                     );
                 }
                 if record.level() == Level::Error {
-                    thread::spawn(move || {
-                        if let Some(title_len) = message.char_indices().position(|(_, c)| c == ':')
-                        {
-                            let title = &message[..title_len];
-                            let message = &message[(title_len + 2).min(message.len())..];
-                            let _ = show_simple_message_box(
-                                MessageBoxFlag::ERROR,
-                                title,
-                                message,
-                                None,
-                            );
-                        } else {
-                            let _ = show_simple_message_box(
-                                MessageBoxFlag::ERROR,
-                                "Error",
-                                &message,
-                                None,
-                            );
-                        }
-                    });
+                    if let Some(title_len) = message.char_indices().position(|(_, c)| c == ':') {
+                        let title = &message[..title_len];
+                        let message = &message[(title_len + 2).min(message.len())..];
+                        let _ =
+                            show_simple_message_box(MessageBoxFlag::ERROR, title, message, None);
+                    } else {
+                        let _ =
+                            show_simple_message_box(MessageBoxFlag::ERROR, "Error", &message, None);
+                    }
                 }
             }
         }

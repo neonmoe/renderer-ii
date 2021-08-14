@@ -95,8 +95,6 @@ impl Canvas<'_> {
             &queue_family_indices,
         )?;
 
-        gpu.set_frame_count(frame_count);
-
         // TODO: Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
         let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }
