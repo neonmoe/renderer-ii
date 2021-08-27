@@ -1,4 +1,4 @@
-use crate::buffer_ops::{self, BufferUpload};
+use crate::buffer_ops;
 use crate::{Error, FrameIndex, Gpu};
 use ash::vk;
 use std::hash::{Hash, Hasher};
@@ -66,27 +66,23 @@ impl Buffer<'_> {
         buffer_ops::copy_to_allocation(data, gpu, &staging_allocation, &staging_alloc_info)?;
 
         let pool = gpu.main_gpu_buffer_pool.clone();
-        let (buffer, allocation, _, upload_cmdbuf, finished_upload, wait_stage) =
-            match buffer_ops::start_buffer_upload(gpu, pool, staging_buffer, buffer_size) {
-                Ok(result) => result,
-                Err(err) => {
-                    let _ = gpu
-                        .allocator
-                        .destroy_buffer(staging_buffer, &staging_allocation);
-                    return Err(err);
-                }
-            };
-
-        gpu.add_buffer_upload(
+        let (buffer, allocation) = match buffer_ops::start_buffer_upload(
+            gpu,
             frame_index,
-            BufferUpload {
-                finished_upload,
-                wait_stage,
-                upload_cmdbuf,
-                staging_buffer: Some(staging_buffer),
-                staging_allocation: Some(staging_allocation),
-            },
-        );
+            pool,
+            staging_buffer,
+            buffer_size,
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                let _ = gpu
+                    .allocator
+                    .destroy_buffer(staging_buffer, &staging_allocation);
+                return Err(err);
+            }
+        };
+
+        gpu.add_temporary_buffer(frame_index, staging_buffer, staging_allocation);
 
         Ok(Buffer {
             gpu,

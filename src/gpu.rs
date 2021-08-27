@@ -1,4 +1,4 @@
-use crate::buffer_ops::{self, BufferUpload};
+use crate::buffer_ops;
 use crate::descriptors::Descriptors;
 use crate::pipeline::Pipeline;
 use crate::{Camera, Canvas, Driver, Error, Scene, Texture};
@@ -68,7 +68,7 @@ pub struct Gpu<'a> {
     pub(crate) descriptors: Descriptors,
 
     frame_locals: Vec<FrameLocal>,
-    buffer_upload_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
+    render_wait_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
 }
 
 struct BufferAllocation(vk::Buffer, vk_mem::Allocation);
@@ -80,8 +80,9 @@ struct BufferAllocation(vk::Buffer, vk_mem::Allocation);
 struct FrameLocal {
     finished_command_buffers_sp: vk::Semaphore,
     frame_end_fence: vk::Fence,
-    buffer_uploads: (Sender<BufferUpload>, Receiver<BufferUpload>),
-    temporary_buffers: (Sender<BufferAllocation>, Receiver<BufferAllocation>),
+    temp_buffers: (Sender<BufferAllocation>, Receiver<BufferAllocation>),
+    temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
+    temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
 }
 
 impl Drop for Gpu<'_> {
@@ -95,8 +96,9 @@ impl Drop for Gpu<'_> {
         for frame_local in &self.frame_locals {
             profiling::scope!("destroy frame locals");
 
-            let _ = self.cleanup_buffer_uploads(frame_local);
             let _ = self.cleanup_temp_buffers(frame_local);
+            self.cleanup_temp_command_buffers(frame_local);
+            self.cleanup_temp_semaphores(frame_local);
 
             unsafe {
                 self.device
@@ -363,8 +365,9 @@ impl Gpu<'_> {
                 Ok(FrameLocal {
                     finished_command_buffers_sp,
                     frame_end_fence,
-                    buffer_uploads: mpsc::channel(),
-                    temporary_buffers: mpsc::channel(),
+                    temp_buffers: mpsc::channel(),
+                    temp_command_buffers: mpsc::channel(),
+                    temp_semaphores: mpsc::channel(),
                 })
             })
             .collect::<Result<Vec<FrameLocal>, Error>>()?;
@@ -517,7 +520,7 @@ impl Gpu<'_> {
                 descriptors,
 
                 frame_locals,
-                buffer_upload_semaphores: mpsc::channel(),
+                render_wait_semaphores: mpsc::channel(),
             },
             physical_devices,
         ))
@@ -536,15 +539,6 @@ impl Gpu<'_> {
     }
 
     #[profiling::function]
-    pub(crate) fn add_buffer_upload(&self, frame_index: FrameIndex, buffer_upload: BufferUpload) {
-        let upload_wait = WaitSemaphore(buffer_upload.finished_upload, buffer_upload.wait_stage);
-        let upload_sender = &self.frame_local(frame_index).buffer_uploads.0;
-        let semaphore_sender = &self.buffer_upload_semaphores.0;
-        let _ = semaphore_sender.send(upload_wait);
-        let _ = upload_sender.send(buffer_upload);
-    }
-
-    #[profiling::function]
     pub(crate) fn add_temporary_buffer(
         &self,
         frame_index: FrameIndex,
@@ -552,35 +546,87 @@ impl Gpu<'_> {
         allocation: vk_mem::Allocation,
     ) {
         let buffer_allocation = BufferAllocation(buffer, allocation);
-        let temp_buffer_sender = &self.frame_local(frame_index).temporary_buffers.0;
+        let temp_buffer_sender = &self.frame_local(frame_index).temp_buffers.0;
         let _ = temp_buffer_sender.send(buffer_allocation);
     }
 
     #[profiling::function]
-    fn cleanup_buffer_uploads(&self, frame_local: &FrameLocal) -> Result<(), Error> {
-        for buffer_upload in frame_local.buffer_uploads.1.try_iter() {
-            if let Some(buffer) = buffer_upload.staging_buffer {
-                unsafe { self.device.destroy_buffer(buffer, None) };
-            }
-            if let Some(allocation) = &buffer_upload.staging_allocation {
-                self.allocator
-                    .free_memory(allocation)
-                    .map_err(Error::VmaBufferDestruction)?;
-            }
-            let cmdbufs = [buffer_upload.upload_cmdbuf];
+    pub(crate) fn run_command_buffer<T, F: FnOnce(vk::CommandBuffer) -> Result<T, Error>>(
+        &self,
+        frame_index: FrameIndex,
+        wait_stage: vk::PipelineStageFlags,
+        f: F,
+    ) -> Result<T, Error> {
+        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(self.command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+        let command_buffers = unsafe {
+            self.device
+                .allocate_command_buffers(&command_buffer_allocate_info)
+                .map_err(Error::VulkanCommandBuffersAllocation)
+        }?;
+        let temp_command_buffer = command_buffers[0];
+
+        let signal_semaphore = unsafe {
+            self.device
+                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                .map_err(Error::VulkanFenceCreation)
+        }?;
+
+        let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        unsafe {
+            self.device
+                .begin_command_buffer(temp_command_buffer, &command_buffer_begin_info)
+                .map_err(Error::VulkanBeginCommandBuffer)
+        }?;
+        let result = f(temp_command_buffer)?;
+        unsafe { self.device.end_command_buffer(temp_command_buffer) }
+            .map_err(Error::VulkanEndCommandBuffer)?;
+
+        let command_buffers = [temp_command_buffer];
+        let signal_semaphores = [signal_semaphore];
+        let submit_infos = [vk::SubmitInfo::builder()
+            .command_buffers(&command_buffers)
+            .signal_semaphores(&signal_semaphores)
+            .build()];
+        unsafe {
+            self.device
+                .queue_submit(self.graphics_queue, &submit_infos, vk::Fence::null())
+                .map_err(Error::VulkanQueueSubmit)
+        }?;
+
+        let temp_cmdbuf_sender = &self.frame_local(frame_index).temp_command_buffers.0;
+        let _ = temp_cmdbuf_sender.send(temp_command_buffer);
+        let temp_semaphore_sender = &self.frame_local(frame_index).temp_semaphores.0;
+        let _ = temp_semaphore_sender.send(signal_semaphore);
+        let render_wait_semaphore_sender = &self.render_wait_semaphores.0;
+        let _ = render_wait_semaphore_sender.send(WaitSemaphore(signal_semaphore, wait_stage));
+        Ok(result)
+    }
+
+    #[profiling::function]
+    fn cleanup_temp_command_buffers(&self, frame_local: &FrameLocal) {
+        for command_buffer in frame_local.temp_command_buffers.1.try_iter() {
+            let cmdbufs = [command_buffer];
             unsafe {
-                self.device
-                    .destroy_semaphore(buffer_upload.finished_upload, None);
                 self.device
                     .free_command_buffers(self.command_pool, &cmdbufs);
             }
         }
-        Ok(())
+    }
+
+    #[profiling::function]
+    fn cleanup_temp_semaphores(&self, frame_local: &FrameLocal) {
+        for semaphore in frame_local.temp_semaphores.1.try_iter() {
+            unsafe { self.device.destroy_semaphore(semaphore, None) };
+        }
     }
 
     #[profiling::function]
     fn cleanup_temp_buffers(&self, frame_local: &FrameLocal) -> Result<(), Error> {
-        for BufferAllocation(buffer, allocation) in frame_local.temporary_buffers.1.try_iter() {
+        for BufferAllocation(buffer, allocation) in frame_local.temp_buffers.1.try_iter() {
             self.allocator
                 .destroy_buffer(buffer, &allocation)
                 .map_err(Error::VmaBufferDestruction)?;
@@ -641,7 +687,8 @@ impl Gpu<'_> {
         }
 
         self.cleanup_temp_buffers(frame_local)?;
-        self.cleanup_buffer_uploads(frame_local)?;
+        self.cleanup_temp_command_buffers(frame_local);
+        self.cleanup_temp_semaphores(frame_local);
 
         Ok(frame_index)
     }
@@ -677,17 +724,17 @@ impl Gpu<'_> {
 
         let image_index = self.image_index(frame_index);
         let command_buffer = canvas.command_buffers[image_index];
-        let framebuffer = canvas.swapchain_framebuffers[image_index];
+        let framebuffer = canvas.framebuffers[image_index];
         self.record_commmand_buffer(frame_index, command_buffer, framebuffer, canvas, scene)?;
 
-        let upload_semaphores = self
-            .buffer_upload_semaphores
+        let render_wait_semaphores = self
+            .render_wait_semaphores
             .1
             .try_iter()
             .collect::<Vec<WaitSemaphore>>();
-        let mut wait_semaphores = Vec::with_capacity(upload_semaphores.len());
-        let mut wait_stages = Vec::with_capacity(upload_semaphores.len());
-        for WaitSemaphore(semaphore, wait_stage) in upload_semaphores {
+        let mut wait_semaphores = Vec::with_capacity(render_wait_semaphores.len());
+        let mut wait_stages = Vec::with_capacity(render_wait_semaphores.len());
+        for WaitSemaphore(semaphore, wait_stage) in render_wait_semaphores {
             wait_semaphores.push(semaphore);
             wait_stages.push(wait_stage);
         }
@@ -759,7 +806,9 @@ impl Gpu<'_> {
         }
 
         let render_area = vk::Rect2D::builder().extent(canvas.extent).build();
-        let clear_colors = [vk::ClearValue::default()];
+        let mut depth_clear_value = vk::ClearValue::default();
+        depth_clear_value.depth_stencil.depth = 1.0;
+        let clear_colors = [vk::ClearValue::default(), depth_clear_value];
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
             .render_pass(canvas.final_render_pass)
             .framebuffer(framebuffer)

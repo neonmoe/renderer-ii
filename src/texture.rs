@@ -1,4 +1,4 @@
-use crate::buffer_ops::{self, BufferUpload};
+use crate::buffer_ops;
 use crate::{Error, FrameIndex, Gpu};
 use ash::version::DeviceV1_0;
 use ash::vk;
@@ -53,33 +53,23 @@ impl Texture<'_> {
             height,
             depth: 1,
         };
-        let (image, allocation, upload_cmdbuf, finished_upload, wait_stage) =
-            match buffer_ops::start_image_upload(
-                gpu,
-                image_pool,
-                staging_buffer,
-                image_extent,
-                format,
-            ) {
-                Ok(result) => result,
-                Err(err) => {
-                    let _ = gpu
-                        .allocator
-                        .destroy_buffer(staging_buffer, &staging_allocation);
-                    return Err(err);
-                }
-            };
-
-        gpu.add_buffer_upload(
+        let (image, allocation) = match buffer_ops::start_image_upload(
+            gpu,
             frame_index,
-            BufferUpload {
-                finished_upload,
-                wait_stage,
-                upload_cmdbuf,
-                staging_buffer: Some(staging_buffer),
-                staging_allocation: Some(staging_allocation),
-            },
-        );
+            image_pool,
+            staging_buffer,
+            image_extent,
+            format,
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                let _ = gpu
+                    .allocator
+                    .destroy_buffer(staging_buffer, &staging_allocation);
+                return Err(err);
+            }
+        };
+        gpu.add_temporary_buffer(frame_index, staging_buffer, staging_allocation);
 
         let subresource_range = vk::ImageSubresourceRange::builder()
             .aspect_mask(vk::ImageAspectFlags::COLOR)

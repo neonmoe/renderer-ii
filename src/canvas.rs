@@ -1,10 +1,11 @@
 use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
-use crate::{Error, Gpu};
+use crate::{Error, FrameIndex, Gpu};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
 use ash::{vk, Device};
 
 pub const SWAPCHAIN_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
+pub const DEPTH_FORMAT: vk::Format = vk::Format::D24_UNORM_S8_UINT;
 
 /// The shorter-lived half of the rendering pair, along with [Gpu].
 ///
@@ -18,8 +19,10 @@ pub struct Canvas<'a> {
     pub extent: vk::Extent2D,
 
     pub(crate) swapchain: vk::SwapchainKHR,
-    pub(crate) swapchain_image_views: Vec<vk::ImageView>,
-    pub(crate) swapchain_framebuffers: Vec<vk::Framebuffer>,
+    swapchain_image_views: Vec<vk::ImageView>,
+    depth_images: Vec<(vk::Image, vk_mem::Allocation)>,
+    depth_image_views: Vec<vk::ImageView>,
+    pub(crate) framebuffers: Vec<vk::Framebuffer>,
     pub(crate) final_render_pass: vk::RenderPass,
     pub(crate) pipelines: Vec<vk::Pipeline>,
     pub(crate) command_buffers: Vec<vk::CommandBuffer>,
@@ -45,13 +48,23 @@ impl Drop for Canvas<'_> {
             unsafe { device.free_command_buffers(self.gpu.command_pool, &self.command_buffers) };
         }
 
-        for &framebuffer in &self.swapchain_framebuffers {
-            profiling::scope!("destroy framebuffer");
+        for &framebuffer in &self.framebuffers {
+            profiling::scope!("destroy framebuffers");
             unsafe { device.destroy_framebuffer(framebuffer, None) };
         }
 
+        for &image_view in &self.depth_image_views {
+            profiling::scope!("destroy depth image view");
+            unsafe { device.destroy_image_view(image_view, None) };
+        }
+
+        for (image, allocation) in &self.depth_images {
+            profiling::scope!("destroy depth image");
+            let _ = self.gpu.allocator.destroy_image(*image, allocation);
+        }
+
         for &image_view in &self.swapchain_image_views {
-            profiling::scope!("destroy image view");
+            profiling::scope!("destroy swapchain image view");
             unsafe { device.destroy_image_view(image_view, None) };
         }
 
@@ -95,15 +108,10 @@ impl Canvas<'_> {
             &queue_family_indices,
         )?;
 
-        // TODO: Add another set of images to render to, to allow for post processing
-        // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
-        let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }
-            .map_err(Error::VulkanGetSwapchainImages)?;
-        let swapchain_image_views = swapchain_images
-            .into_iter()
-            .map(|image| {
+        let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
+            move |image: vk::Image| -> Result<vk::ImageView, Error> {
                 let subresource_range = vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    aspect_mask,
                     base_mip_level: 0,
                     level_count: 1,
                     base_array_layer: 0,
@@ -112,13 +120,61 @@ impl Canvas<'_> {
                 let image_view_create_info = vk::ImageViewCreateInfo {
                     image,
                     view_type: vk::ImageViewType::TYPE_2D,
-                    format: swapchain_format,
+                    format,
                     subresource_range,
                     ..Default::default()
                 };
                 unsafe { device.create_image_view(&image_view_create_info, None) }
                     .map_err(Error::VulkanSwapchainImageViewCreation)
+            }
+        };
+
+        // TODO: Add another set of images to render to, to allow for post processing
+        // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
+        let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }
+            .map_err(Error::VulkanGetSwapchainImages)?;
+        let swapchain_image_views = swapchain_images
+            .into_iter()
+            .map(create_image_view(
+                vk::ImageAspectFlags::COLOR,
+                swapchain_format,
+            ))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let depth_images = (0..swapchain_image_views.len())
+            .map(|_| {
+                let image_create_info = vk::ImageCreateInfo::builder()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(DEPTH_FORMAT)
+                    .extent(vk::Extent3D {
+                        width: extent.width,
+                        height: extent.height,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT);
+                let allocation_create_info = vk_mem::AllocationCreateInfo {
+                    usage: vk_mem::MemoryUsage::GpuOnly,
+                    flags: vk_mem::AllocationCreateFlags::STRATEGY_MIN_FRAGMENTATION,
+                    ..Default::default()
+                };
+                let (image, allocation, _) = gpu
+                    .allocator
+                    .create_image(&image_create_info, &allocation_create_info)
+                    .map_err(Error::VmaDepthImageCreation)?;
+                Ok((image, allocation))
             })
+            .collect::<Result<Vec<(vk::Image, vk_mem::Allocation)>, Error>>()?;
+        let depth_image_views = depth_images
+            .iter()
+            .map(|&(image, _)| image)
+            .map(create_image_view(
+                vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
+                DEPTH_FORMAT,
+            ))
             .collect::<Result<Vec<_>, _>>()?;
 
         let final_render_pass = create_render_pass(&device, crate::canvas::SWAPCHAIN_FORMAT)?;
@@ -140,10 +196,11 @@ impl Canvas<'_> {
                 .map_err(Error::VulkanCommandBuffersAllocation)
         }?;
 
-        let swapchain_framebuffers = swapchain_image_views
+        let framebuffers = swapchain_image_views
             .iter()
-            .map(|image_view| {
-                let attachments = [*image_view];
+            .zip(depth_image_views.iter())
+            .map(|(&color_image_view, &depth_image_view)| {
+                let attachments = [color_image_view, depth_image_view];
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(final_render_pass)
                     .attachments(&attachments)
@@ -160,11 +217,29 @@ impl Canvas<'_> {
             extent,
             swapchain,
             swapchain_image_views,
-            swapchain_framebuffers,
+            depth_images,
+            depth_image_views,
+            framebuffers,
             final_render_pass,
             pipelines,
             command_buffers,
         })
+    }
+
+    /// Should be called during the first frame of every Canvas.
+    // TODO: Canvas::prepare_depth is easy to forget. Also might not be needed at all.
+    pub fn prepare_depth(&self, gpu: &Gpu, frame_index: FrameIndex) -> Result<(), Error> {
+        for (depth_image, _) in &self.depth_images {
+            gpu.run_command_buffer(
+                frame_index,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                |command_buffer| {
+                    queue_depth_pipeline_barrier(&gpu.device, command_buffer, *depth_image);
+                    Ok(())
+                },
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -270,44 +345,40 @@ fn create_swapchain(
 fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderPass, Error> {
     let surface_color_attachment = vk::AttachmentDescription::builder()
         .format(format)
-        .samples(vk::SampleCountFlags::TYPE_1) // NOTE: Multisampling
-        .load_op(vk::AttachmentLoadOp::CLEAR) // NOTE: Shadow maps probably don't care
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-    let attachments = [surface_color_attachment.build()];
+    let depth_attachment = vk::AttachmentDescription::builder()
+        .format(DEPTH_FORMAT)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    let attachments = [surface_color_attachment.build(), depth_attachment.build()];
 
     let surface_color_attachment_reference = vk::AttachmentReference::builder()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
     let attachment_references = [surface_color_attachment_reference.build()];
+    let depth_attachment_reference = vk::AttachmentReference::builder()
+        .attachment(1)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     let surface_subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&attachment_references); // NOTE: resolve_attachments for multisampling?
+        .color_attachments(&attachment_references)
+        .depth_stencil_attachment(&depth_attachment_reference);
     let subpasses = [surface_subpass.build()];
-
-    // NOTE: This subpass dependency ensures that the layout of
-    // the swapchain image is set up properly for rendering to
-    // it. The spec says it should be inserted by the
-    // implementation if not provided by the application, but
-    // Android seems to be buggy in this regard. Source:
-    //
-    // https://www.reddit.com/r/vulkan/comments/701qqz/vk_subpass_external_presentation_question/dmzovoh/
-    let color_attachment_write_dependency = vk::SubpassDependency::builder()
-        .src_subpass(vk::SUBPASS_EXTERNAL)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_subpass(0)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .build();
-    let dependencies = [color_attachment_write_dependency];
 
     let render_pass_create_info = vk::RenderPassCreateInfo::builder()
         .attachments(&attachments)
-        .subpasses(&subpasses)
-        .dependencies(&dependencies);
+        .subpasses(&subpasses);
     unsafe { device.create_render_pass(&render_pass_create_info, None) }
         .map_err(Error::VulkanRenderPassCreation)
 }
@@ -373,7 +444,6 @@ fn create_pipelines(
             .viewports(&viewports)
             .scissors(&scissors);
 
-        // NOTE: Shadow maps would want to configure this for clamping and biasing depth values
         let rasterization_create_info = vk::PipelineRasterizationStateCreateInfo::builder()
             .polygon_mode(vk::PolygonMode::FILL)
             .cull_mode(vk::CullModeFlags::BACK)
@@ -385,7 +455,10 @@ fn create_pipelines(
             .sample_shading_enable(false)
             .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-        // NOTE: Shadow maps may need a vk::PipelineDepthStencilStateCreateInfo
+        let pipeline_depth_stencil_create_info = vk::PipelineDepthStencilStateCreateInfo::builder()
+            .depth_test_enable(true)
+            .depth_write_enable(true)
+            .depth_compare_op(vk::CompareOp::LESS);
 
         let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState::builder()
             .color_write_mask(
@@ -412,6 +485,7 @@ fn create_pipelines(
                     .viewport_state(&viewport_create_info)
                     .rasterization_state(&rasterization_create_info)
                     .multisample_state(&multisample_create_info)
+                    .depth_stencil_state(&pipeline_depth_stencil_create_info)
                     .color_blend_state(&color_blend_create_info)
                     .layout(pipeline_layout)
                     .render_pass(render_pass)
@@ -431,4 +505,43 @@ fn create_pipelines(
     }
 
     Ok(pipelines)
+}
+
+#[profiling::function]
+fn queue_depth_pipeline_barrier(
+    device: &Device,
+    command_buffer: vk::CommandBuffer,
+    image: vk::Image,
+) {
+    let subresource_range = vk::ImageSubresourceRange::builder()
+        .aspect_mask(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)
+        .base_mip_level(0)
+        .level_count(1)
+        .base_array_layer(0)
+        .layer_count(1)
+        .build();
+    let barrier_from_undefined_to_rw = vk::ImageMemoryBarrier::builder()
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .image(image)
+        .subresource_range(subresource_range)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        )
+        .build();
+    unsafe {
+        device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[barrier_from_undefined_to_rw],
+        );
+    }
 }
