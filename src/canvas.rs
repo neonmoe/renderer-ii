@@ -1,5 +1,5 @@
 use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
-use crate::{Error, FrameIndex, Gpu};
+use crate::{Error, Gpu};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
 use ash::{vk, Device};
@@ -226,22 +226,6 @@ impl Canvas<'_> {
             pipelines,
             command_buffers,
         })
-    }
-
-    /// Should be called during the first frame of every Canvas.
-    // TODO: Canvas::prepare_depth is easy to forget. Also might not be needed at all.
-    pub fn prepare_depth(&self, gpu: &Gpu, frame_index: FrameIndex) -> Result<(), Error> {
-        for (depth_image, _) in &self.depth_images {
-            gpu.run_command_buffer(
-                frame_index,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                |command_buffer| {
-                    queue_depth_pipeline_barrier(&gpu.device, command_buffer, *depth_image);
-                    Ok(())
-                },
-            )?;
-        }
-        Ok(())
     }
 }
 
@@ -507,43 +491,4 @@ fn create_pipelines(
     }
 
     Ok(pipelines)
-}
-
-#[profiling::function]
-fn queue_depth_pipeline_barrier(
-    device: &Device,
-    command_buffer: vk::CommandBuffer,
-    image: vk::Image,
-) {
-    let subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::DEPTH)
-        .base_mip_level(0)
-        .level_count(1)
-        .base_array_layer(0)
-        .layer_count(1)
-        .build();
-    let barrier_from_undefined_to_rw = vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::UNDEFINED)
-        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .image(image)
-        .subresource_range(subresource_range)
-        .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(
-            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-        )
-        .build();
-    unsafe {
-        device.cmd_pipeline_barrier(
-            command_buffer,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[barrier_from_undefined_to_rw],
-        );
-    }
 }

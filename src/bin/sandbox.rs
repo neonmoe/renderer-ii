@@ -80,7 +80,6 @@ fn main() -> anyhow::Result<()> {
         neonvk::Pipeline::Textured,
         &[&tree_texture],
     );
-    canvas.prepare_depth(&gpu, loading_frame_index)?;
     gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new())?;
 
     let start_time = Instant::now();
@@ -115,6 +114,7 @@ fn main() -> anyhow::Result<()> {
             gpu.wait_idle()?;
             let (width, height) = window.vulkan_drawable_size();
             canvas = neonvk::Canvas::new(&gpu, Some(&canvas), width, height)?;
+            size_changed = false;
         }
 
         let mut scene = neonvk::Scene::new();
@@ -130,10 +130,6 @@ fn main() -> anyhow::Result<()> {
         );
 
         let frame_index = gpu.wait_frame(&canvas)?;
-        if size_changed {
-            canvas.prepare_depth(&gpu, frame_index)?;
-            size_changed = false;
-        }
         gpu.set_pipeline_textures(frame_index, neonvk::Pipeline::Textured, &[&tree_texture]);
         match gpu.render_frame(frame_index, &canvas, &camera, &scene) {
             Ok(_) => {}
