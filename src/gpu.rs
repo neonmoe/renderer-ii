@@ -162,16 +162,7 @@ impl Gpu<'_> {
                 if !is_extension_supported(&driver.instance, physical_device, "VK_KHR_swapchain") {
                     return None;
                 }
-                let properties = unsafe {
-                    driver
-                        .instance
-                        .get_physical_device_properties(physical_device)
-                };
-                let features = unsafe {
-                    driver
-                        .instance
-                        .get_physical_device_features(physical_device)
-                };
+
                 let queue_families = unsafe {
                     driver
                         .instance
@@ -191,6 +182,39 @@ impl Gpu<'_> {
                         break;
                     }
                 }
+
+                let properties = unsafe {
+                    driver
+                        .instance
+                        .get_physical_device_properties(physical_device)
+                };
+                let format_properties = unsafe {
+                    driver.instance.get_physical_device_format_properties(
+                        physical_device,
+                        vk::Format::R8G8B8A8_SRGB,
+                    )
+                };
+                match format_properties.optimal_tiling_features {
+                    features if !features.contains(vk::FormatFeatureFlags::BLIT_SRC) => {
+                        log::warn!("physical device '{}' does not have BLIT_SRC for optimal tiling 32-bit srgb images", get_device_name(&properties));
+                        return None;
+                    }
+                    features if !features.contains(vk::FormatFeatureFlags::BLIT_DST) => {
+                        log::warn!("physical device '{}' does not have BLIT_DST for optimal tiling 32-bit srgb images", get_device_name(&properties));
+                        return None;
+                    }
+                    features if !features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR) => {
+                        log::warn!("physical device '{}' does not have SAMPLED_IMAGE_FILTER_LINEAR for optimal tiling 32-bit srgb images", get_device_name(&properties));
+                        return None;
+                    }
+                    _ => {}
+                }
+
+                let features = unsafe {
+                    driver
+                        .instance
+                        .get_physical_device_features(physical_device)
+                };
                 if let (Some(graphics_family_index), Some(surface_family_index)) =
                     (graphics_family_index, surface_family_index)
                 {
@@ -264,8 +288,7 @@ impl Gpu<'_> {
         let physical_devices = physical_devices
             .into_iter()
             .map(|(_, properties, _, _, _)| {
-                let name = unsafe { CStr::from_ptr((&properties.device_name[..]).as_ptr()) }
-                    .to_string_lossy();
+                let name = get_device_name(&properties);
                 let pd_type = match properties.device_type {
                     vk::PhysicalDeviceType::DISCRETE_GPU => " (Discrete GPU)",
                     vk::PhysicalDeviceType::INTEGRATED_GPU => " (Integrated GPU)",
@@ -945,4 +968,8 @@ fn is_extension_supported(
             extension_name == target_extension_name
         }),
     }
+}
+
+fn get_device_name(properties: &vk::PhysicalDeviceProperties) -> std::borrow::Cow<'_, str> {
+    unsafe { CStr::from_ptr((&properties.device_name[..]).as_ptr()) }.to_string_lossy()
 }

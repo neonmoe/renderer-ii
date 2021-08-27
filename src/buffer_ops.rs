@@ -44,8 +44,8 @@ pub(crate) fn start_image_upload(
     pixels: vk::Buffer,
     extent: vk::Extent3D,
     format: vk::Format,
-) -> Result<(vk::Image, vk_mem::Allocation), Error> {
-    let (image, allocation) =
+) -> Result<(vk::Image, vk_mem::Allocation, u32), Error> {
+    let (image, allocation, mip_levels) =
         gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |cb| {
             queue_image_copy(
                 &gpu.device,
@@ -58,7 +58,7 @@ pub(crate) fn start_image_upload(
             )
         })?;
 
-    Ok((image, allocation))
+    Ok((image, allocation, mip_levels))
 }
 
 #[profiling::function]
@@ -103,18 +103,23 @@ fn queue_image_copy(
     allocator: &vk_mem::Allocator,
     pool: vk_mem::AllocatorPool,
     pixel_buffer: vk::Buffer,
-    extent: vk::Extent3D,
+    mut extent: vk::Extent3D,
     format: vk::Format,
-) -> Result<(vk::Image, vk_mem::Allocation), Error> {
+) -> Result<(vk::Image, vk_mem::Allocation, u32), Error> {
+    let mip_levels = ((extent.width.max(extent.height) as f32).log2()) as u32 + 1;
     let image_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::TYPE_2D)
         .extent(extent)
-        .mip_levels(1)
+        .mip_levels(mip_levels)
         .array_layers(1)
         .format(format)
         .tiling(vk::ImageTiling::OPTIMAL)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+        .usage(
+            vk::ImageUsageFlags::TRANSFER_SRC
+                | vk::ImageUsageFlags::TRANSFER_DST
+                | vk::ImageUsageFlags::SAMPLED,
+        )
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .samples(vk::SampleCountFlags::TYPE_1);
     let allocation_info = vk_mem::AllocationCreateInfo {
@@ -125,75 +130,165 @@ fn queue_image_copy(
         .create_image(&image_info, &allocation_info)
         .map_err(Error::VmaImageAllocation)?;
 
-    let subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .base_mip_level(0)
-        .level_count(1)
-        .base_array_layer(0)
-        .layer_count(1)
-        .build();
-    let barrier_from_undefined_to_transfer = vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::UNDEFINED)
-        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .image(image)
-        .subresource_range(subresource_range)
-        .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-        .build();
-    let barrier_from_transfer_to_shader = vk::ImageMemoryBarrier::builder()
-        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .image(image)
-        .subresource_range(subresource_range)
-        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-        .dst_access_mask(vk::AccessFlags::SHADER_READ)
-        .build();
+    for mip_level in 0..mip_levels {
+        let subresource_range = vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(mip_level)
+            .level_count(1)
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
 
-    let subresource_layers = vk::ImageSubresourceLayers::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .mip_level(0)
-        .base_array_layer(0)
-        .layer_count(1)
-        .build();
-    let image_copy_region = vk::BufferImageCopy::builder()
-        .buffer_offset(0)
-        .buffer_row_length(extent.width)
-        .buffer_image_height(extent.height)
-        .image_subresource(subresource_layers)
-        .image_extent(extent)
-        .build();
+        let barrier_from_undefined_to_transfer_dst = vk::ImageMemoryBarrier::builder()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(image)
+            .subresource_range(subresource_range)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .build();
+        unsafe {
+            device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier_from_undefined_to_transfer_dst],
+            );
+        }
 
-    unsafe {
-        device.cmd_pipeline_barrier(
-            command_buffer,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[barrier_from_undefined_to_transfer],
-        );
-        device.cmd_copy_buffer_to_image(
-            command_buffer,
-            pixel_buffer,
-            image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &[image_copy_region],
-        );
-        device.cmd_pipeline_barrier(
-            command_buffer,
-            vk::PipelineStageFlags::TRANSFER,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[barrier_from_transfer_to_shader],
-        );
+        let subresource_layers_dst = vk::ImageSubresourceLayers::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .mip_level(mip_level)
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
+
+        if mip_level == 0 {
+            let image_copy_region = vk::BufferImageCopy::builder()
+                .buffer_offset(0)
+                .buffer_row_length(extent.width)
+                .buffer_image_height(extent.height)
+                .image_subresource(subresource_layers_dst)
+                .image_extent(extent)
+                .build();
+            unsafe {
+                device.cmd_copy_buffer_to_image(
+                    command_buffer,
+                    pixel_buffer,
+                    image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[image_copy_region],
+                );
+            }
+        } else {
+            let subresource_layers_src = vk::ImageSubresourceLayers::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .mip_level(mip_level - 1)
+                .base_array_layer(0)
+                .layer_count(1)
+                .build();
+
+            let src_offsets = [
+                vk::Offset3D::default(),
+                vk::Offset3D {
+                    x: extent.width as i32,
+                    y: extent.height as i32,
+                    z: extent.depth as i32,
+                },
+            ];
+
+            extent.width = (extent.width / 2).max(1);
+            extent.height = (extent.height / 2).max(1);
+            extent.depth = (extent.depth / 2).max(1);
+
+            let dst_offsets = [
+                vk::Offset3D::default(),
+                vk::Offset3D {
+                    x: extent.width as i32,
+                    y: extent.height as i32,
+                    z: extent.depth as i32,
+                },
+            ];
+
+            let blit_previous_mip_to_current = vk::ImageBlit::builder()
+                .src_subresource(subresource_layers_src)
+                .src_offsets(src_offsets)
+                .dst_subresource(subresource_layers_dst)
+                .dst_offsets(dst_offsets)
+                .build();
+            let blits = [blit_previous_mip_to_current];
+            unsafe {
+                device.cmd_blit_image(
+                    command_buffer,
+                    image,
+                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &blits,
+                    vk::Filter::LINEAR,
+                );
+            }
+        }
+
+        // Prepare to be a source of the blit operation on the next iteration
+        let barrier_from_transfer_dst_to_transfer_src = vk::ImageMemoryBarrier::builder()
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(image)
+            .subresource_range(subresource_range)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .build();
+        unsafe {
+            device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier_from_transfer_dst_to_transfer_src],
+            );
+        }
     }
 
-    Ok((image, allocation))
+    for mip_level in 0..mip_levels {
+        let subresource_range = vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(mip_level)
+            .level_count(1)
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
+        let barrier_from_transfer_src_to_shader = vk::ImageMemoryBarrier::builder()
+            .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(image)
+            .subresource_range(subresource_range)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .build();
+        unsafe {
+            device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier_from_transfer_src_to_shader],
+            );
+        }
+    }
+
+    Ok((image, allocation, mip_levels))
 }

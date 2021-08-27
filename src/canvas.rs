@@ -5,7 +5,12 @@ use ash::version::DeviceV1_0;
 use ash::{vk, Device};
 
 pub const SWAPCHAIN_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
-pub const DEPTH_FORMAT: vk::Format = vk::Format::D24_UNORM_S8_UINT;
+
+// According to vulkan.gpuinfo.org, this is the most supported depth
+// attachment format by a large margin at 99.94%. If the accuracy is
+// not enough, D32_SFLOAT comes in second at 87.78%, and if stencil is
+// needed, D24_UNORM_S8_UINT is supported by 71.16%.
+pub const DEPTH_FORMAT: vk::Format = vk::Format::D16_UNORM;
 
 /// The shorter-lived half of the rendering pair, along with [Gpu].
 ///
@@ -171,10 +176,7 @@ impl Canvas<'_> {
         let depth_image_views = depth_images
             .iter()
             .map(|&(image, _)| image)
-            .map(create_image_view(
-                vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
-                DEPTH_FORMAT,
-            ))
+            .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
         let final_render_pass = create_render_pass(&device, crate::canvas::SWAPCHAIN_FORMAT)?;
@@ -514,7 +516,7 @@ fn queue_depth_pipeline_barrier(
     image: vk::Image,
 ) {
     let subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)
+        .aspect_mask(vk::ImageAspectFlags::DEPTH)
         .base_mip_level(0)
         .level_count(1)
         .base_array_layer(0)

@@ -53,7 +53,7 @@ impl Texture<'_> {
             height,
             depth: 1,
         };
-        let (image, allocation) = match buffer_ops::start_image_upload(
+        let (image, allocation, mip_levels) = match buffer_ops::start_image_upload(
             gpu,
             frame_index,
             image_pool,
@@ -74,7 +74,7 @@ impl Texture<'_> {
         let subresource_range = vk::ImageSubresourceRange::builder()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
             .base_mip_level(0)
-            .level_count(1)
+            .level_count(mip_levels)
             .base_array_layer(0)
             .layer_count(1)
             .build();
