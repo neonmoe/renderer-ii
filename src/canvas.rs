@@ -10,7 +10,9 @@ pub const SWAPCHAIN_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
 // attachment format by a large margin at 99.94%. If the accuracy is
 // not enough, D32_SFLOAT comes in second at 87.78%, and if stencil is
 // needed, D24_UNORM_S8_UINT is supported by 71.16%.
-pub const DEPTH_FORMAT: vk::Format = vk::Format::D16_UNORM;
+const DEPTH_FORMAT: vk::Format = vk::Format::D16_UNORM;
+
+const SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::TYPE_8;
 
 /// The shorter-lived half of the rendering pair, along with [Gpu].
 ///
@@ -25,6 +27,8 @@ pub struct Canvas<'a> {
 
     pub(crate) swapchain: vk::SwapchainKHR,
     swapchain_image_views: Vec<vk::ImageView>,
+    color_images: Vec<(vk::Image, vk_mem::Allocation)>,
+    color_image_views: Vec<vk::ImageView>,
     depth_images: Vec<(vk::Image, vk_mem::Allocation)>,
     depth_image_views: Vec<vk::ImageView>,
     pub(crate) framebuffers: Vec<vk::Framebuffer>,
@@ -65,6 +69,16 @@ impl Drop for Canvas<'_> {
 
         for (image, allocation) in &self.depth_images {
             profiling::scope!("destroy depth image");
+            let _ = self.gpu.allocator.destroy_image(*image, allocation);
+        }
+
+        for &image_view in &self.color_image_views {
+            profiling::scope!("destroy main render target image view");
+            unsafe { device.destroy_image_view(image_view, None) };
+        }
+
+        for (image, allocation) in &self.color_images {
+            profiling::scope!("destroy main render target image");
             let _ = self.gpu.allocator.destroy_image(*image, allocation);
         }
 
@@ -134,6 +148,29 @@ impl Canvas<'_> {
             }
         };
 
+        let create_image = |format: vk::Format, usage: vk::ImageUsageFlags| {
+            let image_create_info = vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(format)
+                .extent(vk::Extent3D {
+                    width: extent.width,
+                    height: extent.height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(SAMPLE_COUNT)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(usage);
+            let allocation_create_info = vk_mem::AllocationCreateInfo {
+                usage: vk_mem::MemoryUsage::GpuOnly,
+                flags: vk_mem::AllocationCreateFlags::STRATEGY_MIN_FRAGMENTATION,
+                ..Default::default()
+            };
+            gpu.allocator
+                .create_image(&image_create_info, &allocation_create_info)
+        };
+
         // TODO: Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
         let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }
@@ -146,30 +183,28 @@ impl Canvas<'_> {
             ))
             .collect::<Result<Vec<_>, _>>()?;
 
+        let color_images = (0..swapchain_image_views.len())
+            .map(|_| {
+                let (image, allocation, _) =
+                    create_image(SWAPCHAIN_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT)
+                        .map_err(Error::VmaColorImageCreation)?;
+                Ok((image, allocation))
+            })
+            .collect::<Result<Vec<(vk::Image, vk_mem::Allocation)>, Error>>()?;
+        let color_image_views = color_images
+            .iter()
+            .map(|&(image, _)| image)
+            .map(create_image_view(
+                vk::ImageAspectFlags::COLOR,
+                SWAPCHAIN_FORMAT,
+            ))
+            .collect::<Result<Vec<_>, _>>()?;
+
         let depth_images = (0..swapchain_image_views.len())
             .map(|_| {
-                let image_create_info = vk::ImageCreateInfo::builder()
-                    .image_type(vk::ImageType::TYPE_2D)
-                    .format(DEPTH_FORMAT)
-                    .extent(vk::Extent3D {
-                        width: extent.width,
-                        height: extent.height,
-                        depth: 1,
-                    })
-                    .mip_levels(1)
-                    .array_layers(1)
-                    .samples(vk::SampleCountFlags::TYPE_1)
-                    .tiling(vk::ImageTiling::OPTIMAL)
-                    .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT);
-                let allocation_create_info = vk_mem::AllocationCreateInfo {
-                    usage: vk_mem::MemoryUsage::GpuOnly,
-                    flags: vk_mem::AllocationCreateFlags::STRATEGY_MIN_FRAGMENTATION,
-                    ..Default::default()
-                };
-                let (image, allocation, _) = gpu
-                    .allocator
-                    .create_image(&image_create_info, &allocation_create_info)
-                    .map_err(Error::VmaDepthImageCreation)?;
+                let (image, allocation, _) =
+                    create_image(DEPTH_FORMAT, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+                        .map_err(Error::VmaDepthImageCreation)?;
                 Ok((image, allocation))
             })
             .collect::<Result<Vec<(vk::Image, vk_mem::Allocation)>, Error>>()?;
@@ -179,7 +214,7 @@ impl Canvas<'_> {
             .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let final_render_pass = create_render_pass(&device, crate::canvas::SWAPCHAIN_FORMAT)?;
+        let final_render_pass = create_render_pass(&device)?;
         let pipelines = create_pipelines(
             &device,
             final_render_pass,
@@ -198,20 +233,23 @@ impl Canvas<'_> {
                 .map_err(Error::VulkanCommandBuffersAllocation)
         }?;
 
-        let framebuffers = swapchain_image_views
+        let framebuffers = color_image_views
             .iter()
             .zip(depth_image_views.iter())
-            .map(|(&color_image_view, &depth_image_view)| {
-                let attachments = [color_image_view, depth_image_view];
-                let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
-                    .render_pass(final_render_pass)
-                    .attachments(&attachments)
-                    .width(extent.width)
-                    .height(extent.height)
-                    .layers(1);
-                unsafe { device.create_framebuffer(&framebuffer_create_info, None) }
-                    .map_err(Error::VulkanFramebufferCreation)
-            })
+            .zip(swapchain_image_views.iter())
+            .map(
+                |((&color_image_view, &depth_image_view), &swapchain_image_view)| {
+                    let attachments = [color_image_view, depth_image_view, swapchain_image_view];
+                    let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
+                        .render_pass(final_render_pass)
+                        .attachments(&attachments)
+                        .width(extent.width)
+                        .height(extent.height)
+                        .layers(1);
+                    unsafe { device.create_framebuffer(&framebuffer_create_info, None) }
+                        .map_err(Error::VulkanFramebufferCreation)
+                },
+            )
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Canvas {
@@ -219,6 +257,8 @@ impl Canvas<'_> {
             extent,
             swapchain,
             swapchain_image_views,
+            color_images,
+            color_image_views,
             depth_images,
             depth_image_views,
             framebuffers,
@@ -249,7 +289,7 @@ fn create_swapchain(
     // - IMMEDIATE + 2 (render-constantly, ignore vsync (probably causes tearing))
     //   - possible tearing, best latency
     // With the non-available ones grayed out, of course.
-    let present_mode = vk::PresentModeKHR::FIFO;
+    let present_mode = vk::PresentModeKHR::IMMEDIATE;
     let min_image_count = 3;
 
     let (image_format, image_color_space) = {
@@ -328,9 +368,27 @@ fn create_swapchain(
 }
 
 #[profiling::function]
-fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderPass, Error> {
-    let surface_color_attachment = vk::AttachmentDescription::builder()
-        .format(format)
+fn create_render_pass(device: &Device) -> Result<vk::RenderPass, Error> {
+    let color_attachment = vk::AttachmentDescription::builder()
+        .format(SWAPCHAIN_FORMAT)
+        .samples(SAMPLE_COUNT)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    let depth_attachment = vk::AttachmentDescription::builder()
+        .format(DEPTH_FORMAT)
+        .samples(SAMPLE_COUNT)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    let resolve_attachment = vk::AttachmentDescription::builder()
+        .format(SWAPCHAIN_FORMAT)
         .samples(vk::SampleCountFlags::TYPE_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)
@@ -338,29 +396,29 @@ fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderP
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-    let depth_attachment = vk::AttachmentDescription::builder()
-        .format(DEPTH_FORMAT)
-        .samples(vk::SampleCountFlags::TYPE_1)
-        .load_op(vk::AttachmentLoadOp::CLEAR)
-        .store_op(vk::AttachmentStoreOp::DONT_CARE)
-        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-    let attachments = [surface_color_attachment.build(), depth_attachment.build()];
+    let attachments = [
+        color_attachment.build(),
+        depth_attachment.build(),
+        resolve_attachment.build(),
+    ];
 
-    let surface_color_attachment_reference = vk::AttachmentReference::builder()
+    let color_attachment_reference = vk::AttachmentReference::builder()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-    let attachment_references = [surface_color_attachment_reference.build()];
+    let color_attachment_references = [color_attachment_reference.build()];
+    let resolve_attachment_reference = vk::AttachmentReference::builder()
+        .attachment(2)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    let resolve_attachment_references = [resolve_attachment_reference.build()];
     let depth_attachment_reference = vk::AttachmentReference::builder()
         .attachment(1)
         .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-    let surface_subpass = vk::SubpassDescription::builder()
+    let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&attachment_references)
+        .color_attachments(&color_attachment_references)
+        .resolve_attachments(&resolve_attachment_references)
         .depth_stencil_attachment(&depth_attachment_reference);
-    let subpasses = [surface_subpass.build()];
+    let subpasses = [subpass.build()];
 
     let render_pass_create_info = vk::RenderPassCreateInfo::builder()
         .attachments(&attachments)
@@ -436,10 +494,9 @@ fn create_pipelines(
             .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
             .line_width(1.0);
 
-        // TODO: Add multisampling
         let multisample_create_info = vk::PipelineMultisampleStateCreateInfo::builder()
             .sample_shading_enable(false)
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+            .rasterization_samples(SAMPLE_COUNT);
 
         let pipeline_depth_stencil_create_info = vk::PipelineDepthStencilStateCreateInfo::builder()
             .depth_test_enable(true)

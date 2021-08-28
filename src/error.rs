@@ -89,6 +89,8 @@ pub enum Error {
     VmaCalculateStats(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) could not find a memory type index (gpu doesn't support required memory features)")]
     VmaFindMemoryType(#[source] vk_mem::error::Error),
+    #[error("vma (via vk-mem-rs) could not create the image for the color attachment")]
+    VmaColorImageCreation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) could not create the image for the depth attachment")]
     VmaDepthImageCreation(#[source] vk_mem::error::Error),
     #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
