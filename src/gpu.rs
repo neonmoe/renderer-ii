@@ -726,7 +726,7 @@ impl Gpu<'_> {
         textures: &[&Texture<'_>],
     ) {
         self.descriptors
-            .set_uniform_images(&self, frame_index, pipeline, 1, 0, textures);
+            .set_uniform_images(self, frame_index, pipeline, 1, 0, textures);
     }
 
     /// Queue up all the rendering commands.
@@ -851,7 +851,7 @@ impl Gpu<'_> {
         }
 
         // Bind the shared descriptor set (#0)
-        let shared_descriptor_set = self.descriptors.descriptor_sets(&self, frame_index, 0)[0];
+        let shared_descriptor_set = self.descriptors.descriptor_sets(self, frame_index, 0)[0];
         unsafe {
             profiling::scope!("bind shared descriptor set");
             self.device.cmd_bind_descriptor_sets(
@@ -879,9 +879,9 @@ impl Gpu<'_> {
                 )
             };
             let layout = self.descriptors.pipeline_layouts[pipeline_idx];
-            let descriptor_sets =
-                self.descriptors
-                    .descriptor_sets(&self, frame_index, pipeline_idx);
+            let descriptor_sets = self
+                .descriptors
+                .descriptor_sets(self, frame_index, pipeline_idx);
             if descriptor_sets.len() > 1 {
                 unsafe {
                     self.device.cmd_bind_descriptor_sets(
@@ -914,7 +914,7 @@ impl Gpu<'_> {
                         .map_err(Error::VmaBufferAllocation)?
                 };
                 self.add_temporary_buffer(frame_index, transform_buffer, allocation);
-                buffer_ops::copy_to_allocation(transforms, &self, &allocation, &alloc_info)?;
+                buffer_ops::copy_to_allocation(transforms, self, &allocation, &alloc_info)?;
 
                 unsafe {
                     self.device.cmd_bind_vertex_buffers(

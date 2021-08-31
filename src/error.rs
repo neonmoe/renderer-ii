@@ -95,4 +95,6 @@ pub enum Error {
     VmaDepthImageCreation(#[source] vk_mem::error::Error),
     #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
     BufferNotEditable,
+    #[error("failed to deserialize gltf file")]
+    GltfDeserialization(#[source] miniserde::Error),
 }

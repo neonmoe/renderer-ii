@@ -44,3 +44,6 @@ pub use scene::Scene;
 
 mod texture;
 pub use texture::Texture;
+
+mod gltf;
+pub use gltf::Gltf;

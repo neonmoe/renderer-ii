@@ -51,6 +51,9 @@ fn main() -> anyhow::Result<()> {
 
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::new();
+
+    let _cube_model = neonvk::Gltf::from_gltf(include_str!("testbox/testbox.gltf"))?;
+
     let (tree_w, tree_h, tree_bytes, tree_format) = load_png(include_bytes!("tree.png"));
     let tree_texture = neonvk::Texture::new(
         &gpu,
@@ -60,6 +63,7 @@ fn main() -> anyhow::Result<()> {
         tree_h,
         tree_format,
     )?;
+
     let quad_vertices = &[
         [Vec3::new(-0.5, 0.5, 0.0), Vec3::new(0.0, 0.0, 0.0)],
         [Vec3::new(-0.5, -0.5, 0.0), Vec3::new(0.0, 1.0, 0.0)],

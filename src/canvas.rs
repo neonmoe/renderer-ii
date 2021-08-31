@@ -116,7 +116,7 @@ impl Canvas<'_> {
         let queue_family_indices = [gpu.graphics_family_index, gpu.surface_family_index];
         let (swapchain, swapchain_format, extent, frame_count) = create_swapchain(
             &gpu.surface_ext,
-            &swapchain_ext,
+            swapchain_ext,
             gpu.driver.surface,
             vk::Extent2D {
                 width: fallback_width,
@@ -214,9 +214,9 @@ impl Canvas<'_> {
             .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let final_render_pass = create_render_pass(&device)?;
+        let final_render_pass = create_render_pass(device)?;
         let pipelines = create_pipelines(
-            &device,
+            device,
             final_render_pass,
             extent,
             &gpu.descriptors.pipeline_layouts,
@@ -348,7 +348,7 @@ fn create_swapchain(
     }) {
         swapchain_create_info = swapchain_create_info
             .image_sharing_mode(vk::SharingMode::CONCURRENT)
-            .queue_family_indices(&queue_family_indices);
+            .queue_family_indices(queue_family_indices);
     } else {
         swapchain_create_info =
             swapchain_create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
@@ -466,8 +466,8 @@ fn create_pipelines(
         .iter()
         .map(|pipeline| {
             vk::PipelineVertexInputStateCreateInfo::builder()
-                .vertex_binding_descriptions(&pipeline.bindings)
-                .vertex_attribute_descriptions(&pipeline.attributes)
+                .vertex_binding_descriptions(pipeline.bindings)
+                .vertex_attribute_descriptions(pipeline.attributes)
                 .build()
         })
         .collect::<Vec<vk::PipelineVertexInputStateCreateInfo>>();
@@ -523,7 +523,7 @@ fn create_pipelines(
             .map(|((shader_stages, vertex_input), &pipeline_layout)| {
                 vk::GraphicsPipelineCreateInfo::builder()
                     .stages(&shader_stages[..])
-                    .vertex_input_state(&vertex_input)
+                    .vertex_input_state(vertex_input)
                     .input_assembly_state(&input_assembly_create_info)
                     .viewport_state(&viewport_create_info)
                     .rasterization_state(&rasterization_create_info)

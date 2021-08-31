@@ -13,6 +13,7 @@ raw-window-handle = { version = "^0.3.0" }
 shaders = { path = "shaders" }
 vk-mem = { version = "^0.2.0" }
 ultraviolet = { version = "^0.8.0" }
+miniserde = { version = "^0.1.0" }
 
 # TODO: Move anyhow, sdl2, profiling/profile-with-tracy, png to dev deps
 # Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.

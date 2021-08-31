@@ -57,7 +57,7 @@ unsafe extern "system" fn debug_utils_messenger_callback(
         message_severity,
         message_types,
         &message_id,
-        &message,
+        message,
         None,
         None,
         None,
