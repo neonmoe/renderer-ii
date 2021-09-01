@@ -22,6 +22,10 @@ mod gltf_json {
     pub struct LoadedJson {
         nodes: Vec<Node>,
         meshes: Vec<Mesh>,
+        accessors: Vec<Accessor>,
+        #[serde(rename = "bufferViews")]
+        buffer_views: Vec<BufferView>,
+        buffers: Vec<Buffer>,
     }
 
     #[derive(Deserialize)]
@@ -29,12 +33,13 @@ mod gltf_json {
         mesh: Option<usize>,
 
         // Not in use yet:
-        children: Vec<usize>,
+        children: Option<Vec<usize>>,
         matrix: Option<Vec<f32>>,
         translation: Option<Vec<f32>>,
         rotation: Option<Vec<f32>>,
         scale: Option<Vec<f32>>,
-        camera: Option<usize>,
+        skin: Option<usize>,
+        weights: Option<Vec<f32>>,
     }
 
     #[derive(Deserialize)]
@@ -44,38 +49,46 @@ mod gltf_json {
 
     #[derive(Deserialize)]
     pub struct Primitive {
-        indices: usize,
         attributes: HashMap<String, usize>,
-
+        indices: Option<usize>,
         // Not in use yet:
-        mode: u32,
-        material: usize,
-        targets: Vec<HashMap<String, usize>>,
-        weights: Vec<f32>,
+        mode: Option<i32>,
+        material: Option<usize>,
+        targets: Option<Vec<HashMap<String, usize>>>,
+        weights: Option<Vec<f32>>,
     }
 
     #[derive(Deserialize)]
     pub struct Buffer {
+        #[serde(rename = "byteLength")]
         byte_length: usize,
-        uri: String,
+        uri: Option<String>,
     }
 
     #[derive(Deserialize)]
     pub struct BufferView {
         buffer: usize,
-        byte_offset: usize,
+        #[serde(rename = "byteOffset")]
+        byte_offset: Option<usize>,
+        #[serde(rename = "byteLength")]
         byte_length: usize,
-        byte_stride: usize,
+        #[serde(rename = "byteStride")]
+        byte_stride: Option<usize>,
     }
 
     #[derive(Deserialize)]
     pub struct Accessor {
-        buffer_view: usize,
-        byte_offset: usize,
+        #[serde(rename = "bufferView")]
+        buffer_view: Option<usize>,
+        #[serde(rename = "byteOffset")]
+        byte_offset: Option<usize>,
+        #[serde(rename = "componentType")]
+        component_type: i32,
+        normalized: Option<bool>,
+        count: usize,
         #[serde(rename = "type")]
         attribute_type: String,
-        count: usize,
-        min: Vec<f32>,
-        max: Vec<f32>,
+        min: Option<Vec<f32>>,
+        max: Option<Vec<f32>>,
     }
 }
