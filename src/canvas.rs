@@ -104,12 +104,18 @@ impl Canvas<'_> {
     /// can't get the window size, e.g. when creating a new window in
     /// Wayland (when the window size is specified by the size of the
     /// initial framebuffer).
+    ///
+    /// If `immediate_present` is true, the immediate present mode is
+    /// used. Otherwise, FIFO. FIFO only releases frames after they've
+    /// been displayed on screen, so it caps the fps to the screen's
+    /// refresh rate.
     #[profiling::function]
     pub fn new<'a>(
         gpu: &'a Gpu,
         old_canvas: Option<&Canvas>,
         fallback_width: u32,
         fallback_height: u32,
+        immediate_present: bool,
     ) -> Result<Canvas<'a>, Error> {
         let device = &gpu.device;
         let swapchain_ext = &gpu.swapchain_ext;
@@ -125,6 +131,7 @@ impl Canvas<'_> {
             old_canvas.map(|r| r.swapchain),
             gpu.physical_device,
             &queue_family_indices,
+            immediate_present,
         )?;
 
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
@@ -269,6 +276,7 @@ impl Canvas<'_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[profiling::function]
 fn create_swapchain(
     surface_ext: &khr::Surface,
@@ -278,6 +286,7 @@ fn create_swapchain(
     old_swapchain: Option<vk::SwapchainKHR>,
     physical_device: vk::PhysicalDevice,
     queue_family_indices: &[u32],
+    immediate_present: bool,
 ) -> Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D, u32), Error> {
     // NOTE: The following combinations should be presented as a config option:
     // - FIFO + 2 (traditional double-buffered vsync)
@@ -289,7 +298,11 @@ fn create_swapchain(
     // - IMMEDIATE + 2 (render-constantly, ignore vsync (probably causes tearing))
     //   - possible tearing, best latency
     // With the non-available ones grayed out, of course.
-    let present_mode = vk::PresentModeKHR::IMMEDIATE;
+    let present_mode = if immediate_present {
+        vk::PresentModeKHR::IMMEDIATE
+    } else {
+        vk::PresentModeKHR::FIFO
+    };
     let min_image_count = 3;
 
     let (image_format, image_color_space) = {

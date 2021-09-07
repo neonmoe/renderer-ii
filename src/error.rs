@@ -95,6 +95,28 @@ pub enum Error {
     VmaDepthImageCreation(#[source] vk_mem::error::Error),
     #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
     BufferNotEditable,
-    #[error("failed to deserialize gltf file")]
-    GltfDeserialization(#[source] miniserde::Error),
+    #[error("not a glb file")]
+    InvalidGlbHeader,
+    #[error("glb header length mismatch")]
+    InvalidGlbLength,
+    #[error("glb chunk length mismatch")]
+    InvalidGlbChunkLength,
+    #[error("invalid glb chunk type")]
+    InvalidGlbChunkType,
+    #[error("too many glb json chunks")]
+    TooManyGlbJsonChunks,
+    #[error("too many glb binary chunks")]
+    TooManyGlbBinaryChunks,
+    #[error("glb json is not valid utf-8")]
+    InvalidGlbJson(#[source] std::str::Utf8Error),
+    #[error("glb json chunk missing")]
+    MissingGlbJson,
+    #[error("failed to deserialize gltf json")]
+    GltfJsonDeserialization(#[source] miniserde::Error),
+    #[error("unsupported gltf minimum version ({0}), 2.0 is supported")]
+    UnsupportedGltfVersion(String),
+    #[error("gltf has more than 1 buffer, external data is not supported")]
+    GltfTooManyBuffers,
+    #[error("gltf buffer as an external uri, which is not supported")]
+    GltfBufferHasUri,
 }

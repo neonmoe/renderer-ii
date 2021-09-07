@@ -47,12 +47,12 @@ fn main() -> anyhow::Result<()> {
 
     let driver = neonvk::Driver::new(&window)?;
     let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
-    let mut canvas = neonvk::Canvas::new(&gpu, None, width, height)?;
+    let mut canvas = neonvk::Canvas::new(&gpu, None, width, height, false)?;
 
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::new();
 
-    let _cube_model = neonvk::Gltf::from_gltf(include_str!("testbox/testbox.gltf"))?;
+    let _cube_model = neonvk::Gltf::from_glb(&gpu, include_bytes!("testbox/testbox.glb"))?;
 
     let (tree_w, tree_h, tree_bytes, tree_format) = load_png(include_bytes!("tree.png"));
     let tree_texture = neonvk::Texture::new(
@@ -93,6 +93,7 @@ fn main() -> anyhow::Result<()> {
     window.show();
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut size_changed = false;
+    let mut immediate_present = false;
     'running: loop {
         profiling::finish_frame!();
         let frame_start_seconds = (Instant::now() - start_time).as_secs_f32();
@@ -104,6 +105,14 @@ fn main() -> anyhow::Result<()> {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
+
+                Event::KeyDown {
+                    keycode: Some(Keycode::I),
+                    ..
+                } => {
+                    immediate_present = !immediate_present;
+                    size_changed = true;
+                }
 
                 Event::Window {
                     win_event: WindowEvent::SizeChanged(_, _),
@@ -117,7 +126,7 @@ fn main() -> anyhow::Result<()> {
         if size_changed {
             gpu.wait_idle()?;
             let (width, height) = window.vulkan_drawable_size();
-            canvas = neonvk::Canvas::new(&gpu, Some(&canvas), width, height)?;
+            canvas = neonvk::Canvas::new(&gpu, Some(&canvas), width, height, immediate_present)?;
             size_changed = false;
         }
 
