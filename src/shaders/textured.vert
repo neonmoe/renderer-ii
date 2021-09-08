@@ -5,9 +5,9 @@ layout(set = 0, binding = 0) uniform GlobalTransforms {
     mat4 view;
 } uf_transforms;
 
-layout(location = 0) in vec3 in_position;
-layout(location = 1) in vec2 in_uv;
-layout(location = 2) in mat4 in_transform;
+layout(location = 0) in mat4 in_transform;
+layout(location = 4) in vec3 in_position;
+layout(location = 5) in vec2 in_uv;
 
 layout(location = 0) out vec2 out_uv;
 

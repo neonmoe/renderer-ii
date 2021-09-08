@@ -4,8 +4,7 @@ use ultraviolet::{Mat4, Vec3, Vec4};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pipeline {
-    PlainVertexColor,
-    Textured,
+    Default,
     #[doc(hidden)]
     Count,
 }
@@ -38,100 +37,74 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[DescriptorSetLa
     stage_flags: vk::ShaderStageFlags::VERTEX,
 }];
 
-static INSTANCED_TRANSFORM_BINDING_1: vk::VertexInputBindingDescription =
+static INSTANCED_TRANSFORM_BINDING_0: vk::VertexInputBindingDescription =
     vk::VertexInputBindingDescription {
-        binding: 1,
+        binding: 0,
         stride: mem::size_of::<Mat4>() as u32,
         input_rate: vk::VertexInputRate::INSTANCE,
     };
 
-static INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES: [vk::VertexInputAttributeDescription; 4] = [
+static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescription; 4] = [
     vk::VertexInputAttributeDescription {
-        binding: 1,
-        location: 2,
+        binding: 0,
+        location: 0,
         format: vk::Format::R32G32B32A32_SFLOAT,
         offset: 0,
     },
     vk::VertexInputAttributeDescription {
-        binding: 1,
-        location: 3,
+        binding: 0,
+        location: 1,
         format: vk::Format::R32G32B32A32_SFLOAT,
         offset: std::mem::size_of::<[Vec4; 1]>() as u32,
     },
     vk::VertexInputAttributeDescription {
-        binding: 1,
-        location: 4,
+        binding: 0,
+        location: 2,
         format: vk::Format::R32G32B32A32_SFLOAT,
         offset: std::mem::size_of::<[Vec4; 2]>() as u32,
     },
     vk::VertexInputAttributeDescription {
-        binding: 1,
-        location: 5,
+        binding: 0,
+        location: 3,
         format: vk::Format::R32G32B32A32_SFLOAT,
         offset: std::mem::size_of::<[Vec4; 3]>() as u32,
     },
 ];
 
-pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as usize] = [
-    PipelineParameters {
-        vertex_shader: shaders::include_spirv!("shaders/plain_color.vert"),
-        fragment_shader: shaders::include_spirv!("shaders/plain_color.frag"),
-        bindings: &[
-            vk::VertexInputBindingDescription {
-                binding: 0,
-                stride: mem::size_of::<[Vec3; 2]>() as u32,
-                input_rate: vk::VertexInputRate::VERTEX,
-            },
-            INSTANCED_TRANSFORM_BINDING_1,
-        ],
-        attributes: &[
-            vk::VertexInputAttributeDescription {
-                binding: 0,
-                location: 0,
-                format: vk::Format::R32G32B32_SFLOAT,
-                offset: 0,
-            },
-            vk::VertexInputAttributeDescription {
-                binding: 0,
-                location: 1,
-                format: vk::Format::R32G32B32_SFLOAT,
-                offset: mem::size_of::<Vec3>() as u32,
-            },
-            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[0],
-            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[1],
-            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[2],
-            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[3],
-        ],
-        descriptor_sets: &[SHARED_DESCRIPTOR_SET_0],
-    },
-    PipelineParameters {
+pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as usize] =
+    [PipelineParameters {
         vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
         fragment_shader: shaders::include_spirv!("shaders/textured.frag"),
         bindings: &[
+            INSTANCED_TRANSFORM_BINDING_0,
             vk::VertexInputBindingDescription {
-                binding: 0,
-                stride: mem::size_of::<[Vec3; 2]>() as u32,
+                binding: 1,
+                stride: mem::size_of::<Vec3>() as u32,
                 input_rate: vk::VertexInputRate::VERTEX,
             },
-            INSTANCED_TRANSFORM_BINDING_1,
+            vk::VertexInputBindingDescription {
+                binding: 2,
+                stride: mem::size_of::<Vec3>() as u32,
+                input_rate: vk::VertexInputRate::VERTEX,
+            },
         ],
         attributes: &[
+            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
+            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
+            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[2],
+            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[3],
             vk::VertexInputAttributeDescription {
-                binding: 0,
-                location: 0,
+                binding: 1,
+                location: 4,
                 format: vk::Format::R32G32B32_SFLOAT,
                 offset: 0,
             },
             vk::VertexInputAttributeDescription {
-                binding: 0,
-                location: 1,
+                binding: 2,
+                location: 5,
                 format: vk::Format::R32G32_SFLOAT,
-                offset: mem::size_of::<Vec3>() as u32,
+                offset: 0,
             },
-            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[0],
-            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[1],
-            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[2],
-            INSTANCED_TRANSFORM_BINDING_1_ATTRIBUTES[3],
         ],
         descriptor_sets: &[
             SHARED_DESCRIPTOR_SET_0,
@@ -141,5 +114,4 @@ pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as u
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
             }],
         ],
-    },
-];
+    }];

@@ -916,12 +916,18 @@ impl Gpu<'_> {
                 self.add_temporary_buffer(frame_index, transform_buffer, allocation);
                 buffer_ops::copy_to_allocation(transforms, self, &allocation, &alloc_info)?;
 
+                let mut vertex_buffers = vec![mesh.buffer(); mesh.vertices_offsets.len() + 1];
+                vertex_buffers[0] = transform_buffer;
+                let mut vertex_offsets = Vec::with_capacity(mesh.vertices_offsets.len() + 1);
+                vertex_offsets.push(0);
+                vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
+
                 unsafe {
                     self.device.cmd_bind_vertex_buffers(
                         command_buffer,
                         0,
-                        &[mesh.buffer(), transform_buffer],
-                        &[0, 0],
+                        &vertex_buffers,
+                        &vertex_offsets,
                     );
                     self.device.cmd_bind_index_buffer(
                         command_buffer,

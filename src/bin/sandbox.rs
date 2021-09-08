@@ -64,24 +64,32 @@ fn main() -> anyhow::Result<()> {
         tree_format,
     )?;
 
-    let quad_vertices = &[
-        [Vec3::new(-0.5, 0.5, 0.0), Vec3::new(0.0, 0.0, 0.0)],
-        [Vec3::new(-0.5, -0.5, 0.0), Vec3::new(0.0, 1.0, 0.0)],
-        [Vec3::new(0.5, 0.5, 0.0), Vec3::new(1.0, 0.0, 0.0)],
-        [Vec3::new(0.5, -0.5, 0.0), Vec3::new(1.0, 1.0, 0.0)],
+    let quad_vertices: &[&[Vec3]] = &[
+        &[
+            Vec3::new(-0.5, 0.5, 0.0),
+            Vec3::new(-0.5, -0.5, 0.0),
+            Vec3::new(0.5, 0.5, 0.0),
+            Vec3::new(0.5, -0.5, 0.0),
+        ],
+        &[
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+        ],
     ];
     let quad = neonvk::Mesh::new(
         &gpu,
         loading_frame_index,
         quad_vertices,
         &[0u16, 1, 2, 3, 2, 1],
-        neonvk::Pipeline::Textured,
+        neonvk::Pipeline::Default,
     )?;
     // Get the first frame out of the way, to upload the meshes.
     // TODO: Add a proper way to upload resources before the game loop
     gpu.set_pipeline_textures(
         loading_frame_index,
-        neonvk::Pipeline::Textured,
+        neonvk::Pipeline::Default,
         &[&tree_texture],
     );
     gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new())?;
@@ -143,7 +151,7 @@ fn main() -> anyhow::Result<()> {
         );
 
         let frame_index = gpu.wait_frame(&canvas)?;
-        gpu.set_pipeline_textures(frame_index, neonvk::Pipeline::Textured, &[&tree_texture]);
+        gpu.set_pipeline_textures(frame_index, neonvk::Pipeline::Default, &[&tree_texture]);
         match gpu.render_frame(frame_index, &canvas, &camera, &scene) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}

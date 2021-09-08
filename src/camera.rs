@@ -63,14 +63,8 @@ impl Camera {
             &allocation,
             &alloc_info,
         )?;
-        gpu.descriptors.set_uniform_buffer(
-            gpu,
-            frame_index,
-            Pipeline::PlainVertexColor,
-            0,
-            0,
-            buffer,
-        );
+        gpu.descriptors
+            .set_uniform_buffer(gpu, frame_index, Pipeline::Default, 0, 0, buffer);
         Ok(())
     }
 }
