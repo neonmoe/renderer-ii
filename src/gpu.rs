@@ -101,8 +101,7 @@ impl Drop for Gpu<'_> {
             self.cleanup_temp_semaphores(frame_local);
 
             unsafe {
-                self.device
-                    .destroy_semaphore(frame_local.finished_command_buffers_sp, None);
+                self.device.destroy_semaphore(frame_local.finished_command_buffers_sp, None);
                 self.device.destroy_fence(frame_local.frame_end_fence, None);
             }
         }
@@ -142,20 +141,15 @@ impl Gpu<'_> {
     /// in this function call, the display name, and the id passed to
     /// a new [Gpu] when recreating it with a new physical device.
     #[profiling::function]
-    pub fn new(
-        driver: &Driver,
-        preferred_physical_device: Option<[u8; 16]>,
-    ) -> Result<(Gpu<'_>, Vec<GpuInfo>), Error> {
+    pub fn new(driver: &Driver, preferred_physical_device: Option<[u8; 16]>) -> Result<(Gpu<'_>, Vec<GpuInfo>), Error> {
         let surface_ext = khr::Surface::new(&driver.entry, &driver.instance);
         let queue_family_supports_surface = |pd: vk::PhysicalDevice, index: u32| {
-            let support = unsafe {
-                surface_ext.get_physical_device_surface_support(pd, index, driver.surface)
-            };
+            let support = unsafe { surface_ext.get_physical_device_surface_support(pd, index, driver.surface) };
             matches!(support, Ok(true))
         };
 
-        let all_physical_devices = unsafe { driver.instance.enumerate_physical_devices() }
-            .map_err(Error::VulkanEnumeratePhysicalDevices)?;
+        let all_physical_devices =
+            unsafe { driver.instance.enumerate_physical_devices() }.map_err(Error::VulkanEnumeratePhysicalDevices)?;
         let mut physical_devices = all_physical_devices
             .into_iter()
             .filter_map(|physical_device| {
@@ -163,11 +157,7 @@ impl Gpu<'_> {
                     return None;
                 }
 
-                let queue_families = unsafe {
-                    driver
-                        .instance
-                        .get_physical_device_queue_family_properties(physical_device)
-                };
+                let queue_families = unsafe { driver.instance.get_physical_device_queue_family_properties(physical_device) };
                 let mut graphics_family_index = None;
                 let mut surface_family_index = None;
                 for (index, family_index) in queue_families.into_iter().enumerate() {
@@ -183,48 +173,40 @@ impl Gpu<'_> {
                     }
                 }
 
-                let properties = unsafe {
+                let properties = unsafe { driver.instance.get_physical_device_properties(physical_device) };
+                let format_properties = unsafe {
                     driver
                         .instance
-                        .get_physical_device_properties(physical_device)
-                };
-                let format_properties = unsafe {
-                    driver.instance.get_physical_device_format_properties(
-                        physical_device,
-                        vk::Format::R8G8B8A8_SRGB,
-                    )
+                        .get_physical_device_format_properties(physical_device, vk::Format::R8G8B8A8_SRGB)
                 };
                 match format_properties.optimal_tiling_features {
                     features if !features.contains(vk::FormatFeatureFlags::BLIT_SRC) => {
-                        log::warn!("physical device '{}' does not have BLIT_SRC for optimal tiling 32-bit srgb images", get_device_name(&properties));
+                        log::warn!(
+                            "physical device '{}' does not have BLIT_SRC for optimal tiling 32-bit srgb images",
+                            get_device_name(&properties)
+                        );
                         return None;
                     }
                     features if !features.contains(vk::FormatFeatureFlags::BLIT_DST) => {
-                        log::warn!("physical device '{}' does not have BLIT_DST for optimal tiling 32-bit srgb images", get_device_name(&properties));
+                        log::warn!(
+                            "physical device '{}' does not have BLIT_DST for optimal tiling 32-bit srgb images",
+                            get_device_name(&properties)
+                        );
                         return None;
                     }
                     features if !features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR) => {
-                        log::warn!("physical device '{}' does not have SAMPLED_IMAGE_FILTER_LINEAR for optimal tiling 32-bit srgb images", get_device_name(&properties));
+                        log::warn!(
+                            "physical device '{}' does not have SAMPLED_IMAGE_FILTER_LINEAR for optimal tiling 32-bit srgb images",
+                            get_device_name(&properties)
+                        );
                         return None;
                     }
                     _ => {}
                 }
 
-                let features = unsafe {
-                    driver
-                        .instance
-                        .get_physical_device_features(physical_device)
-                };
-                if let (Some(graphics_family_index), Some(surface_family_index)) =
-                    (graphics_family_index, surface_family_index)
-                {
-                    Some((
-                        physical_device,
-                        properties,
-                        features,
-                        graphics_family_index,
-                        surface_family_index,
-                    ))
+                let features = unsafe { driver.instance.get_physical_device_features(physical_device) };
+                if let (Some(graphics_family_index), Some(surface_family_index)) = (graphics_family_index, surface_family_index) {
+                    Some((physical_device, properties, features, graphics_family_index, surface_family_index))
                 } else {
                     None
                 }
@@ -237,35 +219,28 @@ impl Gpu<'_> {
                 u32,
             )>>();
 
-        let (
-            physical_device,
-            physical_device_properties,
-            physical_device_features,
-            graphics_family_index,
-            surface_family_index,
-        ) = if let Some(uuid) = preferred_physical_device {
-            physical_devices
-                .iter()
-                .find_map(|tuple| {
-                    let (_, properties, _, _, _) = tuple;
-                    if properties.pipeline_cache_uuid == uuid {
-                        Some(*tuple)
-                    } else {
-                        None
-                    }
-                })
-                .ok_or(Error::VulkanPhysicalDeviceMissing)?
-        } else {
-            physical_devices.sort_by(
-                |(_, a_props, _, a_gfx, a_surf), (_, b_props, _, b_gfx, b_surf)| {
-                    let type_score =
-                        |properties: vk::PhysicalDeviceProperties| match properties.device_type {
-                            vk::PhysicalDeviceType::DISCRETE_GPU => 30,
-                            vk::PhysicalDeviceType::INTEGRATED_GPU => 20,
-                            vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
-                            vk::PhysicalDeviceType::CPU => 0,
-                            _ => 0,
-                        };
+        let (physical_device, physical_device_properties, physical_device_features, graphics_family_index, surface_family_index) =
+            if let Some(uuid) = preferred_physical_device {
+                physical_devices
+                    .iter()
+                    .find_map(|tuple| {
+                        let (_, properties, _, _, _) = tuple;
+                        if properties.pipeline_cache_uuid == uuid {
+                            Some(*tuple)
+                        } else {
+                            None
+                        }
+                    })
+                    .ok_or(Error::VulkanPhysicalDeviceMissing)?
+            } else {
+                physical_devices.sort_by(|(_, a_props, _, a_gfx, a_surf), (_, b_props, _, b_gfx, b_surf)| {
+                    let type_score = |properties: vk::PhysicalDeviceProperties| match properties.device_type {
+                        vk::PhysicalDeviceType::DISCRETE_GPU => 30,
+                        vk::PhysicalDeviceType::INTEGRATED_GPU => 20,
+                        vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
+                        vk::PhysicalDeviceType::CPU => 0,
+                        _ => 0,
+                    };
                     let queue_score = |graphics_queue, surface_queue| {
                         if graphics_queue == surface_queue {
                             1
@@ -277,13 +252,9 @@ impl Gpu<'_> {
                     let b_score = type_score(*b_props) + queue_score(b_gfx, b_surf);
                     // Highest score first.
                     b_score.cmp(&a_score)
-                },
-            );
-            physical_devices
-                .get(0)
-                .copied()
-                .ok_or(Error::VulkanPhysicalDeviceMissing)?
-        };
+                });
+                physical_devices.get(0).copied().ok_or(Error::VulkanPhysicalDeviceMissing)?
+            };
 
         let physical_devices = physical_devices
             .into_iter()
@@ -296,8 +267,7 @@ impl Gpu<'_> {
                     vk::PhysicalDeviceType::CPU => " (CPU)",
                     _ => "",
                 };
-                let in_use = properties.pipeline_cache_uuid
-                    == physical_device_properties.pipeline_cache_uuid;
+                let in_use = properties.pipeline_cache_uuid == physical_device_properties.pipeline_cache_uuid;
                 let name = format!("{}{}", name, pd_type);
                 let id = GpuId(properties.pipeline_cache_uuid);
                 GpuInfo { in_use, name, id }
@@ -363,10 +333,8 @@ impl Gpu<'_> {
                 ..Default::default()
             };
             unsafe {
-                let _ = debug_utils_ext
-                    .debug_utils_set_object_name(device.handle(), &graphics_name_info);
-                let _ = debug_utils_ext
-                    .debug_utils_set_object_name(device.handle(), &surface_name_info);
+                let _ = debug_utils_ext.debug_utils_set_object_name(device.handle(), &graphics_name_info);
+                let _ = debug_utils_ext.debug_utils_set_object_name(device.handle(), &surface_name_info);
             }
         }
 
@@ -378,8 +346,7 @@ impl Gpu<'_> {
                         .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
                         .map_err(Error::VulkanSemaphoreCreation)
                 }?;
-                let fence_create_info =
-                    vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+                let fence_create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
                 let frame_end_fence = unsafe {
                     device
                         .create_fence(&fence_create_info, None)
@@ -403,19 +370,11 @@ impl Gpu<'_> {
 
         let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(graphics_family_index)
-            .flags(
-                vk::CommandPoolCreateFlags::TRANSIENT
-                    | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
-            );
-        let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
-            .map_err(Error::VulkanCommandPoolCreation)?;
+            .flags(vk::CommandPoolCreateFlags::TRANSIENT | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let command_pool =
+            unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
 
-        let descriptors = Descriptors::new(
-            &device,
-            &physical_device_properties,
-            &physical_device_features,
-            frame_in_use_count,
-        )?;
+        let descriptors = Descriptors::new(&device, &physical_device_properties, &physical_device_features, frame_in_use_count)?;
 
         let allocator_create_info = vk_mem::AllocatorCreateInfo {
             physical_device,
@@ -426,8 +385,7 @@ impl Gpu<'_> {
             frame_in_use_count,
             heap_size_limits: None,
         };
-        let allocator =
-            vk_mem::Allocator::new(&allocator_create_info).map_err(Error::VmaAllocatorCreation)?;
+        let allocator = vk_mem::Allocator::new(&allocator_create_info).map_err(Error::VmaAllocatorCreation)?;
 
         let mesh_usage = vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::VERTEX_BUFFER;
         let uniform_usage = vk::BufferUsageFlags::UNIFORM_BUFFER;
@@ -452,10 +410,7 @@ impl Gpu<'_> {
         let staging_cpu_buffer_pool = allocator
             .create_pool(&vk_mem::AllocatorPoolCreateInfo {
                 memory_type_index: allocator
-                    .find_memory_type_index_for_buffer_info(
-                        &cpu_staging_buffer_info,
-                        &cpu_alloc_info,
-                    )
+                    .find_memory_type_index_for_buffer_info(&cpu_staging_buffer_info, &cpu_alloc_info)
                     .map_err(Error::VmaFindMemoryType)?,
                 ..pool_defaults
             })
@@ -465,13 +420,9 @@ impl Gpu<'_> {
                 allocator
                     .create_pool(&vk_mem::AllocatorPoolCreateInfo {
                         memory_type_index: allocator
-                            .find_memory_type_index_for_buffer_info(
-                                &cpu_buffer_info,
-                                &cpu_alloc_info,
-                            )
+                            .find_memory_type_index_for_buffer_info(&cpu_buffer_info, &cpu_alloc_info)
                             .map_err(Error::VmaFindMemoryType)?,
-                        flags: pool_defaults.flags
-                            | vk_mem::AllocatorPoolCreateFlags::LINEAR_ALGORITHM,
+                        flags: pool_defaults.flags | vk_mem::AllocatorPoolCreateFlags::LINEAR_ALGORITHM,
                         ..pool_defaults
                     })
                     .map_err(Error::VmaPoolCreation)
@@ -562,12 +513,7 @@ impl Gpu<'_> {
     }
 
     #[profiling::function]
-    pub(crate) fn add_temporary_buffer(
-        &self,
-        frame_index: FrameIndex,
-        buffer: vk::Buffer,
-        allocation: vk_mem::Allocation,
-    ) {
+    pub(crate) fn add_temporary_buffer(&self, frame_index: FrameIndex, buffer: vk::Buffer, allocation: vk_mem::Allocation) {
         let buffer_allocation = BufferAllocation(buffer, allocation);
         let temp_buffer_sender = &self.frame_local(frame_index).temp_buffers.0;
         let _ = temp_buffer_sender.send(buffer_allocation);
@@ -597,16 +543,14 @@ impl Gpu<'_> {
                 .map_err(Error::VulkanFenceCreation)
         }?;
 
-        let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder()
-            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe {
             self.device
                 .begin_command_buffer(temp_command_buffer, &command_buffer_begin_info)
                 .map_err(Error::VulkanBeginCommandBuffer)
         }?;
         let result = f(temp_command_buffer)?;
-        unsafe { self.device.end_command_buffer(temp_command_buffer) }
-            .map_err(Error::VulkanEndCommandBuffer)?;
+        unsafe { self.device.end_command_buffer(temp_command_buffer) }.map_err(Error::VulkanEndCommandBuffer)?;
 
         let command_buffers = [temp_command_buffer];
         let signal_semaphores = [signal_semaphore];
@@ -634,8 +578,7 @@ impl Gpu<'_> {
         for command_buffer in frame_local.temp_command_buffers.1.try_iter() {
             let cmdbufs = [command_buffer];
             unsafe {
-                self.device
-                    .free_command_buffers(self.command_pool, &cmdbufs);
+                self.device.free_command_buffers(self.command_pool, &cmdbufs);
             }
         }
     }
@@ -661,14 +604,8 @@ impl Gpu<'_> {
     /// allocated bytes.
     #[profiling::function]
     pub fn vram_usage(&self) -> Result<(vk::DeviceSize, vk::DeviceSize), Error> {
-        let stats = self
-            .allocator
-            .calculate_stats()
-            .map_err(Error::VmaCalculateStats)?;
-        Ok((
-            stats.total.usedBytes,
-            stats.total.usedBytes + stats.total.unusedBytes,
-        ))
+        let stats = self.allocator.calculate_stats().map_err(Error::VmaCalculateStats)?;
+        Ok((stats.total.usedBytes, stats.total.usedBytes + stats.total.unusedBytes))
     }
 
     /// Wait until the device is idle. Should be called before
@@ -687,12 +624,7 @@ impl Gpu<'_> {
         let (image_index, _) = unsafe {
             profiling::scope!("acquire next image");
             self.swapchain_ext
-                .acquire_next_image(
-                    canvas.swapchain,
-                    u64::MAX,
-                    vk::Semaphore::null(),
-                    self.frame_start_fence,
-                )
+                .acquire_next_image(canvas.swapchain, u64::MAX, vk::Semaphore::null(), self.frame_start_fence)
                 .map_err(Error::VulkanAcquireImage)
         }?;
         let frame_index = FrameIndex::new(image_index);
@@ -704,9 +636,7 @@ impl Gpu<'_> {
             self.device
                 .wait_for_fences(&fences, true, u64::MAX)
                 .map_err(Error::VulkanFenceWait)?;
-            self.device
-                .reset_fences(&fences)
-                .map_err(Error::VulkanFenceReset)?;
+            self.device.reset_fences(&fences).map_err(Error::VulkanFenceReset)?;
         }
 
         self.cleanup_temp_buffers(frame_local)?;
@@ -719,14 +649,8 @@ impl Gpu<'_> {
     /// Updates the texture(s) for the pipeline.
     ///
     /// The amount of textures to pass depends on the pipeline.
-    pub fn set_pipeline_textures(
-        &self,
-        frame_index: FrameIndex,
-        pipeline: Pipeline,
-        textures: &[&Texture<'_>],
-    ) {
-        self.descriptors
-            .set_uniform_images(self, frame_index, pipeline, 1, 0, textures);
+    pub fn set_pipeline_textures(&self, frame_index: FrameIndex, pipeline: Pipeline, textures: &[&Texture<'_>]) {
+        self.descriptors.set_uniform_images(self, frame_index, pipeline, 1, 0, textures);
     }
 
     /// Queue up all the rendering commands.
@@ -735,13 +659,7 @@ impl Gpu<'_> {
     /// future. Use [Gpu::wait_frame] to block until that
     /// happens.
     #[profiling::function]
-    pub fn render_frame(
-        &self,
-        frame_index: FrameIndex,
-        canvas: &Canvas,
-        camera: &Camera,
-        scene: &Scene,
-    ) -> Result<(), Error> {
+    pub fn render_frame(&self, frame_index: FrameIndex, canvas: &Canvas, camera: &Camera, scene: &Scene) -> Result<(), Error> {
         let frame_local = self.frame_local(frame_index);
         camera.update(canvas, frame_index)?;
 
@@ -750,11 +668,7 @@ impl Gpu<'_> {
         let framebuffer = canvas.framebuffers[image_index];
         self.record_commmand_buffer(frame_index, command_buffer, framebuffer, canvas, scene)?;
 
-        let render_wait_semaphores = self
-            .render_wait_semaphores
-            .1
-            .try_iter()
-            .collect::<Vec<WaitSemaphore>>();
+        let render_wait_semaphores = self.render_wait_semaphores.1.try_iter().collect::<Vec<WaitSemaphore>>();
         let mut wait_semaphores = Vec::with_capacity(render_wait_semaphores.len());
         let mut wait_stages = Vec::with_capacity(render_wait_semaphores.len());
         for WaitSemaphore(semaphore, wait_stage) in render_wait_semaphores {
@@ -773,11 +687,7 @@ impl Gpu<'_> {
         unsafe {
             profiling::scope!("queue render");
             self.device
-                .queue_submit(
-                    self.graphics_queue,
-                    &submit_infos,
-                    frame_local.frame_end_fence,
-                )
+                .queue_submit(self.graphics_queue, &submit_infos, frame_local.frame_end_fence)
                 .map_err(Error::VulkanQueueSubmit)
         }?;
 
@@ -789,14 +699,11 @@ impl Gpu<'_> {
             .image_indices(&image_indices);
         let present_result = unsafe {
             profiling::scope!("queue present");
-            self.swapchain_ext
-                .queue_present(self.surface_queue, &present_info)
+            self.swapchain_ext.queue_present(self.surface_queue, &present_info)
         };
 
         match present_result {
-            Err(err @ vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                return Err(Error::VulkanSwapchainOutOfDate(err))
-            }
+            Err(err @ vk::Result::ERROR_OUT_OF_DATE_KHR) => return Err(Error::VulkanSwapchainOutOfDate(err)),
             Err(err) => return Err(Error::VulkanQueuePresent(err)),
             _ => {}
         }
@@ -831,11 +738,7 @@ impl Gpu<'_> {
         let render_area = vk::Rect2D::builder().extent(canvas.extent).build();
         let mut depth_clear_value = vk::ClearValue::default();
         depth_clear_value.depth_stencil.depth = 1.0;
-        let clear_colors = [
-            vk::ClearValue::default(),
-            depth_clear_value,
-            vk::ClearValue::default(),
-        ];
+        let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
             .render_pass(canvas.final_render_pass)
             .framebuffer(framebuffer)
@@ -843,11 +746,8 @@ impl Gpu<'_> {
             .clear_values(&clear_colors);
         unsafe {
             profiling::scope!("begin render pass");
-            self.device.cmd_begin_render_pass(
-                command_buffer,
-                &render_pass_begin_info,
-                vk::SubpassContents::INLINE,
-            );
+            self.device
+                .cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
         }
 
         // Bind the shared descriptor set (#0)
@@ -872,16 +772,11 @@ impl Gpu<'_> {
             }
 
             unsafe {
-                self.device.cmd_bind_pipeline(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    canvas.pipelines[pipeline_idx],
-                )
+                self.device
+                    .cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, canvas.pipelines[pipeline_idx])
             };
             let layout = self.descriptors.pipeline_layouts[pipeline_idx];
-            let descriptor_sets = self
-                .descriptors
-                .descriptor_sets(self, frame_index, pipeline_idx);
+            let descriptor_sets = self.descriptors.descriptor_sets(self, frame_index, pipeline_idx);
             if descriptor_sets.len() > 1 {
                 unsafe {
                     self.device.cmd_bind_descriptor_sets(
@@ -923,26 +818,12 @@ impl Gpu<'_> {
                 vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
 
                 unsafe {
-                    self.device.cmd_bind_vertex_buffers(
-                        command_buffer,
-                        0,
-                        &vertex_buffers,
-                        &vertex_offsets,
-                    );
-                    self.device.cmd_bind_index_buffer(
-                        command_buffer,
-                        mesh.buffer(),
-                        mesh.indices_offset,
-                        mesh.index_type,
-                    );
-                    self.device.cmd_draw_indexed(
-                        command_buffer,
-                        mesh.index_count,
-                        transforms.len() as u32,
-                        0,
-                        0,
-                        0,
-                    );
+                    self.device
+                        .cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
+                    self.device
+                        .cmd_bind_index_buffer(command_buffer, mesh.buffer(), mesh.indices_offset, mesh.index_type);
+                    self.device
+                        .cmd_draw_indexed(command_buffer, mesh.index_count, transforms.len() as u32, 0, 0, 0);
                 }
             }
         }
@@ -964,17 +845,12 @@ impl Gpu<'_> {
 }
 
 #[profiling::function]
-fn is_extension_supported(
-    instance: &Instance,
-    physical_device: vk::PhysicalDevice,
-    target_extension_name: &str,
-) -> bool {
+fn is_extension_supported(instance: &Instance, physical_device: vk::PhysicalDevice, target_extension_name: &str) -> bool {
     match unsafe { instance.enumerate_device_extension_properties(physical_device) } {
         Err(_) => false,
         Ok(extensions) => extensions.iter().any(|extension_properties| {
             let extension_name_slice = &extension_properties.extension_name[..];
-            let extension_name =
-                unsafe { CStr::from_ptr(extension_name_slice.as_ptr()) }.to_string_lossy();
+            let extension_name = unsafe { CStr::from_ptr(extension_name_slice.as_ptr()) }.to_string_lossy();
             extension_name == target_extension_name
         }),
     }

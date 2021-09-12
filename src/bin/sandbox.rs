@@ -26,9 +26,7 @@ fn load_png(bytes: &[u8]) -> (u32, u32, Vec<u8>, vk::Format) {
 
 #[profiling::function]
 fn main() -> anyhow::Result<()> {
-    log::set_logger(&LOGGER)
-        .map(|()| log::set_max_level(LevelFilter::Trace))
-        .unwrap();
+    log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Trace)).unwrap();
 
     let sdl_context = sdl2::init().map_err(SandboxError::Sdl)?;
     let video_subsystem = sdl_context.video().map_err(SandboxError::Sdl)?;
@@ -52,47 +50,20 @@ fn main() -> anyhow::Result<()> {
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::new();
 
-    let cube_model = neonvk::Gltf::from_glb(
-        &gpu,
-        loading_frame_index,
-        include_bytes!("testbox/testbox.glb"),
-    )?;
+    let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"))?;
 
-    let (tex_w, tex_h, tex_bytes, tex_format) =
-        load_png(include_bytes!("testbox/testbox_albedo_texture.png"));
-    let tree_texture = neonvk::Texture::new(
-        &gpu,
-        loading_frame_index,
-        &tex_bytes,
-        tex_w,
-        tex_h,
-        tex_format,
-    )?;
+    let (tex_w, tex_h, tex_bytes, tex_format) = load_png(include_bytes!("testbox/testbox_albedo_texture.png"));
+    let tree_texture = neonvk::Texture::new(&gpu, loading_frame_index, &tex_bytes, tex_w, tex_h, tex_format)?;
 
     let quad_vertices: &[&[u8]] = &[
-        bytemuck::bytes_of(&[
-            [-0.5f32, 0.5, 0.0],
-            [-0.5, -0.5, 0.0],
-            [0.5, 0.5, 0.0],
-            [0.5, -0.5, 0.0],
-        ]),
+        bytemuck::bytes_of(&[[-0.5f32, 0.5, 0.0], [-0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [0.5, -0.5, 0.0]]),
         bytemuck::bytes_of(&[[0.0f32, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]),
     ];
     let quad_indices: &[u8] = bytemuck::bytes_of(&[0u16, 1, 2, 3, 2, 1]);
-    let quad = neonvk::Mesh::new::<u16>(
-        &gpu,
-        loading_frame_index,
-        quad_vertices,
-        quad_indices,
-        neonvk::Pipeline::Default,
-    )?;
+    let quad = neonvk::Mesh::new::<u16>(&gpu, loading_frame_index, quad_vertices, quad_indices, neonvk::Pipeline::Default)?;
     // Get the first frame out of the way, to upload the meshes.
     // TODO: Add a proper way to upload resources before the game loop
-    gpu.set_pipeline_textures(
-        loading_frame_index,
-        neonvk::Pipeline::Default,
-        &[&tree_texture],
-    );
+    gpu.set_pipeline_textures(loading_frame_index, neonvk::Pipeline::Default, &[&tree_texture]);
     gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new())?;
 
     let start_time = Instant::now();
@@ -116,8 +87,7 @@ fn main() -> anyhow::Result<()> {
                 } => break 'running,
 
                 Event::KeyDown {
-                    keycode: Some(Keycode::I),
-                    ..
+                    keycode: Some(Keycode::I), ..
                 } => {
                     immediate_present = !immediate_present;
                     size_changed = true;
@@ -143,16 +113,11 @@ fn main() -> anyhow::Result<()> {
         let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1)
             * Mat4::from_rotation_x(frame_start_seconds * 0.1)
             * Mat4::from_rotation_y(frame_start_seconds * 0.1);
-        scene.queue(
-            &quad,
-            Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 0.0, 0.0)) * rotation,
-        );
+        scene.queue(&quad, Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 0.0, 0.0)) * rotation);
         for mesh in &cube_model.meshes {
             scene.queue(
                 mesh,
-                Mat4::from_translation(ultraviolet::Vec3::new(0.5, 0.0, 0.0))
-                    * Mat4::from_scale(0.5)
-                    * rotation,
+                Mat4::from_translation(ultraviolet::Vec3::new(0.5, 0.0, 0.0)) * Mat4::from_scale(0.5) * rotation,
             );
         }
 
@@ -177,10 +142,7 @@ fn main() -> anyhow::Result<()> {
                 }
             })
             .sum();
-        if let (Some(avg_interval), Ok((used, alloced))) = (
-            interval_sum.checked_div(interval_count as u32),
-            gpu.vram_usage(),
-        ) {
+        if let (Some(avg_interval), Ok((used, alloced))) = (interval_sum.checked_div(interval_count as u32), gpu.vram_usage()) {
             let _ = window.set_title(&format!(
                 "{} ({:.2} ms frame interval, {} of VRAM in use, {} allocated)",
                 env!("CARGO_PKG_NAME"),
@@ -248,11 +210,9 @@ mod logger {
                     if let Some(title_len) = message.char_indices().position(|(_, c)| c == ':') {
                         let title = &message[..title_len];
                         let message = &message[(title_len + 2).min(message.len())..];
-                        let _ =
-                            show_simple_message_box(MessageBoxFlag::ERROR, title, message, None);
+                        let _ = show_simple_message_box(MessageBoxFlag::ERROR, title, message, None);
                     } else {
-                        let _ =
-                            show_simple_message_box(MessageBoxFlag::ERROR, "Error", &message, None);
+                        let _ = show_simple_message_box(MessageBoxFlag::ERROR, "Error", &message, None);
                     }
                 }
             }

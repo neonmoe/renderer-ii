@@ -25,10 +25,7 @@ impl<'a> Scene<'a> {
     }
 
     pub fn queue(&mut self, mesh: &'a Mesh, transform: Mat4) {
-        let mesh_map = self
-            .pipeline_map
-            .entry(mesh.pipeline)
-            .or_insert_with(HashMap::new);
+        let mesh_map = self.pipeline_map.entry(mesh.pipeline).or_insert_with(HashMap::new);
         let mesh_vec = mesh_map.entry(mesh).or_insert_with(Vec::new);
         mesh_vec.push(transform);
     }

@@ -29,10 +29,9 @@ pub(crate) fn start_buffer_upload(
     buffer: vk::Buffer,
     buffer_size: vk::DeviceSize,
 ) -> Result<(vk::Buffer, vk_mem::Allocation), Error> {
-    let (buffer, allocation) =
-        gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::VERTEX_INPUT, |cb| {
-            queue_buffer_copy(&gpu.device, cb, &gpu.allocator, pool, buffer, buffer_size)
-        })?;
+    let (buffer, allocation) = gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::VERTEX_INPUT, |cb| {
+        queue_buffer_copy(&gpu.device, cb, &gpu.allocator, pool, buffer, buffer_size)
+    })?;
     Ok((buffer, allocation))
 }
 
@@ -45,18 +44,9 @@ pub(crate) fn start_image_upload(
     extent: vk::Extent3D,
     format: vk::Format,
 ) -> Result<(vk::Image, vk_mem::Allocation, u32), Error> {
-    let (image, allocation, mip_levels) =
-        gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |cb| {
-            queue_image_copy(
-                &gpu.device,
-                cb,
-                &gpu.allocator,
-                pool,
-                pixels,
-                extent,
-                format,
-            )
-        })?;
+    let (image, allocation, mip_levels) = gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |cb| {
+        queue_image_copy(&gpu.device, cb, &gpu.allocator, pool, pixels, extent, format)
+    })?;
 
     Ok((image, allocation, mip_levels))
 }
@@ -115,11 +105,7 @@ fn queue_image_copy(
         .format(format)
         .tiling(vk::ImageTiling::OPTIMAL)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .usage(
-            vk::ImageUsageFlags::TRANSFER_SRC
-                | vk::ImageUsageFlags::TRANSFER_DST
-                | vk::ImageUsageFlags::SAMPLED,
-        )
+        .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .samples(vk::SampleCountFlags::TYPE_1);
     let allocation_info = vk_mem::AllocationCreateInfo {

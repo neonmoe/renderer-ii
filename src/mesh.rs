@@ -32,10 +32,7 @@ impl Mesh<'_> {
         pipeline: Pipeline,
     ) -> Result<Mesh<'a>, Error> {
         let indices_size = indices.len();
-        let total_vertices_size = vertices
-            .iter()
-            .map(|vertices| vertices.len())
-            .sum::<usize>();
+        let total_vertices_size = vertices.iter().map(|vertices| vertices.len()).sum::<usize>();
         let mut data: Vec<u8> = vec![0; total_vertices_size + indices_size];
         let mut buffer_dst_ptr = data.as_mut_ptr();
         let indices_src_ptr = indices.as_ptr();

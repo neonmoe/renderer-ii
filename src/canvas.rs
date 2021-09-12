@@ -89,9 +89,7 @@ impl Drop for Canvas<'_> {
 
         unsafe {
             profiling::scope!("destroy swapchain");
-            self.gpu
-                .swapchain_ext
-                .destroy_swapchain(self.swapchain, None)
+            self.gpu.swapchain_ext.destroy_swapchain(self.swapchain, None)
         };
     }
 }
@@ -150,8 +148,7 @@ impl Canvas<'_> {
                     subresource_range,
                     ..Default::default()
                 };
-                unsafe { device.create_image_view(&image_view_create_info, None) }
-                    .map_err(Error::VulkanSwapchainImageViewCreation)
+                unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanSwapchainImageViewCreation)
             }
         };
 
@@ -174,44 +171,34 @@ impl Canvas<'_> {
                 flags: vk_mem::AllocationCreateFlags::STRATEGY_MIN_FRAGMENTATION,
                 ..Default::default()
             };
-            gpu.allocator
-                .create_image(&image_create_info, &allocation_create_info)
+            gpu.allocator.create_image(&image_create_info, &allocation_create_info)
         };
 
         // TODO: Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
-        let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }
-            .map_err(Error::VulkanGetSwapchainImages)?;
+        let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
         let swapchain_image_views = swapchain_images
             .into_iter()
-            .map(create_image_view(
-                vk::ImageAspectFlags::COLOR,
-                swapchain_format,
-            ))
+            .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain_format))
             .collect::<Result<Vec<_>, _>>()?;
 
         let color_images = (0..swapchain_image_views.len())
             .map(|_| {
                 let (image, allocation, _) =
-                    create_image(SWAPCHAIN_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT)
-                        .map_err(Error::VmaColorImageCreation)?;
+                    create_image(SWAPCHAIN_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT).map_err(Error::VmaColorImageCreation)?;
                 Ok((image, allocation))
             })
             .collect::<Result<Vec<(vk::Image, vk_mem::Allocation)>, Error>>()?;
         let color_image_views = color_images
             .iter()
             .map(|&(image, _)| image)
-            .map(create_image_view(
-                vk::ImageAspectFlags::COLOR,
-                SWAPCHAIN_FORMAT,
-            ))
+            .map(create_image_view(vk::ImageAspectFlags::COLOR, SWAPCHAIN_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
         let depth_images = (0..swapchain_image_views.len())
             .map(|_| {
                 let (image, allocation, _) =
-                    create_image(DEPTH_FORMAT, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
-                        .map_err(Error::VmaDepthImageCreation)?;
+                    create_image(DEPTH_FORMAT, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT).map_err(Error::VmaDepthImageCreation)?;
                 Ok((image, allocation))
             })
             .collect::<Result<Vec<(vk::Image, vk_mem::Allocation)>, Error>>()?;
@@ -244,19 +231,16 @@ impl Canvas<'_> {
             .iter()
             .zip(depth_image_views.iter())
             .zip(swapchain_image_views.iter())
-            .map(
-                |((&color_image_view, &depth_image_view), &swapchain_image_view)| {
-                    let attachments = [color_image_view, depth_image_view, swapchain_image_view];
-                    let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
-                        .render_pass(final_render_pass)
-                        .attachments(&attachments)
-                        .width(extent.width)
-                        .height(extent.height)
-                        .layers(1);
-                    unsafe { device.create_framebuffer(&framebuffer_create_info, None) }
-                        .map_err(Error::VulkanFramebufferCreation)
-                },
-            )
+            .map(|((&color_image_view, &depth_image_view), &swapchain_image_view)| {
+                let attachments = [color_image_view, depth_image_view, swapchain_image_view];
+                let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
+                    .render_pass(final_render_pass)
+                    .attachments(&attachments)
+                    .width(extent.width)
+                    .height(extent.height)
+                    .layers(1);
+                unsafe { device.create_framebuffer(&framebuffer_create_info, None) }.map_err(Error::VulkanFramebufferCreation)
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Canvas {
@@ -352,32 +336,22 @@ fn create_swapchain(
         .present_mode(present_mode)
         .clipped(true)
         .image_extent(get_image_extent()?);
-    if queue_family_indices.windows(2).any(|indices| {
-        if let [a, b] = *indices {
-            a != b
-        } else {
-            unreachable!()
-        }
-    }) {
+    if queue_family_indices
+        .windows(2)
+        .any(|indices| if let [a, b] = *indices { a != b } else { unreachable!() })
+    {
         swapchain_create_info = swapchain_create_info
             .image_sharing_mode(vk::SharingMode::CONCURRENT)
             .queue_family_indices(queue_family_indices);
     } else {
-        swapchain_create_info =
-            swapchain_create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
+        swapchain_create_info = swapchain_create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
     }
     if let Some(old_swapchain) = old_swapchain {
         swapchain_create_info = swapchain_create_info.old_swapchain(old_swapchain);
     }
-    let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }
-        .map_err(Error::VulkanSwapchainCreation)?;
+    let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }.map_err(Error::VulkanSwapchainCreation)?;
 
-    Ok((
-        swapchain,
-        image_format,
-        swapchain_create_info.image_extent,
-        min_image_count,
-    ))
+    Ok((swapchain, image_format, swapchain_create_info.image_extent, min_image_count))
 }
 
 #[profiling::function]
@@ -409,11 +383,7 @@ fn create_render_pass(device: &Device) -> Result<vk::RenderPass, Error> {
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-    let attachments = [
-        color_attachment.build(),
-        depth_attachment.build(),
-        resolve_attachment.build(),
-    ];
+    let attachments = [color_attachment.build(), depth_attachment.build(), resolve_attachment.build()];
 
     let color_attachment_reference = vk::AttachmentReference::builder()
         .attachment(0)
@@ -433,11 +403,8 @@ fn create_render_pass(device: &Device) -> Result<vk::RenderPass, Error> {
         .depth_stencil_attachment(&depth_attachment_reference);
     let subpasses = [subpass.build()];
 
-    let render_pass_create_info = vk::RenderPassCreateInfo::builder()
-        .attachments(&attachments)
-        .subpasses(&subpasses);
-    unsafe { device.create_render_pass(&render_pass_create_info, None) }
-        .map_err(Error::VulkanRenderPassCreation)
+    let render_pass_create_info = vk::RenderPassCreateInfo::builder().attachments(&attachments).subpasses(&subpasses);
+    unsafe { device.create_render_pass(&render_pass_create_info, None) }.map_err(Error::VulkanRenderPassCreation)
 }
 
 #[profiling::function]
@@ -451,8 +418,7 @@ fn create_pipelines(
     let mut all_shader_modules = Vec::with_capacity(pipelines_params.len() * 2);
     let mut create_shader_module = |spirv: &'static [u32]| -> Result<vk::ShaderModule, Error> {
         let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
-        let shader_module = unsafe { device.create_shader_module(&create_info, None) }
-            .map_err(Error::VulkanShaderModuleCreation)?;
+        let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(Error::VulkanShaderModuleCreation)?;
         all_shader_modules.push(shader_module);
         Ok(shader_module)
     };
@@ -468,10 +434,7 @@ fn create_pipelines(
                 .stage(vk::ShaderStageFlags::FRAGMENT)
                 .module(create_shader_module(pipeline.fragment_shader)?)
                 .name(cstr!("main"));
-            Ok([
-                vert_shader_stage_create_info.build(),
-                frag_shader_stage_create_info.build(),
-            ])
+            Ok([vert_shader_stage_create_info.build(), frag_shader_stage_create_info.build()])
         })
         .collect::<Result<Vec<[vk::PipelineShaderStageCreateInfo; 2]>, Error>>()?;
 
@@ -518,10 +481,7 @@ fn create_pipelines(
 
         let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState::builder()
             .color_write_mask(
-                vk::ColorComponentFlags::R
-                    | vk::ColorComponentFlags::G
-                    | vk::ColorComponentFlags::B
-                    | vk::ColorComponentFlags::A,
+                vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A,
             )
             .blend_enable(false)
             .build()];

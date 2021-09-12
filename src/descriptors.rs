@@ -58,10 +58,8 @@ impl Descriptors {
                                 .build()
                         })
                         .collect::<Vec<vk::DescriptorSetLayoutBinding>>();
-                    let create_info =
-                        vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
-                    unsafe { device.create_descriptor_set_layout(&create_info, None) }
-                        .map_err(Error::VulkanDescriptorSetLayoutCreation)
+                    let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+                    unsafe { device.create_descriptor_set_layout(&create_info, None) }.map_err(Error::VulkanDescriptorSetLayoutCreation)
                 })
                 .collect::<Result<Vec<vk::DescriptorSetLayout>, Error>>()
         };
@@ -69,10 +67,8 @@ impl Descriptors {
         let layout_tuples = PIPELINE_PARAMETERS
             .iter()
             .map(|pipeline| {
-                let descriptor_set_layouts =
-                    create_descriptor_set_layouts(pipeline.descriptor_sets)?;
-                let pipeline_layout_create_info =
-                    vk::PipelineLayoutCreateInfo::builder().set_layouts(&descriptor_set_layouts);
+                let descriptor_set_layouts = create_descriptor_set_layouts(pipeline.descriptor_sets)?;
+                let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&descriptor_set_layouts);
                 let pipeline_layout = unsafe {
                     device
                         .create_pipeline_layout(&pipeline_layout_create_info, None)
@@ -81,10 +77,7 @@ impl Descriptors {
                 Ok((pipeline_layout, descriptor_set_layouts))
             })
             .collect::<Result<Vec<(vk::PipelineLayout, Vec<vk::DescriptorSetLayout>)>, Error>>()?;
-        let pipeline_layouts = layout_tuples
-            .iter()
-            .map(|(pl, _)| *pl)
-            .collect::<Vec<vk::PipelineLayout>>();
+        let pipeline_layouts = layout_tuples.iter().map(|(pl, _)| *pl).collect::<Vec<vk::PipelineLayout>>();
         let descriptor_set_layouts_per_pipeline = layout_tuples
             .into_iter()
             .map(|(_, sets)| sets)
@@ -101,8 +94,7 @@ impl Descriptors {
                     .build()
             })
             .collect::<Vec<vk::DescriptorPoolSize>>();
-        let descriptor_sets_per_frame =
-            descriptor_set_layouts_per_pipeline.iter().flatten().count() as u32;
+        let descriptor_sets_per_frame = descriptor_set_layouts_per_pipeline.iter().flatten().count() as u32;
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
             .max_sets(frame_count * descriptor_sets_per_frame)
             .pool_sizes(&pool_sizes);
@@ -120,8 +112,7 @@ impl Descriptors {
                         let create_info = vk::DescriptorSetAllocateInfo::builder()
                             .descriptor_pool(descriptor_pool)
                             .set_layouts(descriptor_set_layouts);
-                        unsafe { device.allocate_descriptor_sets(&create_info) }
-                            .map_err(Error::VulkanAllocateDescriptorSets)
+                        unsafe { device.allocate_descriptor_sets(&create_info) }.map_err(Error::VulkanAllocateDescriptorSets)
                     })
                     .collect::<Result<Vec<Vec<vk::DescriptorSet>>, Error>>()
             })
@@ -139,8 +130,7 @@ impl Descriptors {
             .address_mode_w(vk::SamplerAddressMode::REPEAT)
             .anisotropy_enable(physical_device_features.sampler_anisotropy == vk::TRUE)
             .max_anisotropy(physical_device_properties.limits.max_sampler_anisotropy);
-        let sampler = unsafe { device.create_sampler(&sampler_create_info, None) }
-            .map_err(Error::VulkanSamplerCreation)?;
+        let sampler = unsafe { device.create_sampler(&sampler_create_info, None) }.map_err(Error::VulkanSamplerCreation)?;
 
         Ok(Descriptors {
             pipeline_layouts,
@@ -178,10 +168,7 @@ impl Descriptors {
             .descriptor_type(params.descriptor_type)
             .buffer_info(&descriptor_buffer_info)
             .build();
-        unsafe {
-            gpu.device
-                .update_descriptor_sets(&[write_descriptor_set], &[])
-        };
+        unsafe { gpu.device.update_descriptor_sets(&[write_descriptor_set], &[]) };
     }
 
     #[profiling::function]
@@ -213,8 +200,7 @@ impl Descriptors {
             .enumerate()
             .map(|(i, descriptor_image_info)| {
                 let binding = first_binding + i as u32;
-                let params =
-                    &PIPELINE_PARAMETERS[pipeline_idx].descriptor_sets[set_idx][binding as usize];
+                let params = &PIPELINE_PARAMETERS[pipeline_idx].descriptor_sets[set_idx][binding as usize];
                 vk::WriteDescriptorSet::builder()
                     .dst_set(descriptor_set)
                     .dst_binding(binding)
@@ -224,19 +210,11 @@ impl Descriptors {
                     .build()
             })
             .collect::<Vec<vk::WriteDescriptorSet>>();
-        unsafe {
-            gpu.device
-                .update_descriptor_sets(&write_descriptor_sets, &[])
-        };
+        unsafe { gpu.device.update_descriptor_sets(&write_descriptor_sets, &[]) };
     }
 
     #[profiling::function]
-    pub(crate) fn descriptor_sets(
-        &self,
-        gpu: &Gpu,
-        frame_index: FrameIndex,
-        pipeline_idx: usize,
-    ) -> &[vk::DescriptorSet] {
+    pub(crate) fn descriptor_sets(&self, gpu: &Gpu, frame_index: FrameIndex, pipeline_idx: usize) -> &[vk::DescriptorSet] {
         &self.descriptor_sets[gpu.image_index(frame_index)][pipeline_idx]
     }
 }

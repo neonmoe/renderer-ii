@@ -4,10 +4,7 @@ use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 
 #[profiling::function]
-pub(crate) fn create_debug_utils_messenger(
-    entry: &Entry,
-    instance: &Instance,
-) -> Result<vk::DebugUtilsMessengerEXT, vk::Result> {
+pub(crate) fn create_debug_utils_messenger(entry: &Entry, instance: &Instance) -> Result<vk::DebugUtilsMessengerEXT, vk::Result> {
     let debug_utils = DebugUtils::new(entry, instance);
     let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
         message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::all(),
@@ -19,11 +16,7 @@ pub(crate) fn create_debug_utils_messenger(
 }
 
 #[profiling::function]
-pub(crate) fn destroy_debug_utils_messenger(
-    entry: &Entry,
-    instance: &Instance,
-    debug_utils_messenger: vk::DebugUtilsMessengerEXT,
-) {
+pub(crate) fn destroy_debug_utils_messenger(entry: &Entry, instance: &Instance, debug_utils_messenger: vk::DebugUtilsMessengerEXT) {
     let debug_utils = DebugUtils::new(entry, instance);
     unsafe { debug_utils.destroy_debug_utils_messenger(debug_utils_messenger, None) }
 }
@@ -53,15 +46,7 @@ unsafe extern "system" fn debug_utils_messenger_callback(
     } else {
         &message
     };
-    vulkan_debug(
-        message_severity,
-        message_types,
-        &message_id,
-        message,
-        None,
-        None,
-        None,
-    );
+    vulkan_debug(message_severity, message_types, &message_id, message, None, None, None);
     vk::FALSE
 }
 
@@ -110,10 +95,7 @@ fn vulkan_debug(
     use vk::DebugUtilsMessageTypeFlagsEXT as Type;
     match (message_severity, message_types) {
         (Severity::ERROR, _) => log::error!("{}", formatted_message),
-        (Severity::WARNING, _)
-        | (Severity::INFO, _)
-        | (_, Type::VALIDATION)
-        | (_, Type::PERFORMANCE) => {
+        (Severity::WARNING, _) | (Severity::INFO, _) | (_, Type::VALIDATION) | (_, Type::PERFORMANCE) => {
             log::debug!("{}", formatted_message)
         }
         (Severity::VERBOSE, _) => log::trace!("{}", formatted_message),

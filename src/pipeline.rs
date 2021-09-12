@@ -37,12 +37,11 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[DescriptorSetLa
     stage_flags: vk::ShaderStageFlags::VERTEX,
 }];
 
-static INSTANCED_TRANSFORM_BINDING_0: vk::VertexInputBindingDescription =
-    vk::VertexInputBindingDescription {
-        binding: 0,
-        stride: mem::size_of::<Mat4>() as u32,
-        input_rate: vk::VertexInputRate::INSTANCE,
-    };
+static INSTANCED_TRANSFORM_BINDING_0: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+    binding: 0,
+    stride: mem::size_of::<Mat4>() as u32,
+    input_rate: vk::VertexInputRate::INSTANCE,
+};
 
 static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescription; 4] = [
     vk::VertexInputAttributeDescription {
@@ -71,47 +70,46 @@ static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescri
     },
 ];
 
-pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as usize] =
-    [PipelineParameters {
-        vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
-        fragment_shader: shaders::include_spirv!("shaders/textured.frag"),
-        bindings: &[
-            INSTANCED_TRANSFORM_BINDING_0,
-            vk::VertexInputBindingDescription {
-                binding: 1,
-                stride: mem::size_of::<Vec3>() as u32,
-                input_rate: vk::VertexInputRate::VERTEX,
-            },
-            vk::VertexInputBindingDescription {
-                binding: 2,
-                stride: mem::size_of::<Vec2>() as u32,
-                input_rate: vk::VertexInputRate::VERTEX,
-            },
-        ],
-        attributes: &[
-            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
-            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
-            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[2],
-            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[3],
-            vk::VertexInputAttributeDescription {
-                binding: 1,
-                location: 4,
-                format: vk::Format::R32G32B32_SFLOAT,
-                offset: 0,
-            },
-            vk::VertexInputAttributeDescription {
-                binding: 2,
-                location: 5,
-                format: vk::Format::R32G32_SFLOAT,
-                offset: 0,
-            },
-        ],
-        descriptor_sets: &[
-            SHARED_DESCRIPTOR_SET_0,
-            &[DescriptorSetLayoutParams {
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-            }],
-        ],
-    }];
+pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as usize] = [PipelineParameters {
+    vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
+    fragment_shader: shaders::include_spirv!("shaders/textured.frag"),
+    bindings: &[
+        INSTANCED_TRANSFORM_BINDING_0,
+        vk::VertexInputBindingDescription {
+            binding: 1,
+            stride: mem::size_of::<Vec3>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        },
+        vk::VertexInputBindingDescription {
+            binding: 2,
+            stride: mem::size_of::<Vec2>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        },
+    ],
+    attributes: &[
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[2],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[3],
+        vk::VertexInputAttributeDescription {
+            binding: 1,
+            location: 4,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: 0,
+        },
+        vk::VertexInputAttributeDescription {
+            binding: 2,
+            location: 5,
+            format: vk::Format::R32G32_SFLOAT,
+            offset: 0,
+        },
+    ],
+    descriptor_sets: &[
+        SHARED_DESCRIPTOR_SET_0,
+        &[DescriptorSetLayoutParams {
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        }],
+    ],
+}];

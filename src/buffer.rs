@@ -29,10 +29,7 @@ impl Hash for Buffer<'_> {
 impl Drop for Buffer<'_> {
     #[profiling::function]
     fn drop(&mut self) {
-        let _ = self
-            .gpu
-            .allocator
-            .destroy_buffer(self.buffer, &self.allocation);
+        let _ = self.gpu.allocator.destroy_buffer(self.buffer, &self.allocation);
     }
 }
 
@@ -44,11 +41,7 @@ impl Buffer<'_> {
     /// Currently the buffers are always created as INDEX | VERTEX |
     /// UNIFORM buffers.
     #[profiling::function]
-    pub fn new<'a, T>(
-        gpu: &'a Gpu<'_>,
-        frame_index: FrameIndex,
-        data: &[T],
-    ) -> Result<Buffer<'a>, Error> {
+    pub fn new<'a, T>(gpu: &'a Gpu<'_>, frame_index: FrameIndex, data: &[T]) -> Result<Buffer<'a>, Error> {
         let buffer_size = (data.len() * mem::size_of::<T>()) as vk::DeviceSize;
         let buffer_create_info = vk::BufferCreateInfo::builder()
             .size(buffer_size)
@@ -66,28 +59,16 @@ impl Buffer<'_> {
         buffer_ops::copy_to_allocation(data, gpu, &staging_allocation, &staging_alloc_info)?;
 
         let pool = gpu.main_gpu_buffer_pool.clone();
-        let (buffer, allocation) = match buffer_ops::start_buffer_upload(
-            gpu,
-            frame_index,
-            pool,
-            staging_buffer,
-            buffer_size,
-        ) {
+        let (buffer, allocation) = match buffer_ops::start_buffer_upload(gpu, frame_index, pool, staging_buffer, buffer_size) {
             Ok(result) => result,
             Err(err) => {
-                let _ = gpu
-                    .allocator
-                    .destroy_buffer(staging_buffer, &staging_allocation);
+                let _ = gpu.allocator.destroy_buffer(staging_buffer, &staging_allocation);
                 return Err(err);
             }
         };
 
         gpu.add_temporary_buffer(frame_index, staging_buffer, staging_allocation);
 
-        Ok(Buffer {
-            gpu,
-            buffer,
-            allocation,
-        })
+        Ok(Buffer { gpu, buffer, allocation })
     }
 }

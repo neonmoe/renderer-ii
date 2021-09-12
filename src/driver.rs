@@ -24,11 +24,7 @@ impl Drop for Driver {
     #[profiling::function]
     fn drop(&mut self) {
         if let Some(debug_utils_messenger) = self.debug_utils_messenger.take() {
-            debug_utils::destroy_debug_utils_messenger(
-                &self.entry,
-                &self.instance,
-                debug_utils_messenger,
-            );
+            debug_utils::destroy_debug_utils_messenger(&self.entry, &self.instance, debug_utils_messenger);
         }
 
         {
@@ -77,8 +73,7 @@ impl Driver {
             .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions);
         let instance = unsafe { entry.create_instance(&create_info, None) }?;
-        let surface = unsafe { ash_window::create_surface(&entry, &instance, window, None) }
-            .map_err(Error::VulkanSurfaceCreation)?;
+        let surface = unsafe { ash_window::create_surface(&entry, &instance, window, None) }.map_err(Error::VulkanSurfaceCreation)?;
 
         let debug_utils_messenger = if debug_utils_available {
             debug_utils::create_debug_utils_messenger(&entry, &instance).ok()
@@ -117,8 +112,7 @@ fn is_extension_supported(entry: &Entry, target_extension_name: &str) -> bool {
         Err(_) => false,
         Ok(extensions) => extensions.iter().any(|extension_properties| {
             let extension_name_slice = &extension_properties.extension_name[..];
-            let extension_name =
-                unsafe { CStr::from_ptr(extension_name_slice.as_ptr()) }.to_string_lossy();
+            let extension_name = unsafe { CStr::from_ptr(extension_name_slice.as_ptr()) }.to_string_lossy();
             extension_name == target_extension_name
         }),
     }

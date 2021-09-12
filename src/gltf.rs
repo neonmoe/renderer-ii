@@ -6,11 +6,7 @@ pub struct Gltf<'a> {
 
 impl Gltf<'_> {
     /// Loads the glTF scene from the contents of a .glb file.
-    pub fn from_glb<'gpu>(
-        gpu: &'gpu Gpu,
-        frame_index: FrameIndex,
-        glb: &[u8],
-    ) -> Result<Gltf<'gpu>, Error> {
+    pub fn from_glb<'gpu>(gpu: &'gpu Gpu, frame_index: FrameIndex, glb: &[u8]) -> Result<Gltf<'gpu>, Error> {
         fn read_u32(bytes: &[u8]) -> u32 {
             debug_assert!(bytes.len() == 4);
             if let [a, b, c, d] = *bytes {
@@ -66,8 +62,7 @@ impl Gltf<'_> {
         }
 
         let json = json.ok_or(Error::MissingGlbJson)?;
-        let gltf: gltf_json::GltfJson =
-            miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
+        let gltf: gltf_json::GltfJson = miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
 
         if let Some(min_version) = &gltf.asset.min_version {
             let min_version_f32 = str::parse::<f32>(min_version);
@@ -79,10 +74,7 @@ impl Gltf<'_> {
                 return Err(Error::UnsupportedGltfVersion(gltf.asset.version));
             }
         } else {
-            log::warn!(
-                "Could not parse glTF version {}, assuming 2.0.",
-                gltf.asset.version
-            );
+            log::warn!("Could not parse glTF version {}, assuming 2.0.", gltf.asset.version);
         }
 
         if gltf.buffers.len() != 1 || gltf.buffers[0].uri.is_some() {
@@ -100,16 +92,15 @@ impl Gltf<'_> {
                     .iter()
                     .enumerate()
                     .map(move |(j, primitive)| (i, j, primitive))
-                    .filter_map(|(i, j, primitive)| {
-                        match create_mesh_from_primitive(gpu, frame_index, &gltf, buffer, primitive)
-                        {
+                    .filter_map(
+                        |(i, j, primitive)| match create_mesh_from_primitive(gpu, frame_index, &gltf, buffer, primitive) {
                             Ok(mesh) => Some(mesh),
                             Err(err) => {
                                 log::debug!("skipping mesh #{}, primitive #{}: {}", i, j, err);
                                 None
                             }
-                        }
-                    })
+                        },
+                    )
             })
             .collect::<Vec<Mesh<'_>>>();
 
@@ -124,11 +115,8 @@ fn create_mesh_from_primitive<'gpu>(
     buffer: &[u8],
     primitive: &gltf_json::Primitive,
 ) -> Result<Mesh<'gpu>, Error> {
-    let index_accessor = primitive
-        .indices
-        .ok_or(Error::GltfMisc("missing indices"))?;
-    let index_buffer =
-        get_slice_from_accessor(gltf, buffer, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
+    let index_accessor = primitive.indices.ok_or(Error::GltfMisc("missing indices"))?;
+    let index_buffer = get_slice_from_accessor(gltf, buffer, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
 
     let pos_accessor = *primitive
         .attributes
@@ -142,13 +130,7 @@ fn create_mesh_from_primitive<'gpu>(
         .ok_or(Error::GltfMisc("missing TEXCOORD_0 attribute"))?;
     let tex_buffer = get_slice_from_accessor(gltf, buffer, tex_accessor, GLTF_FLOAT, "VEC2")?;
 
-    let mesh = Mesh::new::<u16>(
-        gpu,
-        frame_index,
-        &[pos_buffer, tex_buffer],
-        index_buffer,
-        Pipeline::Default,
-    )?;
+    let mesh = Mesh::new::<u16>(gpu, frame_index, &[pos_buffer, tex_buffer], index_buffer, Pipeline::Default)?;
 
     Ok(mesh)
 }
@@ -160,10 +142,7 @@ fn get_slice_from_accessor<'buffer>(
     ctype: i32,
     atype: &str,
 ) -> Result<&'buffer [u8], Error> {
-    let accessor = gltf
-        .accessors
-        .get(accessor)
-        .ok_or(Error::GltfOob("accessor"))?;
+    let accessor = gltf.accessors.get(accessor).ok_or(Error::GltfOob("accessor"))?;
     if accessor.component_type != ctype {
         return Err(Error::GltfMisc("unexpected component type"));
     }
@@ -174,16 +153,11 @@ fn get_slice_from_accessor<'buffer>(
         Some(view) => view,
         None => return Err(Error::GltfMisc("no buffer view")),
     };
-    let view = gltf
-        .buffer_views
-        .get(view)
-        .ok_or(Error::GltfOob("buffer view"))?;
+    let view = gltf.buffer_views.get(view).ok_or(Error::GltfOob("buffer view"))?;
     let offset = view.byte_offset.unwrap_or(0) + accessor.byte_offset.unwrap_or(0);
     let length = view.byte_length;
     match view.byte_stride {
-        Some(x) if x != stride_for(ctype, atype) => {
-            return Err(Error::GltfMisc("gltf index stride != 2"))
-        }
+        Some(x) if x != stride_for(ctype, atype) => return Err(Error::GltfMisc("gltf index stride != 2")),
         _ => {}
     }
     if view.buffer != 0 {

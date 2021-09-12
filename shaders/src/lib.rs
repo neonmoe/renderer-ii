@@ -1,8 +1,8 @@
 use proc_macro2::{Delimiter, Group, Literal, Punct, Spacing};
 use quote::{ToTokens, TokenStreamExt};
 use shaderc::{
-    CompileOptions, Compiler, EnvVersion, IncludeType, OptimizationLevel, ResolvedInclude,
-    ShaderKind, SourceLanguage, SpirvVersion, TargetEnv,
+    CompileOptions, Compiler, EnvVersion, IncludeType, OptimizationLevel, ResolvedInclude, ShaderKind, SourceLanguage, SpirvVersion,
+    TargetEnv,
 };
 use std::ffi::OsStr;
 use std::fs;
@@ -47,14 +47,9 @@ fn compile_shader(shader_path: &str) -> Shader {
     options.set_target_spirv(SpirvVersion::V1_0);
     options.set_source_language(SourceLanguage::GLSL);
     options.set_include_callback(
-        |requested_name: &str,
-         include_type: IncludeType,
-         requesting_name: &str,
-         include_depth: usize| {
+        |requested_name: &str, include_type: IncludeType, requesting_name: &str, include_depth: usize| {
             if include_depth > 100 {
-                return Err(String::from(
-                    "include depth is over 100, there's probably an include loop",
-                ));
+                return Err(String::from("include depth is over 100, there's probably an include loop"));
             }
             match include_type {
                 IncludeType::Relative => {
@@ -65,10 +60,7 @@ fn compile_shader(shader_path: &str) -> Shader {
                     let relative_path = path.strip_prefix(&shader_dir).unwrap();
                     let resolved_name = relative_path.to_string_lossy().to_string();
                     let content = fs::read_to_string(path).map_err(|err| format!("{}", err))?;
-                    Ok(ResolvedInclude {
-                        resolved_name,
-                        content,
-                    })
+                    Ok(ResolvedInclude { resolved_name, content })
                 }
                 IncludeType::Standard => Err(String::from("<>-style includes are not implemented")),
             }
