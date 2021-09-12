@@ -1,6 +1,6 @@
 use ash::vk;
 use std::mem;
-use ultraviolet::{Mat4, Vec3, Vec4};
+use ultraviolet::{Mat4, Vec2, Vec3, Vec4};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pipeline {
@@ -84,7 +84,7 @@ pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as u
             },
             vk::VertexInputBindingDescription {
                 binding: 2,
-                stride: mem::size_of::<Vec3>() as u32,
+                stride: mem::size_of::<Vec2>() as u32,
                 input_rate: vk::VertexInputRate::VERTEX,
             },
         ],

@@ -3,7 +3,7 @@ use neonvk::vk;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use std::time::{Duration, Instant};
-use ultraviolet::{Mat4, Vec3};
+use ultraviolet::Mat4;
 
 use logger::Logger;
 static LOGGER: Logger = Logger;
@@ -52,37 +52,38 @@ fn main() -> anyhow::Result<()> {
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::new();
 
-    let _cube_model = neonvk::Gltf::from_glb(&gpu, include_bytes!("testbox/testbox.glb"))?;
+    let cube_model = neonvk::Gltf::from_glb(
+        &gpu,
+        loading_frame_index,
+        include_bytes!("testbox/testbox.glb"),
+    )?;
 
-    let (tree_w, tree_h, tree_bytes, tree_format) = load_png(include_bytes!("tree.png"));
+    let (tex_w, tex_h, tex_bytes, tex_format) =
+        load_png(include_bytes!("testbox/testbox_albedo_texture.png"));
     let tree_texture = neonvk::Texture::new(
         &gpu,
         loading_frame_index,
-        &tree_bytes,
-        tree_w,
-        tree_h,
-        tree_format,
+        &tex_bytes,
+        tex_w,
+        tex_h,
+        tex_format,
     )?;
 
-    let quad_vertices: &[&[Vec3]] = &[
-        &[
-            Vec3::new(-0.5, 0.5, 0.0),
-            Vec3::new(-0.5, -0.5, 0.0),
-            Vec3::new(0.5, 0.5, 0.0),
-            Vec3::new(0.5, -0.5, 0.0),
-        ],
-        &[
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(0.0, 1.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(1.0, 1.0, 0.0),
-        ],
+    let quad_vertices: &[&[u8]] = &[
+        bytemuck::bytes_of(&[
+            [-0.5f32, 0.5, 0.0],
+            [-0.5, -0.5, 0.0],
+            [0.5, 0.5, 0.0],
+            [0.5, -0.5, 0.0],
+        ]),
+        bytemuck::bytes_of(&[[0.0f32, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]),
     ];
-    let quad = neonvk::Mesh::new(
+    let quad_indices: &[u8] = bytemuck::bytes_of(&[0u16, 1, 2, 3, 2, 1]);
+    let quad = neonvk::Mesh::new::<u16>(
         &gpu,
         loading_frame_index,
         quad_vertices,
-        &[0u16, 1, 2, 3, 2, 1],
+        quad_indices,
         neonvk::Pipeline::Default,
     )?;
     // Get the first frame out of the way, to upload the meshes.
@@ -139,16 +140,21 @@ fn main() -> anyhow::Result<()> {
         }
 
         let mut scene = neonvk::Scene::new();
-        let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1);
-        scene.queue(&quad, rotation);
+        let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1)
+            * Mat4::from_rotation_x(frame_start_seconds * 0.1)
+            * Mat4::from_rotation_y(frame_start_seconds * 0.1);
         scene.queue(
             &quad,
-            Mat4::from_translation(Vec3::new(0.5, 0.0, 0.5)) * rotation,
+            Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 0.0, 0.0)) * rotation,
         );
-        scene.queue(
-            &quad,
-            Mat4::from_translation(Vec3::new(-0.5, 0.0, -0.5)) * rotation,
-        );
+        for mesh in &cube_model.meshes {
+            scene.queue(
+                mesh,
+                Mat4::from_translation(ultraviolet::Vec3::new(0.5, 0.0, 0.0))
+                    * Mat4::from_scale(0.5)
+                    * rotation,
+            );
+        }
 
         let frame_index = gpu.wait_frame(&canvas)?;
         gpu.set_pipeline_textures(frame_index, neonvk::Pipeline::Default, &[&tree_texture]);

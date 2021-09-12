@@ -1,7 +1,7 @@
 use crate::buffer::Buffer;
 use crate::{Error, FrameIndex, Gpu, Pipeline};
 use ash::vk;
-use std::{mem, ptr};
+use std::ptr;
 
 #[derive(PartialEq, Eq, Hash)]
 pub struct Mesh<'a> {
@@ -24,21 +24,21 @@ impl Mesh<'_> {
     /// attribute, containing the values for that attribute tightly
     /// packed.
     #[profiling::function]
-    pub fn new<'a, V, I: IndexType>(
+    pub fn new<'a, I: IndexType>(
         gpu: &'a Gpu<'_>,
         frame_index: FrameIndex,
-        vertices: &[&[V]],
-        indices: &[I],
+        vertices: &[&[u8]],
+        indices: &[u8],
         pipeline: Pipeline,
     ) -> Result<Mesh<'a>, Error> {
-        let indices_size = indices.len() * mem::size_of::<I>();
+        let indices_size = indices.len();
         let total_vertices_size = vertices
             .iter()
-            .map(|vertices| vertices.len() * mem::size_of::<V>())
+            .map(|vertices| vertices.len())
             .sum::<usize>();
         let mut data: Vec<u8> = vec![0; total_vertices_size + indices_size];
         let mut buffer_dst_ptr = data.as_mut_ptr();
-        let indices_src_ptr = indices.as_ptr() as *const u8;
+        let indices_src_ptr = indices.as_ptr();
         unsafe {
             ptr::copy_nonoverlapping(indices_src_ptr, buffer_dst_ptr, indices_size);
         }
@@ -47,8 +47,8 @@ impl Mesh<'_> {
         let mut vertices_offsets = Vec::with_capacity(vertices.len());
         let mut vertices_offset = indices_size as vk::DeviceSize;
         for vertices in vertices {
-            let vertices_size = vertices.len() * mem::size_of::<V>();
-            let vertices_src_ptr = vertices.as_ptr() as *const u8;
+            let vertices_size = vertices.len();
+            let vertices_src_ptr = vertices.as_ptr();
             unsafe {
                 ptr::copy_nonoverlapping(vertices_src_ptr, buffer_dst_ptr, vertices_size);
             }

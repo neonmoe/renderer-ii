@@ -34,7 +34,7 @@ mod gpu;
 pub use gpu::{FrameIndex, Gpu, GpuId, GpuInfo};
 
 mod mesh;
-pub use mesh::Mesh;
+pub use mesh::{IndexType, Mesh};
 
 mod pipeline;
 pub use pipeline::Pipeline;

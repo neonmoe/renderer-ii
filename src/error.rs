@@ -115,8 +115,8 @@ pub enum Error {
     GltfJsonDeserialization(#[source] miniserde::Error),
     #[error("unsupported gltf minimum version ({0}), 2.0 is supported")]
     UnsupportedGltfVersion(String),
-    #[error("gltf has more than 1 buffer, external data is not supported")]
-    GltfTooManyBuffers,
-    #[error("gltf buffer as an external uri, which is not supported")]
-    GltfBufferHasUri,
+    #[error("gltf has an out-of-bounds index ({0})")]
+    GltfOob(&'static str),
+    #[error("unimplemented gltf feature: {0}")]
+    GltfMisc(&'static str),
 }

@@ -15,8 +15,9 @@ vk-mem = { version = "^0.2.0" }
 ultraviolet = { version = "^0.8.0" }
 miniserde = { version = "^0.1.0" }
 
-# TODO: Move anyhow, sdl2, profiling/profile-with-tracy, png to dev deps
+# TODO: Move anyhow, sdl2, profiling/profile-with-tracy, png, bytemuck to dev deps
 # Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.
 sdl2 = { version = "^0.34.0", features = ["raw-window-handle"] }
 anyhow = { version = "^1.0.0" }
 png = { version = "^0.16.0" }
+bytemuck = { version = "^1.7.0" }

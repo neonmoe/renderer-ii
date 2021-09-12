@@ -1,13 +1,16 @@
-use crate::buffer::Buffer;
-use crate::{Error, Gpu};
+use crate::{Error, FrameIndex, Gpu, Mesh, Pipeline};
 
 pub struct Gltf<'a> {
-    buffers: Vec<Buffer<'a>>,
+    pub meshes: Vec<Mesh<'a>>,
 }
 
 impl Gltf<'_> {
     /// Loads the glTF scene from the contents of a .glb file.
-    pub fn from_glb<'gpu>(gpu: &'gpu Gpu, glb: &[u8]) -> Result<Gltf<'gpu>, Error> {
+    pub fn from_glb<'gpu>(
+        gpu: &'gpu Gpu,
+        frame_index: FrameIndex,
+        glb: &[u8],
+    ) -> Result<Gltf<'gpu>, Error> {
         fn read_u32(bytes: &[u8]) -> u32 {
             debug_assert!(bytes.len() == 4);
             if let [a, b, c, d] = *bytes {
@@ -17,7 +20,8 @@ impl Gltf<'_> {
             }
         }
 
-        if glb.len() < 12 || read_u32(&glb[0..4]) != 0x46546C67 {
+        const MAGIC_GLTF: u32 = 0x46546C67;
+        if glb.len() < 12 || read_u32(&glb[0..4]) != MAGIC_GLTF {
             return Err(Error::InvalidGlbHeader);
         }
         let version = read_u32(&glb[4..8]);
@@ -39,15 +43,17 @@ impl Gltf<'_> {
             }
             let chunk_bytes = &next_chunk[8..chunk_length + 8];
 
+            const MAGIC_JSON: u32 = 0x4E4F534A;
+            const MAGIC_BIN: u32 = 0x004E4942;
             let chunk_type = read_u32(&next_chunk[4..8]);
             match chunk_type {
-                0x4E4F534A => {
+                MAGIC_JSON => {
                     if json.is_some() {
                         return Err(Error::TooManyGlbJsonChunks);
                     }
                     json = Some(std::str::from_utf8(chunk_bytes).map_err(Error::InvalidGlbJson)?);
                 }
-                0x004E4942 => {
+                MAGIC_BIN => {
                     if buffer.is_some() {
                         return Err(Error::TooManyGlbBinaryChunks);
                     }
@@ -60,35 +66,133 @@ impl Gltf<'_> {
         }
 
         let json = json.ok_or(Error::MissingGlbJson)?;
-        let loaded: gltf_json::LoadedJson =
+        let gltf: gltf_json::GltfJson =
             miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
-        if let Some(min_version) = loaded.asset.min_version {
-            let min_version_f32 = str::parse::<f32>(&min_version);
+
+        if let Some(min_version) = &gltf.asset.min_version {
+            let min_version_f32 = str::parse::<f32>(min_version);
             if min_version_f32 != Ok(2.0) {
-                return Err(Error::UnsupportedGltfVersion(min_version));
+                return Err(Error::UnsupportedGltfVersion(min_version.clone()));
             }
-        } else if let Ok(version) = str::parse::<f32>(&loaded.asset.version) {
+        } else if let Ok(version) = str::parse::<f32>(&gltf.asset.version) {
             if !(2.0..3.0).contains(&version) {
-                return Err(Error::UnsupportedGltfVersion(loaded.asset.version));
+                return Err(Error::UnsupportedGltfVersion(gltf.asset.version));
             }
         } else {
             log::warn!(
                 "Could not parse glTF version {}, assuming 2.0.",
-                loaded.asset.version
+                gltf.asset.version
             );
         }
 
-        if loaded.buffers.len() > 1 {
-            return Err(Error::GltfTooManyBuffers);
-        }
-        if !loaded.buffers.is_empty() && loaded.buffers[0].uri.is_some() {
-            return Err(Error::GltfBufferHasUri);
+        if gltf.buffers.len() != 1 || gltf.buffers[0].uri.is_some() {
+            return Err(Error::GltfMisc("gltf must have exactly one buffer (BIN)"));
         }
 
-        Ok(Gltf {
-            buffers: Vec::new(),
-        })
+        let buffer = buffer.ok_or(Error::GltfMisc("glb buffer is required"))?;
+
+        let meshes = gltf
+            .meshes
+            .iter()
+            .enumerate()
+            .flat_map(|(i, mesh)| {
+                mesh.primitives
+                    .iter()
+                    .enumerate()
+                    .map(move |(j, primitive)| (i, j, primitive))
+                    .filter_map(|(i, j, primitive)| {
+                        match create_mesh_from_primitive(gpu, frame_index, &gltf, buffer, primitive)
+                        {
+                            Ok(mesh) => Some(mesh),
+                            Err(err) => {
+                                log::debug!("skipping mesh #{}, primitive #{}: {}", i, j, err);
+                                None
+                            }
+                        }
+                    })
+            })
+            .collect::<Vec<Mesh<'_>>>();
+
+        Ok(Gltf { meshes })
     }
+}
+
+fn create_mesh_from_primitive<'gpu>(
+    gpu: &'gpu Gpu,
+    frame_index: FrameIndex,
+    gltf: &gltf_json::GltfJson,
+    buffer: &[u8],
+    primitive: &gltf_json::Primitive,
+) -> Result<Mesh<'gpu>, Error> {
+    let index_accessor = primitive
+        .indices
+        .ok_or(Error::GltfMisc("missing indices"))?;
+    let index_buffer =
+        get_slice_from_accessor(gltf, buffer, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
+
+    let pos_accessor = *primitive
+        .attributes
+        .get("POSITION")
+        .ok_or(Error::GltfMisc("missing POSITION attribute"))?;
+    let pos_buffer = get_slice_from_accessor(gltf, buffer, pos_accessor, GLTF_FLOAT, "VEC3")?;
+
+    let tex_accessor = *primitive
+        .attributes
+        .get("TEXCOORD_0")
+        .ok_or(Error::GltfMisc("missing TEXCOORD_0 attribute"))?;
+    let tex_buffer = get_slice_from_accessor(gltf, buffer, tex_accessor, GLTF_FLOAT, "VEC2")?;
+
+    let mesh = Mesh::new::<u16>(
+        gpu,
+        frame_index,
+        &[pos_buffer, tex_buffer],
+        index_buffer,
+        Pipeline::Default,
+    )?;
+
+    Ok(mesh)
+}
+
+fn get_slice_from_accessor<'buffer>(
+    gltf: &gltf_json::GltfJson,
+    buffer: &'buffer [u8],
+    accessor: usize,
+    ctype: i32,
+    atype: &str,
+) -> Result<&'buffer [u8], Error> {
+    let accessor = gltf
+        .accessors
+        .get(accessor)
+        .ok_or(Error::GltfOob("accessor"))?;
+    if accessor.component_type != ctype {
+        return Err(Error::GltfMisc("unexpected component type"));
+    }
+    if accessor.attribute_type != atype {
+        return Err(Error::GltfMisc("unexpected attribute type"));
+    }
+    let view = match accessor.buffer_view {
+        Some(view) => view,
+        None => return Err(Error::GltfMisc("no buffer view")),
+    };
+    let view = gltf
+        .buffer_views
+        .get(view)
+        .ok_or(Error::GltfOob("buffer view"))?;
+    let offset = view.byte_offset.unwrap_or(0) + accessor.byte_offset.unwrap_or(0);
+    let length = view.byte_length;
+    match view.byte_stride {
+        Some(x) if x != stride_for(ctype, atype) => {
+            return Err(Error::GltfMisc("gltf index stride != 2"))
+        }
+        _ => {}
+    }
+    if view.buffer != 0 {
+        return Err(Error::GltfMisc("gltf external buffers not supported"));
+    }
+    if offset + length > buffer.len() {
+        return Err(Error::GltfOob("index buffer offset + length"));
+    }
+    Ok(&buffer[offset..offset + length])
 }
 
 #[allow(dead_code)]
@@ -97,7 +201,7 @@ mod gltf_json {
     use std::collections::HashMap;
 
     #[derive(Deserialize)]
-    pub struct LoadedJson {
+    pub struct GltfJson {
         pub asset: Asset,
         pub nodes: Vec<Node>,
         pub meshes: Vec<Mesh>,
@@ -176,4 +280,31 @@ mod gltf_json {
         pub min: Option<Vec<f32>>,
         pub max: Option<Vec<f32>>,
     }
+}
+
+const GLTF_BYTE: i32 = 5120;
+const GLTF_UNSIGNED_BYTE: i32 = 5121;
+const GLTF_SHORT: i32 = 5122;
+const GLTF_UNSIGNED_SHORT: i32 = 5123;
+const GLTF_UNSIGNED_INT: i32 = 5125;
+const GLTF_FLOAT: i32 = 5126;
+
+fn stride_for(component_type: i32, attribute_type: &str) -> usize {
+    let bytes_per_component = match component_type {
+        GLTF_UNSIGNED_INT | GLTF_FLOAT => 4,
+        GLTF_SHORT | GLTF_UNSIGNED_SHORT => 2,
+        GLTF_BYTE | GLTF_UNSIGNED_BYTE => 1,
+        _ => unreachable!(),
+    };
+    let components = match attribute_type {
+        "MAT4" => 16,
+        "MAT3" => 9,
+        "MAT2" => 4,
+        "VEC4" => 4,
+        "VEC3" => 3,
+        "VEC2" => 2,
+        "SCALAR" => 1,
+        _ => unreachable!(),
+    };
+    bytes_per_component * components
 }
