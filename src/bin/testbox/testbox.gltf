@@ -64,58 +64,58 @@
         {
             "bufferView" : 0,
             "componentType" : 5126,
-            "count" : 14,
+            "count" : 1659,
             "max" : [
-                1.0000001192092896,
-                1.0000001192092896,
-                1.000000238418579
+                0.839506208896637,
+                0.839506208896637,
+                0.839506208896637
             ],
             "min" : [
-                -1.0000001192092896,
-                -1.0000001192092896,
-                -1.000000238418579
+                -0.8395061492919922,
+                -0.839506208896637,
+                -0.839506208896637
             ],
             "type" : "VEC3"
         },
         {
             "bufferView" : 1,
             "componentType" : 5126,
-            "count" : 14,
+            "count" : 1659,
             "type" : "VEC3"
         },
         {
             "bufferView" : 2,
             "componentType" : 5126,
-            "count" : 14,
+            "count" : 1659,
             "type" : "VEC2"
         },
         {
             "bufferView" : 3,
             "componentType" : 5123,
-            "count" : 36,
+            "count" : 9216,
             "type" : "SCALAR"
         }
     ],
     "bufferViews" : [
         {
             "buffer" : 0,
-            "byteLength" : 168,
+            "byteLength" : 19908,
             "byteOffset" : 0
         },
         {
             "buffer" : 0,
-            "byteLength" : 168,
-            "byteOffset" : 168
+            "byteLength" : 19908,
+            "byteOffset" : 19908
         },
         {
             "buffer" : 0,
-            "byteLength" : 112,
-            "byteOffset" : 336
+            "byteLength" : 13272,
+            "byteOffset" : 39816
         },
         {
             "buffer" : 0,
-            "byteLength" : 72,
-            "byteOffset" : 448
+            "byteLength" : 18432,
+            "byteOffset" : 53088
         }
     ],
     "samplers" : [
@@ -126,7 +126,7 @@
     ],
     "buffers" : [
         {
-            "byteLength" : 520,
+            "byteLength" : 71520,
             "uri" : "testbox.bin"
         }
     ]

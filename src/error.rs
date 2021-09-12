@@ -115,6 +115,12 @@ pub enum Error {
     GltfJsonDeserialization(#[source] miniserde::Error),
     #[error("unsupported gltf minimum version ({0}), 2.0 is supported")]
     UnsupportedGltfVersion(String),
+    #[error("gltf has buffer without an uri but no glb BIN buffer")]
+    GlbBinMissing,
+    #[error("gltf refers to external data ({0}) but no directory was given in from_gltf/from_glb")]
+    GltfMissingDirectory(String),
+    #[error("could not load gltf buffer from {0}")]
+    GltfBufferLoading(String, #[source] std::io::Error),
     #[error("gltf has an out-of-bounds index ({0})")]
     GltfOob(&'static str),
     #[error("unimplemented gltf feature: {0}")]

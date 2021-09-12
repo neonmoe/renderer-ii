@@ -17,8 +17,7 @@ pub struct Mesh<'a> {
 
 impl Mesh<'_> {
     /// Creates a new mesh. Ensure that the vertices match the
-    /// pipeline. If not `editable`, call [Gpu::wait_mesh_uploads]
-    /// after your mesh creation code, before they're rendered.
+    /// pipeline.
     ///
     /// The `vertices` slice should contain a slice for each
     /// attribute, containing the values for that attribute tightly

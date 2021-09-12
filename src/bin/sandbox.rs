@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::new();
 
-    let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"))?;
+    let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), None)?;
 
     let (tex_w, tex_h, tex_bytes, tex_format) = load_png(include_bytes!("testbox/testbox_albedo_texture.png"));
     let tree_texture = neonvk::Texture::new(&gpu, loading_frame_index, &tex_bytes, tex_w, tex_h, tex_format)?;
@@ -142,7 +142,10 @@ fn main() -> anyhow::Result<()> {
                 }
             })
             .sum();
-        if let (Some(avg_interval), Ok((used, alloced))) = (interval_sum.checked_div(interval_count as u32), gpu.vram_usage()) {
+        let vram_usage = gpu
+            .calculate_vram_stats()
+            .map(|stats| (stats.total.usedBytes, stats.total.usedBytes + stats.total.unusedBytes));
+        if let (Some(avg_interval), Ok((used, alloced))) = (interval_sum.checked_div(interval_count as u32), vram_usage) {
             let _ = window.set_title(&format!(
                 "{} ({:.2} ms frame interval, {} of VRAM in use, {} allocated)",
                 env!("CARGO_PKG_NAME"),

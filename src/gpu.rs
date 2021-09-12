@@ -600,12 +600,10 @@ impl Gpu<'_> {
         Ok(())
     }
 
-    /// Returns the total bytes used by resources, and the total
-    /// allocated bytes.
+    /// See [vk_mem::Allocator::calculate_stats].
     #[profiling::function]
-    pub fn vram_usage(&self) -> Result<(vk::DeviceSize, vk::DeviceSize), Error> {
-        let stats = self.allocator.calculate_stats().map_err(Error::VmaCalculateStats)?;
-        Ok((stats.total.usedBytes, stats.total.usedBytes + stats.total.unusedBytes))
+    pub fn calculate_vram_stats(&self) -> Result<vk_mem::ffi::VmaStats, Error> {
+        self.allocator.calculate_stats().map_err(Error::VmaCalculateStats)
     }
 
     /// Wait until the device is idle. Should be called before

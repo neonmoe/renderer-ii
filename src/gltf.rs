@@ -1,4 +1,7 @@
 use crate::{Error, FrameIndex, Gpu, Mesh, Pipeline};
+use std::borrow::Cow;
+use std::fs;
+use std::path::Path;
 
 pub struct Gltf<'a> {
     pub meshes: Vec<Mesh<'a>>,
@@ -6,7 +9,10 @@ pub struct Gltf<'a> {
 
 impl Gltf<'_> {
     /// Loads the glTF scene from the contents of a .glb file.
-    pub fn from_glb<'gpu>(gpu: &'gpu Gpu, frame_index: FrameIndex, glb: &[u8]) -> Result<Gltf<'gpu>, Error> {
+    ///
+    /// Any external files referenced in the glTF are searched
+    /// relative to `directory`.
+    pub fn from_glb<'gpu>(gpu: &'gpu Gpu, frame_index: FrameIndex, glb: &[u8], directory: Option<&Path>) -> Result<Gltf<'gpu>, Error> {
         fn read_u32(bytes: &[u8]) -> u32 {
             debug_assert!(bytes.len() == 4);
             if let [a, b, c, d] = *bytes {
@@ -61,74 +67,107 @@ impl Gltf<'_> {
             next_chunk = &next_chunk[chunk_length + 8..];
         }
 
-        let json = json.ok_or(Error::MissingGlbJson)?;
-        let gltf: gltf_json::GltfJson = miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
-
-        if let Some(min_version) = &gltf.asset.min_version {
-            let min_version_f32 = str::parse::<f32>(min_version);
-            if min_version_f32 != Ok(2.0) {
-                return Err(Error::UnsupportedGltfVersion(min_version.clone()));
-            }
-        } else if let Ok(version) = str::parse::<f32>(&gltf.asset.version) {
-            if !(2.0..3.0).contains(&version) {
-                return Err(Error::UnsupportedGltfVersion(gltf.asset.version));
-            }
-        } else {
-            log::warn!("Could not parse glTF version {}, assuming 2.0.", gltf.asset.version);
-        }
-
-        if gltf.buffers.len() != 1 || gltf.buffers[0].uri.is_some() {
-            return Err(Error::GltfMisc("gltf must have exactly one buffer (BIN)"));
-        }
-
         let buffer = buffer.ok_or(Error::GltfMisc("glb buffer is required"))?;
 
-        let meshes = gltf
-            .meshes
-            .iter()
-            .enumerate()
-            .flat_map(|(i, mesh)| {
-                mesh.primitives
-                    .iter()
-                    .enumerate()
-                    .map(move |(j, primitive)| (i, j, primitive))
-                    .filter_map(
-                        |(i, j, primitive)| match create_mesh_from_primitive(gpu, frame_index, &gltf, buffer, primitive) {
-                            Ok(mesh) => Some(mesh),
-                            Err(err) => {
-                                log::debug!("skipping mesh #{}, primitive #{}: {}", i, j, err);
-                                None
-                            }
-                        },
-                    )
-            })
-            .collect::<Vec<Mesh<'_>>>();
-
-        Ok(Gltf { meshes })
+        let json = json.ok_or(Error::MissingGlbJson)?;
+        let gltf: gltf_json::GltfJson = miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
+        create_gltf(gpu, frame_index, gltf, directory, Some(buffer))
     }
+
+    /// Loads the glTF scene from the contents of a .gltf file.
+    ///
+    /// Any external files referenced in the glTF are searched
+    /// relative to `directory`.
+    pub fn from_gltf<'gpu>(gpu: &'gpu Gpu, frame_index: FrameIndex, gltf: &str, directory: Option<&Path>) -> Result<Gltf<'gpu>, Error> {
+        let gltf: gltf_json::GltfJson = miniserde::json::from_str(gltf).map_err(Error::GltfJsonDeserialization)?;
+        create_gltf(gpu, frame_index, gltf, directory, None)
+    }
+}
+
+fn create_gltf<'gpu>(
+    gpu: &'gpu Gpu,
+    frame_index: FrameIndex,
+    gltf: gltf_json::GltfJson,
+    directory: Option<&Path>,
+    bin_buffer: Option<&[u8]>,
+) -> Result<Gltf<'gpu>, Error> {
+    if let Some(min_version) = &gltf.asset.min_version {
+        let min_version_f32 = str::parse::<f32>(min_version);
+        if min_version_f32 != Ok(2.0) {
+            return Err(Error::UnsupportedGltfVersion(min_version.clone()));
+        }
+    } else if let Ok(version) = str::parse::<f32>(&gltf.asset.version) {
+        if !(2.0..3.0).contains(&version) {
+            return Err(Error::UnsupportedGltfVersion(gltf.asset.version));
+        }
+    } else {
+        log::warn!("Could not parse glTF version {}, assuming 2.0.", gltf.asset.version);
+    }
+
+    let buffers = gltf
+        .buffers
+        .iter()
+        .map(|buffer| match &buffer.uri {
+            Some(uri) => match directory {
+                Some(base_path) => {
+                    let path = base_path.join(&uri);
+                    let buffer = fs::read(path).map_err(|err| Error::GltfBufferLoading(uri.clone(), err))?;
+                    Ok(Cow::Owned(buffer))
+                }
+                None => Err(Error::GltfMissingDirectory(uri.clone())),
+            },
+            None => match bin_buffer {
+                Some(buffer) => Ok(Cow::Borrowed(buffer)),
+                None => Err(Error::GlbBinMissing),
+            },
+        })
+        .collect::<Result<Vec<Cow<'_, [u8]>>, Error>>()?;
+
+    let meshes = gltf
+        .meshes
+        .iter()
+        .enumerate()
+        .flat_map(|(i, mesh)| {
+            mesh.primitives
+                .iter()
+                .enumerate()
+                .map(move |(j, primitive)| (i, j, primitive))
+                .filter_map(
+                    |(i, j, primitive)| match create_mesh_from_primitive(gpu, frame_index, &gltf, &buffers, primitive) {
+                        Ok(mesh) => Some(mesh),
+                        Err(err) => {
+                            log::debug!("skipping mesh #{}, primitive #{}: {}", i, j, err);
+                            None
+                        }
+                    },
+                )
+        })
+        .collect::<Vec<Mesh<'_>>>();
+
+    Ok(Gltf { meshes })
 }
 
 fn create_mesh_from_primitive<'gpu>(
     gpu: &'gpu Gpu,
     frame_index: FrameIndex,
     gltf: &gltf_json::GltfJson,
-    buffer: &[u8],
+    buffers: &[Cow<'_, [u8]>],
     primitive: &gltf_json::Primitive,
 ) -> Result<Mesh<'gpu>, Error> {
     let index_accessor = primitive.indices.ok_or(Error::GltfMisc("missing indices"))?;
-    let index_buffer = get_slice_from_accessor(gltf, buffer, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
+    let index_buffer = get_slice_from_accessor(gltf, buffers, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
 
     let pos_accessor = *primitive
         .attributes
         .get("POSITION")
         .ok_or(Error::GltfMisc("missing POSITION attribute"))?;
-    let pos_buffer = get_slice_from_accessor(gltf, buffer, pos_accessor, GLTF_FLOAT, "VEC3")?;
+    let pos_buffer = get_slice_from_accessor(gltf, buffers, pos_accessor, GLTF_FLOAT, "VEC3")?;
 
     let tex_accessor = *primitive
         .attributes
         .get("TEXCOORD_0")
         .ok_or(Error::GltfMisc("missing TEXCOORD_0 attribute"))?;
-    let tex_buffer = get_slice_from_accessor(gltf, buffer, tex_accessor, GLTF_FLOAT, "VEC2")?;
+    let tex_buffer = get_slice_from_accessor(gltf, buffers, tex_accessor, GLTF_FLOAT, "VEC2")?;
 
     let mesh = Mesh::new::<u16>(gpu, frame_index, &[pos_buffer, tex_buffer], index_buffer, Pipeline::Default)?;
 
@@ -137,7 +176,7 @@ fn create_mesh_from_primitive<'gpu>(
 
 fn get_slice_from_accessor<'buffer>(
     gltf: &gltf_json::GltfJson,
-    buffer: &'buffer [u8],
+    buffers: &'buffer [Cow<'_, [u8]>],
     accessor: usize,
     ctype: i32,
     atype: &str,
@@ -154,6 +193,7 @@ fn get_slice_from_accessor<'buffer>(
         None => return Err(Error::GltfMisc("no buffer view")),
     };
     let view = gltf.buffer_views.get(view).ok_or(Error::GltfOob("buffer view"))?;
+    let buffer = buffers.get(view.buffer).ok_or(Error::GltfOob("buffer"))?;
     let offset = view.byte_offset.unwrap_or(0) + accessor.byte_offset.unwrap_or(0);
     let length = view.byte_length;
     match view.byte_stride {
