@@ -136,7 +136,7 @@ fn create_gltf<'gpu>(
                     |(i, j, primitive)| match create_mesh_from_primitive(gpu, frame_index, &gltf, &buffers, primitive) {
                         Ok(mesh) => Some(mesh),
                         Err(err) => {
-                            log::debug!("skipping mesh #{}, primitive #{}: {}", i, j, err);
+                            log::warn!("skipping mesh #{}, primitive #{}: {}", i, j, err);
                             None
                         }
                     },
@@ -154,6 +154,10 @@ fn create_mesh_from_primitive<'gpu>(
     buffers: &[Cow<'_, [u8]>],
     primitive: &gltf_json::Primitive,
 ) -> Result<Mesh<'gpu>, Error> {
+    if primitive.mode.is_some() && primitive.mode != Some(4) {
+        return Err(Error::GltfMisc("primitive mode is not triangles"));
+    }
+
     let index_accessor = primitive.indices.ok_or(Error::GltfMisc("missing indices"))?;
     let index_buffer = get_slice_from_accessor(gltf, buffers, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
 
@@ -196,15 +200,16 @@ fn get_slice_from_accessor<'buffer>(
     let buffer = buffers.get(view.buffer).ok_or(Error::GltfOob("buffer"))?;
     let offset = view.byte_offset.unwrap_or(0) + accessor.byte_offset.unwrap_or(0);
     let length = view.byte_length;
+    let stride = stride_for(ctype, atype);
     match view.byte_stride {
-        Some(x) if x != stride_for(ctype, atype) => return Err(Error::GltfMisc("gltf index stride != 2")),
+        Some(x) if x != stride => return Err(Error::GltfMisc("wrong stride")),
         _ => {}
     }
-    if view.buffer != 0 {
-        return Err(Error::GltfMisc("gltf external buffers not supported"));
-    }
     if offset + length > buffer.len() {
-        return Err(Error::GltfOob("index buffer offset + length"));
+        return Err(Error::GltfOob("buffer offset + length"));
+    }
+    if accessor.count != length / stride {
+        return Err(Error::GltfOob("count != byte length / stride"));
     }
     Ok(&buffer[offset..offset + length])
 }

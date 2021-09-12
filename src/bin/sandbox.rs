@@ -2,6 +2,7 @@ use log::LevelFilter;
 use neonvk::vk;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
+use std::path::Path;
 use std::time::{Duration, Instant};
 use ultraviolet::Mat4;
 
@@ -50,6 +51,12 @@ fn main() -> anyhow::Result<()> {
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::new();
 
+    let sponza_model = neonvk::Gltf::from_gltf(
+        &gpu,
+        loading_frame_index,
+        include_str!("sponza/glTF/Sponza.gltf"),
+        Some(Path::new("src/bin/sponza/glTF")),
+    )?;
     let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), None)?;
 
     let (tex_w, tex_h, tex_bytes, tex_format) = load_png(include_bytes!("testbox/testbox_albedo_texture.png"));
@@ -113,11 +120,14 @@ fn main() -> anyhow::Result<()> {
         let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1)
             * Mat4::from_rotation_x(frame_start_seconds * 0.1)
             * Mat4::from_rotation_y(frame_start_seconds * 0.1);
-        scene.queue(&quad, Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 0.0, 0.0)) * rotation);
+        scene.queue(&quad, Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 1.5, 0.0)) * rotation);
+        for mesh in &sponza_model.meshes {
+            scene.queue(mesh, Mat4::from_scale(0.01));
+        }
         for mesh in &cube_model.meshes {
             scene.queue(
                 mesh,
-                Mat4::from_translation(ultraviolet::Vec3::new(0.5, 0.0, 0.0)) * Mat4::from_scale(0.5) * rotation,
+                Mat4::from_translation(ultraviolet::Vec3::new(0.5, 1.5, 0.0)) * Mat4::from_scale(0.5) * rotation,
             );
         }
 
@@ -217,6 +227,7 @@ mod logger {
                     } else {
                         let _ = show_simple_message_box(MessageBoxFlag::ERROR, "Error", &message, None);
                     }
+                    std::process::exit(1);
                 }
             }
         }
