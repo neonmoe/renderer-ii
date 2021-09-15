@@ -12,11 +12,10 @@ struct GlobalTransforms {
 impl GlobalTransforms {
     fn new(canvas: &Canvas) -> GlobalTransforms {
         GlobalTransforms {
-            _projection: projection::perspective_vk(
+            _projection: projection::perspective_reversed_infinite_z_vk(
                 74f32.to_radians(),
                 canvas.extent.width as f32 / canvas.extent.height as f32,
                 0.1,
-                100.0,
             ),
             _view: Mat4::look_at(Vec3::new(0.0, 1.6, 1.5), Vec3::new(0.0, 1.6, 0.0), Vec3::new(0.0, 1.0, 0.0)),
         }

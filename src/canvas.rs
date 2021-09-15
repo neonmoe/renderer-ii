@@ -477,7 +477,7 @@ fn create_pipelines(
         let pipeline_depth_stencil_create_info = vk::PipelineDepthStencilStateCreateInfo::builder()
             .depth_test_enable(true)
             .depth_write_enable(true)
-            .depth_compare_op(vk::CompareOp::LESS);
+            .depth_compare_op(vk::CompareOp::GREATER);
 
         let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState::builder()
             .color_write_mask(

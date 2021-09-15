@@ -735,7 +735,7 @@ impl Gpu<'_> {
 
         let render_area = vk::Rect2D::builder().extent(canvas.extent).build();
         let mut depth_clear_value = vk::ClearValue::default();
-        depth_clear_value.depth_stencil.depth = 1.0;
+        depth_clear_value.depth_stencil.depth = 0.0;
         let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
             .render_pass(canvas.final_render_pass)
