@@ -2,9 +2,39 @@ use crate::{Error, FrameIndex, Gpu, Mesh, Pipeline};
 use std::borrow::Cow;
 use std::fs;
 use std::path::Path;
+use ultraviolet::{Isometry3, Mat4, Rotor3, Vec3, Vec4};
+
+struct Node {
+    mesh: Option<usize>,
+    children: Option<Vec<usize>>,
+    transform: Mat4,
+}
 
 pub struct Gltf<'a> {
-    pub meshes: Vec<Mesh<'a>>,
+    nodes: Vec<Node>,
+    meshes: Vec<Vec<Mesh<'a>>>,
+    root_nodes: Vec<usize>,
+}
+
+pub struct MeshIter<'a> {
+    gltf: &'a Gltf<'a>,
+    node_queue: Vec<usize>,
+}
+
+impl<'a> Iterator for MeshIter<'a> {
+    type Item = (&'a [Mesh<'a>], Mat4);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let node_index = self.node_queue.pop()?;
+        let node = self.gltf.nodes.get(node_index)?;
+        if let Some(children) = &node.children {
+            for child in children {
+                self.node_queue.push(*child);
+            }
+        }
+        let mesh = self.gltf.meshes.get(node.mesh?)?;
+        Some((mesh, node.transform))
+    }
 }
 
 impl Gltf<'_> {
@@ -82,6 +112,13 @@ impl Gltf<'_> {
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(gltf).map_err(Error::GltfJsonDeserialization)?;
         create_gltf(gpu, frame_index, gltf, directory, None)
     }
+
+    pub fn mesh_iter(&self) -> MeshIter<'_> {
+        MeshIter {
+            gltf: self,
+            node_queue: self.root_nodes.clone(),
+        }
+    }
 }
 
 fn create_gltf<'gpu>(
@@ -103,6 +140,11 @@ fn create_gltf<'gpu>(
     } else {
         log::warn!("Could not parse glTF version {}, assuming 2.0.", gltf.asset.version);
     }
+
+    let scene_index = gltf.scene.ok_or(Error::GltfMisc("gltf does not have a scene"))?;
+    let scenes = gltf.scenes.as_ref().ok_or(Error::GltfMisc("scenes missing"))?;
+    let scene = scenes.get(scene_index).ok_or(Error::GltfOob("scene"))?;
+    let root_nodes = scene.nodes.clone().ok_or(Error::GltfMisc("no nodes in scene"))?;
 
     let buffers = gltf
         .buffers
@@ -127,7 +169,7 @@ fn create_gltf<'gpu>(
         .meshes
         .iter()
         .enumerate()
-        .flat_map(|(i, mesh)| {
+        .map(|(i, mesh)| {
             mesh.primitives
                 .iter()
                 .enumerate()
@@ -141,10 +183,63 @@ fn create_gltf<'gpu>(
                         }
                     },
                 )
+                .collect::<Vec<Mesh<'_>>>()
         })
-        .collect::<Vec<Mesh<'_>>>();
+        .collect::<Vec<Vec<Mesh<'_>>>>();
 
-    Ok(Gltf { meshes })
+    let nodes = gltf
+        .nodes
+        .iter()
+        .map(|node| {
+            let transform = if let Some(&[x0, y0, z0, w0, x1, y1, z1, w1, x2, y2, z2, w2, x3, y3, z3, w3]) = node.matrix.as_deref() {
+                // Both the source and destination here are
+                // actually column major: each Vec4 is a column.
+                Mat4::new(
+                    Vec4::new(x0, y0, z0, w0),
+                    Vec4::new(x1, y1, z1, w1),
+                    Vec4::new(x2, y2, z2, w2),
+                    Vec4::new(x3, y3, z3, w3),
+                )
+            } else {
+                let translation = match node.translation.as_deref() {
+                    Some(&[x, y, z]) => Vec3::new(x, y, z),
+                    _ => Vec3::zero(),
+                };
+                let rotation = match node.rotation.as_deref() {
+                    Some(&[x, y, z, w]) => Rotor3::from_quaternion_array([x, y, z, w]),
+                    _ => Rotor3::identity(),
+                };
+                let scale = match node.scale.as_deref() {
+                    Some(&[x, y, z]) => Vec3::new(x, y, z),
+                    _ => Vec3::one(),
+                };
+                Isometry3::new(translation, rotation).into_homogeneous_matrix() * Mat4::from_nonuniform_scale(scale)
+            };
+            Node {
+                mesh: node.mesh,
+                children: node.children.clone(),
+                transform,
+            }
+        })
+        .collect::<Vec<Node>>();
+
+    let mut visited_nodes = vec![false; nodes.len()];
+    let mut queue = Vec::with_capacity(nodes.len());
+    queue.extend_from_slice(&root_nodes);
+    while let Some(node) = queue.pop() {
+        if visited_nodes[node] {
+            return Err(Error::GltfInvalidNodeGraph);
+        } else {
+            visited_nodes[node] = true;
+            if let Some(children) = &nodes[node].children {
+                for child in children {
+                    queue.push(*child);
+                }
+            }
+        }
+    }
+
+    Ok(Gltf { meshes, nodes, root_nodes })
 }
 
 fn create_mesh_from_primitive<'gpu>(
@@ -154,10 +249,6 @@ fn create_mesh_from_primitive<'gpu>(
     buffers: &[Cow<'_, [u8]>],
     primitive: &gltf_json::Primitive,
 ) -> Result<Mesh<'gpu>, Error> {
-    if primitive.mode.is_some() && primitive.mode != Some(4) {
-        return Err(Error::GltfMisc("primitive mode is not triangles"));
-    }
-
     let index_accessor = primitive.indices.ok_or(Error::GltfMisc("missing indices"))?;
     let index_buffer = get_slice_from_accessor(gltf, buffers, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
 
@@ -222,6 +313,8 @@ mod gltf_json {
     #[derive(Deserialize)]
     pub struct GltfJson {
         pub asset: Asset,
+        pub scene: Option<usize>,
+        pub scenes: Option<Vec<Scene>>,
         pub nodes: Vec<Node>,
         pub meshes: Vec<Mesh>,
         pub accessors: Vec<Accessor>,
@@ -237,17 +330,19 @@ mod gltf_json {
     }
 
     #[derive(Deserialize)]
-    pub struct Node {
-        pub mesh: Option<usize>,
+    pub struct Scene {
+        pub nodes: Option<Vec<usize>>,
+    }
 
-        // Not in use yet:
+    #[derive(Deserialize)]
+    pub struct Node {
+        pub name: Option<String>,
+        pub mesh: Option<usize>,
         pub children: Option<Vec<usize>>,
         pub matrix: Option<Vec<f32>>,
         pub translation: Option<Vec<f32>>,
         pub rotation: Option<Vec<f32>>,
         pub scale: Option<Vec<f32>>,
-        pub skin: Option<usize>,
-        pub weights: Option<Vec<f32>>,
     }
 
     #[derive(Deserialize)]
@@ -259,11 +354,6 @@ mod gltf_json {
     pub struct Primitive {
         pub attributes: HashMap<String, usize>,
         pub indices: Option<usize>,
-        // Not in use yet:
-        pub mode: Option<i32>,
-        pub material: Option<usize>,
-        pub targets: Option<Vec<HashMap<String, usize>>>,
-        pub weights: Option<Vec<f32>>,
     }
 
     #[derive(Deserialize)]

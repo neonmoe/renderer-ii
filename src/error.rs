@@ -121,6 +121,8 @@ pub enum Error {
     GltfMissingDirectory(String),
     #[error("could not load gltf buffer from {0}")]
     GltfBufferLoading(String, #[source] std::io::Error),
+    #[error("gltf node has multiple parents, which is not allowed by the 2.0 spec")]
+    GltfInvalidNodeGraph,
     #[error("gltf has an out-of-bounds index ({0})")]
     GltfOob(&'static str),
     #[error("unimplemented gltf feature: {0}")]

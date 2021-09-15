@@ -121,14 +121,18 @@ fn main() -> anyhow::Result<()> {
             * Mat4::from_rotation_x(frame_start_seconds * 0.1)
             * Mat4::from_rotation_y(frame_start_seconds * 0.1);
         scene.queue(&quad, Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 1.5, 0.0)) * rotation);
-        for mesh in &sponza_model.meshes {
-            scene.queue(mesh, Mat4::from_scale(0.01));
+        for (meshes, transform) in cube_model.mesh_iter() {
+            for mesh in meshes {
+                scene.queue(
+                    mesh,
+                    Mat4::from_translation(ultraviolet::Vec3::new(0.5, 1.5, 0.0)) * Mat4::from_scale(0.5) * rotation * transform,
+                );
+            }
         }
-        for mesh in &cube_model.meshes {
-            scene.queue(
-                mesh,
-                Mat4::from_translation(ultraviolet::Vec3::new(0.5, 1.5, 0.0)) * Mat4::from_scale(0.5) * rotation,
-            );
+        for (meshes, transform) in sponza_model.mesh_iter() {
+            for mesh in meshes {
+                scene.queue(mesh, transform);
+            }
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;
