@@ -1,8 +1,19 @@
 use crate::{Error, FrameIndex, Gpu, Mesh, Pipeline};
 use std::borrow::Cow;
-use std::fs;
-use std::path::Path;
 use ultraviolet::{Isometry3, Mat4, Rotor3, Vec3, Vec4};
+
+mod gltf_json;
+mod mesh_iter;
+mod resources;
+pub use mesh_iter::MeshIter;
+pub use resources::GltfResources;
+
+const GLTF_BYTE: i32 = 5120;
+const GLTF_UNSIGNED_BYTE: i32 = 5121;
+const GLTF_SHORT: i32 = 5122;
+const GLTF_UNSIGNED_SHORT: i32 = 5123;
+const GLTF_UNSIGNED_INT: i32 = 5125;
+const GLTF_FLOAT: i32 = 5126;
 
 struct Node {
     mesh: Option<usize>,
@@ -16,33 +27,12 @@ pub struct Gltf<'a> {
     root_nodes: Vec<usize>,
 }
 
-pub struct MeshIter<'a> {
-    gltf: &'a Gltf<'a>,
-    node_queue: Vec<usize>,
-}
-
-impl<'a> Iterator for MeshIter<'a> {
-    type Item = (&'a [Mesh<'a>], Mat4);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let node_index = self.node_queue.pop()?;
-        let node = self.gltf.nodes.get(node_index)?;
-        if let Some(children) = &node.children {
-            for child in children {
-                self.node_queue.push(*child);
-            }
-        }
-        let mesh = self.gltf.meshes.get(node.mesh?)?;
-        Some((mesh, node.transform))
-    }
-}
-
 impl Gltf<'_> {
     /// Loads the glTF scene from the contents of a .glb file.
     ///
     /// Any external files referenced in the glTF are searched
     /// relative to `directory`.
-    pub fn from_glb<'gpu>(gpu: &'gpu Gpu, frame_index: FrameIndex, glb: &[u8], directory: Option<&Path>) -> Result<Gltf<'gpu>, Error> {
+    pub fn from_glb<'gpu>(gpu: &'gpu Gpu, frame_index: FrameIndex, glb: &[u8], resources: &mut GltfResources) -> Result<Gltf<'gpu>, Error> {
         fn read_u32(bytes: &[u8]) -> u32 {
             debug_assert!(bytes.len() == 4);
             if let [a, b, c, d] = *bytes {
@@ -101,23 +91,25 @@ impl Gltf<'_> {
 
         let json = json.ok_or(Error::MissingGlbJson)?;
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
-        create_gltf(gpu, frame_index, gltf, directory, Some(buffer))
+        create_gltf(gpu, frame_index, gltf, resources, Some(buffer))
     }
 
     /// Loads the glTF scene from the contents of a .gltf file.
     ///
     /// Any external files referenced in the glTF are searched
     /// relative to `directory`.
-    pub fn from_gltf<'gpu>(gpu: &'gpu Gpu, frame_index: FrameIndex, gltf: &str, directory: Option<&Path>) -> Result<Gltf<'gpu>, Error> {
+    pub fn from_gltf<'gpu>(
+        gpu: &'gpu Gpu,
+        frame_index: FrameIndex,
+        gltf: &str,
+        resources: &mut GltfResources,
+    ) -> Result<Gltf<'gpu>, Error> {
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(gltf).map_err(Error::GltfJsonDeserialization)?;
-        create_gltf(gpu, frame_index, gltf, directory, None)
+        create_gltf(gpu, frame_index, gltf, resources, None)
     }
 
     pub fn mesh_iter(&self) -> MeshIter<'_> {
-        MeshIter {
-            gltf: self,
-            node_queue: self.root_nodes.clone(),
-        }
+        MeshIter::new(self, self.root_nodes.clone())
     }
 }
 
@@ -125,7 +117,7 @@ fn create_gltf<'gpu>(
     gpu: &'gpu Gpu,
     frame_index: FrameIndex,
     gltf: gltf_json::GltfJson,
-    directory: Option<&Path>,
+    resources: &mut GltfResources,
     bin_buffer: Option<&[u8]>,
 ) -> Result<Gltf<'gpu>, Error> {
     if let Some(min_version) = &gltf.asset.min_version {
@@ -146,24 +138,17 @@ fn create_gltf<'gpu>(
     let scene = scenes.get(scene_index).ok_or(Error::GltfOob("scene"))?;
     let root_nodes = scene.nodes.clone().ok_or(Error::GltfMisc("no nodes in scene"))?;
 
-    let buffers = gltf
-        .buffers
-        .iter()
-        .map(|buffer| match &buffer.uri {
-            Some(uri) => match directory {
-                Some(base_path) => {
-                    let path = base_path.join(&uri);
-                    let buffer = fs::read(path).map_err(|err| Error::GltfBufferLoading(uri.clone(), err))?;
-                    Ok(Cow::Owned(buffer))
-                }
-                None => Err(Error::GltfMissingDirectory(uri.clone())),
-            },
-            None => match bin_buffer {
-                Some(buffer) => Ok(Cow::Borrowed(buffer)),
-                None => Err(Error::GlbBinMissing),
-            },
-        })
-        .collect::<Result<Vec<Cow<'_, [u8]>>, Error>>()?;
+    let mut buffers = Vec::with_capacity(gltf.buffers.len());
+    for buffer in &gltf.buffers {
+        if let Some(uri) = buffer.uri.as_ref() {
+            buffers.push(Cow::Owned(resources.get_or_load(uri)?.to_vec()));
+        } else {
+            match bin_buffer {
+                Some(bin_buffer) => buffers.push(Cow::Borrowed(bin_buffer)),
+                None => return Err(Error::GlbBinMissing),
+            }
+        }
+    }
 
     let meshes = gltf
         .meshes
@@ -304,99 +289,6 @@ fn get_slice_from_accessor<'buffer>(
     }
     Ok(&buffer[offset..offset + length])
 }
-
-#[allow(dead_code)]
-mod gltf_json {
-    use miniserde::Deserialize;
-    use std::collections::HashMap;
-
-    #[derive(Deserialize)]
-    pub struct GltfJson {
-        pub asset: Asset,
-        pub scene: Option<usize>,
-        pub scenes: Option<Vec<Scene>>,
-        pub nodes: Vec<Node>,
-        pub meshes: Vec<Mesh>,
-        pub accessors: Vec<Accessor>,
-        #[serde(rename = "bufferViews")]
-        pub buffer_views: Vec<BufferView>,
-        pub buffers: Vec<Buffer>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Asset {
-        pub version: String,
-        pub min_version: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Scene {
-        pub nodes: Option<Vec<usize>>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Node {
-        pub name: Option<String>,
-        pub mesh: Option<usize>,
-        pub children: Option<Vec<usize>>,
-        pub matrix: Option<Vec<f32>>,
-        pub translation: Option<Vec<f32>>,
-        pub rotation: Option<Vec<f32>>,
-        pub scale: Option<Vec<f32>>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Mesh {
-        pub primitives: Vec<Primitive>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Primitive {
-        pub attributes: HashMap<String, usize>,
-        pub indices: Option<usize>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Buffer {
-        #[serde(rename = "byteLength")]
-        pub byte_length: usize,
-        pub uri: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct BufferView {
-        pub buffer: usize,
-        #[serde(rename = "byteOffset")]
-        pub byte_offset: Option<usize>,
-        #[serde(rename = "byteLength")]
-        pub byte_length: usize,
-        #[serde(rename = "byteStride")]
-        pub byte_stride: Option<usize>,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Accessor {
-        #[serde(rename = "bufferView")]
-        pub buffer_view: Option<usize>,
-        #[serde(rename = "byteOffset")]
-        pub byte_offset: Option<usize>,
-        #[serde(rename = "componentType")]
-        pub component_type: i32,
-        pub normalized: Option<bool>,
-        pub count: usize,
-        #[serde(rename = "type")]
-        pub attribute_type: String,
-        pub min: Option<Vec<f32>>,
-        pub max: Option<Vec<f32>>,
-    }
-}
-
-const GLTF_BYTE: i32 = 5120;
-const GLTF_UNSIGNED_BYTE: i32 = 5121;
-const GLTF_SHORT: i32 = 5122;
-const GLTF_UNSIGNED_SHORT: i32 = 5123;
-const GLTF_UNSIGNED_INT: i32 = 5125;
-const GLTF_FLOAT: i32 = 5126;
 
 fn stride_for(component_type: i32, attribute_type: &str) -> usize {
     let bytes_per_component = match component_type {

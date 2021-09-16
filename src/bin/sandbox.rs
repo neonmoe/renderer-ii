@@ -2,7 +2,6 @@ use log::LevelFilter;
 use neonvk::vk;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
-use std::path::Path;
 use std::time::{Duration, Instant};
 use ultraviolet::Mat4;
 
@@ -51,13 +50,10 @@ fn main() -> anyhow::Result<()> {
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::new();
 
-    let sponza_model = neonvk::Gltf::from_gltf(
-        &gpu,
-        loading_frame_index,
-        include_str!("sponza/glTF/Sponza.gltf"),
-        Some(Path::new("src/bin/sponza/glTF")),
-    )?;
-    let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), None)?;
+    let mut resources = neonvk::GltfResources::default();
+    resources.insert("Sponza.bin", include_bytes!("sponza/glTF/Sponza.bin").as_ref());
+    let sponza_model = neonvk::Gltf::from_gltf(&gpu, loading_frame_index, include_str!("sponza/glTF/Sponza.gltf"), &mut resources)?;
+    let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), &mut resources)?;
 
     let (tex_w, tex_h, tex_bytes, tex_format) = load_png(include_bytes!("testbox/testbox_albedo_texture.png"));
     let tree_texture = neonvk::Texture::new(&gpu, loading_frame_index, &tex_bytes, tex_w, tex_h, tex_format)?;
