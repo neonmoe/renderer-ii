@@ -2,6 +2,19 @@ use ash::vk;
 use std::mem;
 use ultraviolet::{Mat4, Vec2, Vec3, Vec4};
 
+pub const MAX_TEXTURE_COUNT: u32 = 128; // Keep in sync with shaders/constants.glsl.
+
+/// The push constant pushed to the fragment shader for every draw
+/// call.
+#[derive(Clone, Copy)]
+pub struct PushConstantStruct {
+    // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
+    pub texture_index: u32,
+}
+
+unsafe impl bytemuck::Zeroable for PushConstantStruct {}
+unsafe impl bytemuck::Pod for PushConstantStruct {}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pipeline {
     Default,
@@ -10,11 +23,10 @@ pub enum Pipeline {
 }
 
 pub(crate) struct DescriptorSetLayoutParams {
+    pub binding: u32,
     pub descriptor_type: vk::DescriptorType,
     pub descriptor_count: u32,
     pub stage_flags: vk::ShaderStageFlags,
-    // This matches DescriptorSetLayoutBinding, except for the immutable samplers.
-    // I don't see a practical use case for them, and this is simpler.
 }
 
 pub(crate) struct PipelineParameters {
@@ -32,6 +44,7 @@ pub(crate) struct PipelineParameters {
 /// In concrete terms, this maps to uniforms in shaders with the
 /// layout `set = 0`, and the bindings are in order.
 static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[DescriptorSetLayoutParams {
+    binding: 0,
     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
     descriptor_count: 1,
     stage_flags: vk::ShaderStageFlags::VERTEX,
@@ -106,10 +119,19 @@ pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as u
     ],
     descriptor_sets: &[
         SHARED_DESCRIPTOR_SET_0,
-        &[DescriptorSetLayoutParams {
-            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        }],
+        &[
+            DescriptorSetLayoutParams {
+                binding: 0,
+                descriptor_type: vk::DescriptorType::SAMPLER,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            },
+            DescriptorSetLayoutParams {
+                binding: 1,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            },
+        ],
     ],
 }];

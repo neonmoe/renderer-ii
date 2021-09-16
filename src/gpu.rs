@@ -1,6 +1,6 @@
 use crate::buffer_ops;
 use crate::descriptors::Descriptors;
-use crate::pipeline::Pipeline;
+use crate::pipeline::{Pipeline, PushConstantStruct};
 use crate::{Camera, Canvas, Driver, Error, Scene, Texture};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
@@ -647,8 +647,15 @@ impl Gpu<'_> {
     /// Updates the texture(s) for the pipeline.
     ///
     /// The amount of textures to pass depends on the pipeline.
-    pub fn set_pipeline_textures(&self, frame_index: FrameIndex, pipeline: Pipeline, textures: &[&Texture<'_>]) {
-        self.descriptors.set_uniform_images(self, frame_index, pipeline, 1, 0, textures);
+    pub fn set_pipeline_textures(
+        &self,
+        frame_index: FrameIndex,
+        pipeline: Pipeline,
+        textures: &[&Texture<'_>],
+        fallback_texture: &Texture<'_>,
+    ) {
+        self.descriptors
+            .set_uniform_images(self, frame_index, pipeline, (1, 1), textures, fallback_texture);
     }
 
     /// Queue up all the rendering commands.
@@ -809,6 +816,13 @@ impl Gpu<'_> {
                 self.add_temporary_buffer(frame_index, transform_buffer, allocation);
                 buffer_ops::copy_to_allocation(transforms, self, &allocation, &alloc_info)?;
 
+                let push_constants = bytemuck::bytes_of(&[PushConstantStruct { texture_index: 0 }]);
+                unsafe {
+                    profiling::scope!("push constants");
+                    self.device
+                        .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
+                }
+
                 let mut vertex_buffers = vec![mesh.buffer(); mesh.vertices_offsets.len() + 1];
                 vertex_buffers[0] = transform_buffer;
                 let mut vertex_offsets = Vec::with_capacity(mesh.vertices_offsets.len() + 1);
@@ -816,6 +830,7 @@ impl Gpu<'_> {
                 vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
 
                 unsafe {
+                    profiling::scope!("draw");
                     self.device
                         .cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
                     self.device

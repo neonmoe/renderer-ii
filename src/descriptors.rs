@@ -1,8 +1,9 @@
-use crate::pipeline::{DescriptorSetLayoutParams, Pipeline, PIPELINE_PARAMETERS};
+use crate::pipeline::{DescriptorSetLayoutParams, Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS};
 use crate::{Error, FrameIndex, Gpu, Texture};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::Device;
+use std::mem;
 
 pub(crate) struct Descriptors {
     pub(crate) pipeline_layouts: Vec<vk::PipelineLayout>,
@@ -45,17 +46,38 @@ impl Descriptors {
         physical_device_features: &vk::PhysicalDeviceFeatures,
         frame_count: u32,
     ) -> Result<Descriptors, Error> {
+        let sampler_create_info = vk::SamplerCreateInfo::builder()
+            .mag_filter(vk::Filter::LINEAR)
+            .min_filter(vk::Filter::LINEAR)
+            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+            .mip_lod_bias(0.0)
+            .min_lod(0.0)
+            .max_lod(vk::LOD_CLAMP_NONE)
+            .address_mode_u(vk::SamplerAddressMode::REPEAT)
+            .address_mode_v(vk::SamplerAddressMode::REPEAT)
+            .address_mode_w(vk::SamplerAddressMode::REPEAT)
+            .anisotropy_enable(physical_device_features.sampler_anisotropy == vk::TRUE)
+            .max_anisotropy(physical_device_properties.limits.max_sampler_anisotropy);
+        let sampler = unsafe { device.create_sampler(&sampler_create_info, None) }.map_err(Error::VulkanSamplerCreation)?;
+        let samplers = [sampler];
+
         let create_descriptor_set_layouts = |sets: &[&[DescriptorSetLayoutParams]]| {
             sets.iter()
                 .map(|bindings| {
                     let bindings = bindings
                         .iter()
                         .map(|params| {
-                            vk::DescriptorSetLayoutBinding::builder()
+                            // TODO: Once there's something to use for profiling, try immutable samplers
+                            // Apparently they don't need to touch memory since the sampler is built into the shader.
+                            let mut builder = vk::DescriptorSetLayoutBinding::builder()
                                 .descriptor_type(params.descriptor_type)
                                 .descriptor_count(params.descriptor_count)
                                 .stage_flags(params.stage_flags)
-                                .build()
+                                .binding(params.binding);
+                            if params.descriptor_type == vk::DescriptorType::SAMPLER {
+                                builder = builder.immutable_samplers(&samplers);
+                            }
+                            builder.build()
                         })
                         .collect::<Vec<vk::DescriptorSetLayoutBinding>>();
                     let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
@@ -68,7 +90,14 @@ impl Descriptors {
             .iter()
             .map(|pipeline| {
                 let descriptor_set_layouts = create_descriptor_set_layouts(pipeline.descriptor_sets)?;
-                let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&descriptor_set_layouts);
+                let push_constant_ranges = [vk::PushConstantRange::builder()
+                    .offset(0)
+                    .size(mem::size_of::<PushConstantStruct>() as u32)
+                    .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                    .build()];
+                let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder()
+                    .set_layouts(&descriptor_set_layouts)
+                    .push_constant_ranges(&push_constant_ranges);
                 let pipeline_layout = unsafe {
                     device
                         .create_pipeline_layout(&pipeline_layout_create_info, None)
@@ -118,20 +147,6 @@ impl Descriptors {
             })
             .collect::<Result<Vec<Vec<Vec<vk::DescriptorSet>>>, Error>>()?;
 
-        let sampler_create_info = vk::SamplerCreateInfo::builder()
-            .mag_filter(vk::Filter::LINEAR)
-            .min_filter(vk::Filter::LINEAR)
-            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-            .mip_lod_bias(0.0)
-            .min_lod(0.0)
-            .max_lod(vk::LOD_CLAMP_NONE)
-            .address_mode_u(vk::SamplerAddressMode::REPEAT)
-            .address_mode_v(vk::SamplerAddressMode::REPEAT)
-            .address_mode_w(vk::SamplerAddressMode::REPEAT)
-            .anisotropy_enable(physical_device_features.sampler_anisotropy == vk::TRUE)
-            .max_anisotropy(physical_device_properties.limits.max_sampler_anisotropy);
-        let sampler = unsafe { device.create_sampler(&sampler_create_info, None) }.map_err(Error::VulkanSamplerCreation)?;
-
         Ok(Descriptors {
             pipeline_layouts,
             descriptor_set_layouts_per_pipeline,
@@ -177,39 +192,39 @@ impl Descriptors {
         gpu: &Gpu,
         frame_index: FrameIndex,
         pipeline: Pipeline,
-        set: u32,
-        first_binding: u32,
+        (set, binding): (u32, u32),
         textures: &[&Texture<'_>],
+        fallback_texture: &Texture<'_>,
     ) {
         let frame_idx = gpu.image_index(frame_index);
         let pipeline_idx = pipeline as usize;
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[frame_idx][pipeline_idx][set_idx];
-        let descriptor_image_infos = textures
-            .iter()
-            .map(|texture| {
-                [vk::DescriptorImageInfo::builder()
+        let mut descriptor_image_infos = Vec::with_capacity(MAX_TEXTURE_COUNT as usize);
+        for texture in textures {
+            descriptor_image_infos.push(
+                vk::DescriptorImageInfo::builder()
                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .image_view(texture.image_view)
-                    .sampler(self.sampler)
-                    .build()]
-            })
-            .collect::<Vec<[vk::DescriptorImageInfo; 1]>>();
-        let write_descriptor_sets = descriptor_image_infos
-            .iter()
-            .enumerate()
-            .map(|(i, descriptor_image_info)| {
-                let binding = first_binding + i as u32;
-                let params = &PIPELINE_PARAMETERS[pipeline_idx].descriptor_sets[set_idx][binding as usize];
-                vk::WriteDescriptorSet::builder()
-                    .dst_set(descriptor_set)
-                    .dst_binding(binding)
-                    .dst_array_element(0)
-                    .descriptor_type(params.descriptor_type)
-                    .image_info(&descriptor_image_info[..])
-                    .build()
-            })
-            .collect::<Vec<vk::WriteDescriptorSet>>();
+                    .build(),
+            );
+        }
+        for _ in textures.len()..MAX_TEXTURE_COUNT as usize {
+            descriptor_image_infos.push(
+                vk::DescriptorImageInfo::builder()
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(fallback_texture.image_view)
+                    .build(),
+            );
+        }
+        let params = &PIPELINE_PARAMETERS[pipeline_idx].descriptor_sets[set_idx][binding as usize];
+        let write_descriptor_sets = [vk::WriteDescriptorSet::builder()
+            .dst_set(descriptor_set)
+            .dst_binding(binding)
+            .dst_array_element(0)
+            .descriptor_type(params.descriptor_type)
+            .image_info(&descriptor_image_infos)
+            .build()];
         unsafe { gpu.device.update_descriptor_sets(&write_descriptor_sets, &[]) };
     }
 

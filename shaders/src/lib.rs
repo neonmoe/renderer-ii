@@ -46,6 +46,7 @@ fn compile_shader(shader_path: &str) -> Shader {
     options.set_target_env(TargetEnv::Vulkan, EnvVersion::Vulkan1_0 as u32);
     options.set_target_spirv(SpirvVersion::V1_0);
     options.set_source_language(SourceLanguage::GLSL);
+    options.set_warnings_as_errors();
     options.set_include_callback(
         |requested_name: &str, include_type: IncludeType, requesting_name: &str, include_depth: usize| {
             if include_depth > 100 {

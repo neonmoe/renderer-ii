@@ -58,15 +58,18 @@ fn main() -> anyhow::Result<()> {
     let (tex_w, tex_h, tex_bytes, tex_format) = load_png(include_bytes!("testbox/testbox_albedo_texture.png"));
     let tree_texture = neonvk::Texture::new(&gpu, loading_frame_index, &tex_bytes, tex_w, tex_h, tex_format)?;
 
+    let pink = [0xDD, 0x33, 0xDD, 0xFF];
+    let fallback_texture = neonvk::Texture::new(&gpu, loading_frame_index, &pink, 1, 1, vk::Format::R8G8B8A8_SRGB)?;
+
     let quad_vertices: &[&[u8]] = &[
         bytemuck::bytes_of(&[[-0.5f32, 0.5, 0.0], [-0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [0.5, -0.5, 0.0]]),
         bytemuck::bytes_of(&[[0.0f32, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]),
     ];
     let quad_indices: &[u8] = bytemuck::bytes_of(&[0u16, 1, 2, 3, 2, 1]);
     let quad = neonvk::Mesh::new::<u16>(&gpu, loading_frame_index, quad_vertices, quad_indices, neonvk::Pipeline::Default)?;
+
     // Get the first frame out of the way, to upload the meshes.
-    // TODO: Add a proper way to upload resources before the game loop
-    gpu.set_pipeline_textures(loading_frame_index, neonvk::Pipeline::Default, &[&tree_texture]);
+    gpu.set_pipeline_textures(loading_frame_index, neonvk::Pipeline::Default, &[&tree_texture], &fallback_texture);
     gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new())?;
 
     let start_time = Instant::now();
@@ -132,7 +135,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;
-        gpu.set_pipeline_textures(frame_index, neonvk::Pipeline::Default, &[&tree_texture]);
+        gpu.set_pipeline_textures(frame_index, neonvk::Pipeline::Default, &[&tree_texture], &fallback_texture);
         match gpu.render_frame(frame_index, &canvas, &camera, &scene) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
