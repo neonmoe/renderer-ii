@@ -12,6 +12,8 @@ pub struct GltfJson {
     #[serde(rename = "bufferViews")]
     pub buffer_views: Vec<BufferView>,
     pub buffers: Vec<Buffer>,
+    pub textures: Vec<Texture>,
+    pub images: Vec<Image>,
 }
 
 #[derive(Deserialize)]
@@ -79,4 +81,18 @@ pub struct Accessor {
     pub attribute_type: String,
     pub min: Option<Vec<f32>>,
     pub max: Option<Vec<f32>>,
+}
+
+#[derive(Deserialize)]
+pub struct Texture {
+    pub source: Option<usize>,
+}
+
+#[derive(Deserialize)]
+pub struct Image {
+    pub uri: Option<String>,
+    #[serde(rename = "mimeType")]
+    pub mime_type: Option<String>,
+    #[serde(rename = "bufferView")]
+    pub buffer_view: Option<usize>,
 }

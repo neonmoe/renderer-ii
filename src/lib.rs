@@ -47,3 +47,5 @@ pub use texture::Texture;
 
 mod gltf;
 pub use gltf::{Gltf, GltfResources, MeshIter};
+
+pub mod image_loading;

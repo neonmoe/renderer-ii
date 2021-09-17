@@ -1,4 +1,4 @@
-use crate::{Error, FrameIndex, Gpu, Mesh, Pipeline};
+use crate::{image_loading, Error, FrameIndex, Gpu, Mesh, Pipeline, Texture};
 use std::borrow::Cow;
 use ultraviolet::{Isometry3, Mat4, Rotor3, Vec3, Vec4};
 
@@ -23,8 +23,9 @@ struct Node {
 
 pub struct Gltf<'a> {
     nodes: Vec<Node>,
-    meshes: Vec<Vec<Mesh<'a>>>,
     root_nodes: Vec<usize>,
+    meshes: Vec<Vec<Mesh<'a>>>,
+    images: Vec<Texture<'a>>,
 }
 
 impl Gltf<'_> {
@@ -32,6 +33,7 @@ impl Gltf<'_> {
     ///
     /// Any external files referenced in the glTF are searched
     /// relative to `directory`.
+    #[profiling::function]
     pub fn from_glb<'gpu>(gpu: &'gpu Gpu, frame_index: FrameIndex, glb: &[u8], resources: &mut GltfResources) -> Result<Gltf<'gpu>, Error> {
         fn read_u32(bytes: &[u8]) -> u32 {
             debug_assert!(bytes.len() == 4);
@@ -98,6 +100,7 @@ impl Gltf<'_> {
     ///
     /// Any external files referenced in the glTF are searched
     /// relative to `directory`.
+    #[profiling::function]
     pub fn from_gltf<'gpu>(
         gpu: &'gpu Gpu,
         frame_index: FrameIndex,
@@ -113,6 +116,7 @@ impl Gltf<'_> {
     }
 }
 
+#[profiling::function]
 fn create_gltf<'gpu>(
     gpu: &'gpu Gpu,
     frame_index: FrameIndex,
@@ -141,7 +145,7 @@ fn create_gltf<'gpu>(
     let mut buffers = Vec::with_capacity(gltf.buffers.len());
     for buffer in &gltf.buffers {
         if let Some(uri) = buffer.uri.as_ref() {
-            buffers.push(Cow::Owned(resources.get_or_load(uri)?.to_vec()));
+            buffers.push(Cow::Owned(resources.get_or_load(uri)?));
         } else {
             match bin_buffer {
                 Some(bin_buffer) => buffers.push(Cow::Borrowed(bin_buffer)),
@@ -153,24 +157,51 @@ fn create_gltf<'gpu>(
     let meshes = gltf
         .meshes
         .iter()
-        .enumerate()
-        .map(|(i, mesh)| {
+        .map(|mesh| {
             mesh.primitives
                 .iter()
-                .enumerate()
-                .map(move |(j, primitive)| (i, j, primitive))
-                .filter_map(
-                    |(i, j, primitive)| match create_mesh_from_primitive(gpu, frame_index, &gltf, &buffers, primitive) {
-                        Ok(mesh) => Some(mesh),
-                        Err(err) => {
-                            log::warn!("skipping mesh #{}, primitive #{}: {}", i, j, err);
-                            None
-                        }
-                    },
-                )
-                .collect::<Vec<Mesh<'_>>>()
+                .map(|primitive| create_mesh_from_primitive(gpu, frame_index, &gltf, &buffers, primitive))
+                .collect::<Result<Vec<Mesh<'_>>, Error>>()
         })
-        .collect::<Vec<Vec<Mesh<'_>>>>();
+        .collect::<Result<Vec<Vec<Mesh<'_>>>, Error>>()?;
+
+    let images = gltf
+        .images
+        .iter()
+        .map(|image| {
+            let image_load;
+            let bytes;
+            if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
+                image_load = match mime_type.as_str() {
+                    "image/jpeg" => image_loading::load_jpeg,
+                    "image/png" => image_loading::load_png,
+                    _ => return Err(Error::GltfSpec("mime type of texture is not image/png or image/jpeg")),
+                };
+                let buffer_view = gltf.buffer_views.get(*buffer_view).ok_or(Error::GltfOob("texture buffer view"))?;
+                let buffer = buffers.get(buffer_view.buffer).ok_or(Error::GltfOob("texture buffer"))?;
+                let offset = buffer_view.byte_offset.unwrap_or(0);
+                let length = buffer_view.byte_length;
+                if offset + length >= buffer.len() {
+                    return Err(Error::GltfOob("texture buffer view bytes"));
+                }
+                bytes = Cow::Borrowed(&buffer[offset..offset + length]);
+            } else if let Some(uri) = &image.uri {
+                image_load = if uri.ends_with(".png") {
+                    image_loading::load_png
+                } else if uri.ends_with(".jpg") || uri.ends_with(".jpeg") {
+                    image_loading::load_jpeg
+                } else {
+                    return Err(Error::GltfMisc("image uri does not end in .png, .jpg or .jpeg"));
+                };
+                bytes = Cow::Owned(resources.get_or_load(uri)?);
+            } else {
+                return Err(Error::GltfSpec("image does not have an uri nor a mimetype + buffer view"));
+            };
+
+            let (width, height, format, pixels) = image_load(&bytes)?;
+            Texture::new(gpu, frame_index, &pixels, width, height, format)
+        })
+        .collect::<Result<Vec<Texture<'_>>, Error>>()?;
 
     let nodes = gltf
         .nodes
@@ -224,9 +255,15 @@ fn create_gltf<'gpu>(
         }
     }
 
-    Ok(Gltf { meshes, nodes, root_nodes })
+    Ok(Gltf {
+        nodes,
+        root_nodes,
+        meshes,
+        images,
+    })
 }
 
+#[profiling::function]
 fn create_mesh_from_primitive<'gpu>(
     gpu: &'gpu Gpu,
     frame_index: FrameIndex,
@@ -254,6 +291,7 @@ fn create_mesh_from_primitive<'gpu>(
     Ok(mesh)
 }
 
+#[profiling::function]
 fn get_slice_from_accessor<'buffer>(
     gltf: &gltf_json::GltfJson,
     buffers: &'buffer [Cow<'_, [u8]>],

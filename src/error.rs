@@ -127,6 +127,16 @@ pub enum Error {
     GltfInvalidNodeGraph,
     #[error("gltf has an out-of-bounds index ({0})")]
     GltfOob(&'static str),
+    #[error("gltf does not conform to the 2.0 spec: {0}")]
+    GltfSpec(&'static str),
     #[error("unimplemented gltf feature: {0}")]
     GltfMisc(&'static str),
+    #[error("unsupported image format, bit depth: {0:?}, color type {1:?}")]
+    UnsupportedImageFormat(png::BitDepth, png::ColorType),
+    #[error("error during png decoding")]
+    PngDecoding(png::DecodingError),
+    #[error("error during jpeg decoding")]
+    JpegDecoding(jpeg_decoder::Error),
+    #[error("error during image decoding: {0}")]
+    MiscImageDecoding(&'static str),
 }
