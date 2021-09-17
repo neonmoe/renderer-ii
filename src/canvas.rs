@@ -14,6 +14,11 @@ const DEPTH_FORMAT: vk::Format = vk::Format::D16_UNORM;
 
 const SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::TYPE_8;
 
+struct SwapchainSettings {
+    extent: vk::Extent2D,
+    immediate_present: bool,
+}
+
 /// The shorter-lived half of the rendering pair, along with [Gpu].
 ///
 /// This struct has the concrete rendering objects, like the render
@@ -122,14 +127,16 @@ impl Canvas<'_> {
             &gpu.surface_ext,
             swapchain_ext,
             gpu.driver.surface,
-            vk::Extent2D {
-                width: fallback_width,
-                height: fallback_height,
-            },
             old_canvas.map(|r| r.swapchain),
             gpu.physical_device,
             &queue_family_indices,
-            immediate_present,
+            &SwapchainSettings {
+                extent: vk::Extent2D {
+                    width: fallback_width,
+                    height: fallback_height,
+                },
+                immediate_present,
+            },
         )?;
 
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
@@ -260,17 +267,15 @@ impl Canvas<'_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 #[profiling::function]
 fn create_swapchain(
     surface_ext: &khr::Surface,
     swapchain_ext: &khr::Swapchain,
     surface: vk::SurfaceKHR,
-    extent: vk::Extent2D,
     old_swapchain: Option<vk::SwapchainKHR>,
     physical_device: vk::PhysicalDevice,
     queue_family_indices: &[u32],
-    immediate_present: bool,
+    settings: &SwapchainSettings,
 ) -> Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D, u32), Error> {
     // NOTE: The following combinations should be presented as a config option:
     // - FIFO + 2 (traditional double-buffered vsync)
@@ -282,7 +287,7 @@ fn create_swapchain(
     // - IMMEDIATE + 2 (render-constantly, ignore vsync (probably causes tearing))
     //   - possible tearing, best latency
     // With the non-available ones grayed out, of course.
-    let present_mode = if immediate_present {
+    let present_mode = if settings.immediate_present {
         vk::PresentModeKHR::IMMEDIATE
     } else {
         vk::PresentModeKHR::FIFO
@@ -319,7 +324,7 @@ fn create_swapchain(
         let image_extent = if surface_capabilities.current_extent != unset_extent {
             surface_capabilities.current_extent
         } else {
-            extent
+            settings.extent
         };
         Ok(image_extent)
     };

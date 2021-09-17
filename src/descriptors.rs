@@ -1,9 +1,10 @@
-use crate::pipeline::{DescriptorSetLayoutParams, Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS};
-use crate::{Error, FrameIndex, Gpu, Texture};
+use crate::pipeline::{DescriptorSetLayoutParams, Pipeline, PushConstantStruct, PIPELINE_PARAMETERS};
+use crate::{Error, FrameIndex, Gpu};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::Device;
 use std::mem;
+use std::ops::Range;
 
 pub(crate) struct Descriptors {
     pub(crate) pipeline_layouts: Vec<vk::PipelineLayout>,
@@ -190,42 +191,34 @@ impl Descriptors {
     pub(crate) fn set_uniform_images(
         &self,
         gpu: &Gpu,
-        frame_index: FrameIndex,
         pipeline: Pipeline,
         (set, binding): (u32, u32),
-        textures: &[&Texture<'_>],
-        fallback_texture: &Texture<'_>,
+        image_view: vk::ImageView,
+        range: Range<u32>,
     ) {
-        let frame_idx = gpu.image_index(frame_index);
-        let pipeline_idx = pipeline as usize;
-        let set_idx = set as usize;
-        let descriptor_set = self.descriptor_sets[frame_idx][pipeline_idx][set_idx];
-        let mut descriptor_image_infos = Vec::with_capacity(MAX_TEXTURE_COUNT as usize);
-        for texture in textures {
-            descriptor_image_infos.push(
-                vk::DescriptorImageInfo::builder()
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image_view(texture.image_view)
-                    .build(),
-            );
+        // NOTE: Technically, this could be overwriting textures still
+        // being used in a previous frame, if textures are allocated
+        // in the same index. Might be smart to disallow reserving
+        // indices if they're freshly released.
+        for frame_sets in &self.descriptor_sets {
+            let pipeline_idx = pipeline as usize;
+            let set_idx = set as usize;
+            let descriptor_set = frame_sets[pipeline_idx][set_idx];
+            let descriptor_image_info = vk::DescriptorImageInfo::builder()
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image_view(image_view)
+                .build();
+            let descriptor_image_infos = vec![descriptor_image_info; range.len()];
+            let params = &PIPELINE_PARAMETERS[pipeline_idx].descriptor_sets[set_idx][binding as usize];
+            let write_descriptor_sets = [vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_set)
+                .dst_binding(binding)
+                .dst_array_element(range.start)
+                .descriptor_type(params.descriptor_type)
+                .image_info(&descriptor_image_infos)
+                .build()];
+            unsafe { gpu.device.update_descriptor_sets(&write_descriptor_sets, &[]) };
         }
-        for _ in textures.len()..MAX_TEXTURE_COUNT as usize {
-            descriptor_image_infos.push(
-                vk::DescriptorImageInfo::builder()
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image_view(fallback_texture.image_view)
-                    .build(),
-            );
-        }
-        let params = &PIPELINE_PARAMETERS[pipeline_idx].descriptor_sets[set_idx][binding as usize];
-        let write_descriptor_sets = [vk::WriteDescriptorSet::builder()
-            .dst_set(descriptor_set)
-            .dst_binding(binding)
-            .dst_array_element(0)
-            .descriptor_type(params.descriptor_type)
-            .image_info(&descriptor_image_infos)
-            .build()];
-        unsafe { gpu.device.update_descriptor_sets(&write_descriptor_sets, &[]) };
     }
 
     #[profiling::function]

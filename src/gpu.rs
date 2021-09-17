@@ -1,6 +1,6 @@
 use crate::buffer_ops;
 use crate::descriptors::Descriptors;
-use crate::pipeline::{Pipeline, PushConstantStruct};
+use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
 use crate::{Camera, Canvas, Driver, Error, Scene, Texture};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
@@ -8,6 +8,8 @@ use ash::vk::Handle;
 use ash::{vk, Device, Instance};
 use std::ffi::CStr;
 use std::mem;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender};
 use ultraviolet::Mat4;
 
@@ -66,6 +68,7 @@ pub struct Gpu<'a> {
     frame_start_fence: vk::Fence,
 
     pub(crate) descriptors: Descriptors,
+    pub(crate) texture_indices: Vec<AtomicBool>,
 
     frame_locals: Vec<FrameLocal>,
     render_wait_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
@@ -468,6 +471,11 @@ impl Gpu<'_> {
             })
             .map_err(Error::VmaPoolCreation)?;
 
+        let mut texture_indices = Vec::with_capacity(MAX_TEXTURE_COUNT as usize);
+        for _ in 0..MAX_TEXTURE_COUNT {
+            texture_indices.push(AtomicBool::new(false));
+        }
+
         Ok((
             Gpu {
                 driver,
@@ -492,6 +500,7 @@ impl Gpu<'_> {
                 frame_start_fence,
 
                 descriptors,
+                texture_indices,
 
                 frame_locals,
                 render_wait_semaphores: mpsc::channel(),
@@ -644,18 +653,32 @@ impl Gpu<'_> {
         Ok(frame_index)
     }
 
-    /// Updates the texture(s) for the pipeline.
-    ///
-    /// The amount of textures to pass depends on the pipeline.
-    pub fn set_pipeline_textures(
-        &self,
-        frame_index: FrameIndex,
-        pipeline: Pipeline,
-        textures: &[&Texture<'_>],
-        fallback_texture: &Texture<'_>,
-    ) {
+    /// Set the fallback texture. This should be set before loading
+    /// any other textures, otherwise they will be overwritten with
+    /// the fallback texture.
+    pub fn set_fallback_texture(&self, fallback_texture: &Texture<'_>) {
+        let image_view = fallback_texture.image_view;
         self.descriptors
-            .set_uniform_images(self, frame_index, pipeline, (1, 1), textures, fallback_texture);
+            .set_uniform_images(self, Pipeline::Default, (1, 1), image_view, 0..MAX_TEXTURE_COUNT);
+    }
+
+    pub(crate) fn reserve_texture_index(&self, image_view: vk::ImageView) -> Result<u32, Error> {
+        let index = self
+            .texture_indices
+            .iter()
+            .position(|occupied| {
+                occupied
+                    .compare_exchange_weak(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+            })
+            .ok_or(Error::TextureIndexReserve)? as u32;
+        self.descriptors
+            .set_uniform_images(self, Pipeline::Default, (1, 1), image_view, index..index + 1);
+        Ok(index)
+    }
+
+    pub(crate) fn release_texture_index(&self, index: u32) {
+        self.texture_indices[index as usize].store(false, Ordering::Relaxed);
     }
 
     /// Queue up all the rendering commands.
@@ -795,7 +818,7 @@ impl Gpu<'_> {
                 };
             }
 
-            for (mesh, transforms) in meshes {
+            for (&(mesh, texture_index), transforms) in meshes {
                 profiling::scope!("mesh");
                 let (transform_buffer, allocation, alloc_info) = {
                     profiling::scope!("transform buffer creation");
@@ -816,7 +839,8 @@ impl Gpu<'_> {
                 self.add_temporary_buffer(frame_index, transform_buffer, allocation);
                 buffer_ops::copy_to_allocation(transforms, self, &allocation, &alloc_info)?;
 
-                let push_constants = bytemuck::bytes_of(&[PushConstantStruct { texture_index: 0 }]);
+                let push_constants = [PushConstantStruct { texture_index }];
+                let push_constants = bytemuck::bytes_of(&push_constants);
                 unsafe {
                     profiling::scope!("push constants");
                     self.device

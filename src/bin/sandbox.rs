@@ -50,16 +50,19 @@ fn main() -> anyhow::Result<()> {
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::new();
 
+    let pink = [0xDD, 0x33, 0xDD, 0xFF];
+    let fallback_texture = neonvk::Texture::new(&gpu, loading_frame_index, &pink, 1, 1, vk::Format::R8G8B8A8_SRGB)?;
+    gpu.set_fallback_texture(&fallback_texture);
+
     let mut resources = neonvk::GltfResources::default();
     resources.insert("Sponza.bin", include_bytes!("sponza/glTF/Sponza.bin").as_ref());
     let sponza_model = neonvk::Gltf::from_gltf(&gpu, loading_frame_index, include_str!("sponza/glTF/Sponza.gltf"), &mut resources)?;
     let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), &mut resources)?;
 
-    let (tex_w, tex_h, tex_bytes, tex_format) = load_png(include_bytes!("testbox/testbox_albedo_texture.png"));
+    let (tex_w, tex_h, tex_bytes, tex_format) = load_png(include_bytes!("tree.png"));
     let tree_texture = neonvk::Texture::new(&gpu, loading_frame_index, &tex_bytes, tex_w, tex_h, tex_format)?;
-
-    let pink = [0xDD, 0x33, 0xDD, 0xFF];
-    let fallback_texture = neonvk::Texture::new(&gpu, loading_frame_index, &pink, 1, 1, vk::Format::R8G8B8A8_SRGB)?;
+    let (tex_w, tex_h, tex_bytes, tex_format) = load_png(include_bytes!("testbox/testbox_albedo_texture.png"));
+    let testbox_texture = neonvk::Texture::new(&gpu, loading_frame_index, &tex_bytes, tex_w, tex_h, tex_format)?;
 
     let quad_vertices: &[&[u8]] = &[
         bytemuck::bytes_of(&[[-0.5f32, 0.5, 0.0], [-0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [0.5, -0.5, 0.0]]),
@@ -69,7 +72,6 @@ fn main() -> anyhow::Result<()> {
     let quad = neonvk::Mesh::new::<u16>(&gpu, loading_frame_index, quad_vertices, quad_indices, neonvk::Pipeline::Default)?;
 
     // Get the first frame out of the way, to upload the meshes.
-    gpu.set_pipeline_textures(loading_frame_index, neonvk::Pipeline::Default, &[&tree_texture], &fallback_texture);
     gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new())?;
 
     let start_time = Instant::now();
@@ -119,23 +121,27 @@ fn main() -> anyhow::Result<()> {
         let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1)
             * Mat4::from_rotation_x(frame_start_seconds * 0.1)
             * Mat4::from_rotation_y(frame_start_seconds * 0.1);
-        scene.queue(&quad, Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 1.5, 0.0)) * rotation);
+        scene.queue(
+            &quad,
+            &tree_texture,
+            Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 1.5, 0.0)) * rotation,
+        );
         for (meshes, transform) in cube_model.mesh_iter() {
             for mesh in meshes {
                 scene.queue(
                     mesh,
+                    &testbox_texture,
                     Mat4::from_translation(ultraviolet::Vec3::new(0.5, 1.5, 0.0)) * Mat4::from_scale(0.5) * rotation * transform,
                 );
             }
         }
         for (meshes, transform) in sponza_model.mesh_iter() {
             for mesh in meshes {
-                scene.queue(mesh, transform);
+                scene.queue(mesh, &tree_texture, transform);
             }
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;
-        gpu.set_pipeline_textures(frame_index, neonvk::Pipeline::Default, &[&tree_texture], &fallback_texture);
         match gpu.render_frame(frame_index, &canvas, &camera, &scene) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}

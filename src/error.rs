@@ -95,6 +95,8 @@ pub enum Error {
     VmaDepthImageCreation(#[source] vk_mem::error::Error),
     #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
     BufferNotEditable,
+    #[error("too many textures: failed to reserve a texture index")]
+    TextureIndexReserve,
     #[error("not a glb file")]
     InvalidGlbHeader,
     #[error("glb header length mismatch")]

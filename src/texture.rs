@@ -8,11 +8,13 @@ pub struct Texture<'a> {
     image: vk::Image,
     pub(crate) image_view: vk::ImageView,
     allocation: vk_mem::Allocation,
+    pub(crate) texture_index: u32,
 }
 
 impl Drop for Texture<'_> {
     #[profiling::function]
     fn drop(&mut self) {
+        self.gpu.release_texture_index(self.texture_index);
         unsafe { self.gpu.device.destroy_image_view(self.image_view, None) };
         let _ = self.gpu.allocator.destroy_image(self.image, &self.allocation);
     }
@@ -69,12 +71,14 @@ impl Texture<'_> {
             .format(format)
             .subresource_range(subresource_range);
         let image_view = unsafe { gpu.device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation)?;
+        let texture_index = gpu.reserve_texture_index(image_view)?;
 
         Ok(Texture {
             gpu,
             image,
             image_view,
             allocation,
+            texture_index,
         })
     }
 }
