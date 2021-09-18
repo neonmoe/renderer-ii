@@ -22,3 +22,10 @@ jpeg-decoder = { version = "^0.1.0", default-features = false }
 # Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.
 sdl2 = { version = "^0.34.0", features = ["raw-window-handle"] }
 anyhow = { version = "^1.0.0" }
+
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.jpeg-decoder]
+opt-level = 3
+[profile.dev.package.miniserde]
+opt-level = 3

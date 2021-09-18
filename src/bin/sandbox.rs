@@ -60,10 +60,8 @@ fn fallible_main() -> anyhow::Result<()> {
     let sponza_model = neonvk::Gltf::from_gltf(&gpu, loading_frame_index, include_str!("sponza/glTF/Sponza.gltf"), &mut resources)?;
     let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), &mut resources)?;
 
-    let (tex_w, tex_h, tex_format, tex_bytes) = neonvk::image_loading::load_png(include_bytes!("tree.png"))?;
+    let (tex_w, tex_h, tex_format, tex_bytes) = neonvk::image_loading::load_png(include_bytes!("tree.png"), true)?;
     let tree_texture = neonvk::Texture::new(&gpu, loading_frame_index, &tex_bytes, tex_w, tex_h, tex_format)?;
-    let (tex_w, tex_h, tex_format, tex_bytes) = neonvk::image_loading::load_png(include_bytes!("testbox/testbox_albedo_texture.png"))?;
-    let testbox_texture = neonvk::Texture::new(&gpu, loading_frame_index, &tex_bytes, tex_w, tex_h, tex_format)?;
 
     let quad_vertices: &[&[u8]] = &[
         bytemuck::bytes_of(&[[-0.5f32, 0.5, 0.0], [-0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [0.5, -0.5, 0.0]]),
@@ -127,19 +125,15 @@ fn fallible_main() -> anyhow::Result<()> {
             &tree_texture,
             Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 1.5, 0.0)) * rotation,
         );
-        for (meshes, transform) in cube_model.mesh_iter() {
-            for mesh in meshes {
-                scene.queue(
-                    mesh,
-                    &testbox_texture,
-                    Mat4::from_translation(ultraviolet::Vec3::new(0.5, 1.5, 0.0)) * Mat4::from_scale(0.5) * rotation * transform,
-                );
-            }
+        for (mesh, texture, transform) in cube_model.mesh_iter() {
+            scene.queue(
+                mesh,
+                texture,
+                Mat4::from_translation(ultraviolet::Vec3::new(0.5, 1.5, 0.0)) * Mat4::from_scale(0.5) * rotation * transform,
+            );
         }
-        for (meshes, transform) in sponza_model.mesh_iter() {
-            for mesh in meshes {
-                scene.queue(mesh, &tree_texture, transform);
-            }
+        for (mesh, texture, transform) in sponza_model.mesh_iter() {
+            scene.queue(mesh, texture, transform);
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;

@@ -25,6 +25,10 @@ impl<'a> Scene<'a> {
         }
     }
 
+    // TODO: Instead of a Texture, this should take in a "material slot" or something.
+    // Because the same set of textures should be used across
+    // materials. A slice of textures could solve this as well, but I
+    // doubt that would perform that well.
     pub fn queue(&mut self, mesh: &'a Mesh, texture: &Texture, transform: Mat4) {
         let mesh_map = self.pipeline_map.entry(mesh.pipeline).or_insert_with(HashMap::new);
         let mesh_vec = mesh_map.entry((mesh, texture.texture_index)).or_insert_with(Vec::new);

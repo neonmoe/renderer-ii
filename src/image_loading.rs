@@ -2,7 +2,7 @@ use crate::Error;
 use ash::vk;
 
 #[profiling::function]
-pub fn load_png(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {
+pub fn load_png(bytes: &[u8], srgb: bool) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {
     use png::{BitDepth, ColorType, Decoder};
     let decoder = Decoder::new(bytes);
     let mut reader = decoder.read_info().map_err(Error::PngDecoding)?;
@@ -10,8 +10,6 @@ pub fn load_png(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> 
     let info = reader.next_frame(&mut pixels).map_err(Error::PngDecoding)?;
     pixels.truncate(info.buffer_size());
 
-    let info = reader.info();
-    let srgb = info.srgb.is_some();
     let (bits, colors) = (info.bit_depth, info.color_type);
     let (format, needs_padding) = {
         match (bits, colors) {
@@ -30,7 +28,7 @@ pub fn load_png(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> 
 }
 
 #[profiling::function]
-pub fn load_jpeg(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {
+pub fn load_jpeg(bytes: &[u8], srgb: bool) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {
     use jpeg_decoder::{Decoder, PixelFormat};
     let mut decoder = Decoder::new(bytes);
     let mut pixels = decoder.decode().map_err(Error::JpegDecoding)?;
@@ -38,7 +36,8 @@ pub fn load_jpeg(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error>
     let (width, height) = (info.width as u32, info.height as u32);
     let (format, needs_padding) = match info.pixel_format {
         PixelFormat::L8 => (vk::Format::R8_UNORM, false),
-        PixelFormat::RGB24 => (vk::Format::R8G8B8A8_UNORM, true),
+        PixelFormat::RGB24 if srgb => (vk::Format::R8G8B8A8_SRGB, true),
+        PixelFormat::RGB24 => (vk::Format::R8G8B8A8_SRGB, true),
         PixelFormat::CMYK32 => return Err(Error::MiscImageDecoding("cmyk is not supported as pixel format")),
     };
     if needs_padding {

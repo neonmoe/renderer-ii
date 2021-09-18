@@ -21,10 +21,15 @@ struct Node {
     transform: Mat4,
 }
 
+struct Material {
+    base_color: usize,
+}
+
 pub struct Gltf<'a> {
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
-    meshes: Vec<Vec<Mesh<'a>>>,
+    materials: Vec<Material>,
+    meshes: Vec<Vec<(Mesh<'a>, usize)>>,
     images: Vec<Texture<'a>>,
 }
 
@@ -160,48 +165,14 @@ fn create_gltf<'gpu>(
         .map(|mesh| {
             mesh.primitives
                 .iter()
-                .map(|primitive| create_mesh_from_primitive(gpu, frame_index, &gltf, &buffers, primitive))
-                .collect::<Result<Vec<Mesh<'_>>, Error>>()
+                .map(|primitive| {
+                    let mesh = create_primitive(gpu, frame_index, &gltf, &buffers, primitive)?;
+                    let material_index = primitive.material.ok_or(Error::GltfMisc("material missing"))?;
+                    Ok((mesh, material_index))
+                })
+                .collect::<Result<Vec<(Mesh<'_>, usize)>, Error>>()
         })
-        .collect::<Result<Vec<Vec<Mesh<'_>>>, Error>>()?;
-
-    let images = gltf
-        .images
-        .iter()
-        .map(|image| {
-            let image_load;
-            let bytes;
-            if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
-                image_load = match mime_type.as_str() {
-                    "image/jpeg" => image_loading::load_jpeg,
-                    "image/png" => image_loading::load_png,
-                    _ => return Err(Error::GltfSpec("mime type of texture is not image/png or image/jpeg")),
-                };
-                let buffer_view = gltf.buffer_views.get(*buffer_view).ok_or(Error::GltfOob("texture buffer view"))?;
-                let buffer = buffers.get(buffer_view.buffer).ok_or(Error::GltfOob("texture buffer"))?;
-                let offset = buffer_view.byte_offset.unwrap_or(0);
-                let length = buffer_view.byte_length;
-                if offset + length >= buffer.len() {
-                    return Err(Error::GltfOob("texture buffer view bytes"));
-                }
-                bytes = Cow::Borrowed(&buffer[offset..offset + length]);
-            } else if let Some(uri) = &image.uri {
-                image_load = if uri.ends_with(".png") {
-                    image_loading::load_png
-                } else if uri.ends_with(".jpg") || uri.ends_with(".jpeg") {
-                    image_loading::load_jpeg
-                } else {
-                    return Err(Error::GltfMisc("image uri does not end in .png, .jpg or .jpeg"));
-                };
-                bytes = Cow::Owned(resources.get_or_load(uri)?);
-            } else {
-                return Err(Error::GltfSpec("image does not have an uri nor a mimetype + buffer view"));
-            };
-
-            let (width, height, format, pixels) = image_load(&bytes)?;
-            Texture::new(gpu, frame_index, &pixels, width, height, format)
-        })
-        .collect::<Result<Vec<Texture<'_>>, Error>>()?;
+        .collect::<Result<Vec<Vec<(Mesh<'_>, usize)>>, Error>>()?;
 
     let nodes = gltf
         .nodes
@@ -239,6 +210,57 @@ fn create_gltf<'gpu>(
         })
         .collect::<Vec<Node>>();
 
+    let images = gltf
+        .images
+        .iter()
+        .map(|image| {
+            let image_load;
+            let bytes;
+            if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
+                image_load = match mime_type.as_str() {
+                    "image/jpeg" => image_loading::load_jpeg,
+                    "image/png" => image_loading::load_png,
+                    _ => return Err(Error::GltfSpec("mime type of texture is not image/png or image/jpeg")),
+                };
+                let buffer_view = gltf.buffer_views.get(*buffer_view).ok_or(Error::GltfOob("texture buffer view"))?;
+                let buffer = buffers.get(buffer_view.buffer).ok_or(Error::GltfOob("texture buffer"))?;
+                let offset = buffer_view.byte_offset.unwrap_or(0);
+                let length = buffer_view.byte_length;
+                if offset + length >= buffer.len() {
+                    return Err(Error::GltfOob("texture buffer view bytes"));
+                }
+                bytes = Cow::Borrowed(&buffer[offset..offset + length]);
+            } else if let Some(uri) = &image.uri {
+                image_load = if uri.ends_with(".png") {
+                    image_loading::load_png
+                } else if uri.ends_with(".jpg") || uri.ends_with(".jpeg") {
+                    image_loading::load_jpeg
+                } else {
+                    return Err(Error::GltfMisc("image uri does not end in .png, .jpg or .jpeg"));
+                };
+                bytes = Cow::Owned(resources.get_or_load(uri)?);
+            } else {
+                return Err(Error::GltfSpec("image does not have an uri nor a mimetype + buffer view"));
+            };
+
+            // TODO: SRGB detection for glTF textures
+            let (width, height, format, pixels) = image_load(&bytes, false)?;
+            Texture::new(gpu, frame_index, &pixels, width, height, format)
+        })
+        .collect::<Result<Vec<Texture<'_>>, Error>>()?;
+
+    let materials = gltf
+        .materials
+        .iter()
+        .map(|material| {
+            let pbr = material.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
+            let texture_info = pbr.base_color_texture.as_ref().ok_or(Error::GltfMisc("base color missing"))?;
+            Ok(Material {
+                base_color: texture_info.index,
+            })
+        })
+        .collect::<Result<Vec<Material>, Error>>()?;
+
     let mut visited_nodes = vec![false; nodes.len()];
     let mut queue = Vec::with_capacity(nodes.len());
     queue.extend_from_slice(&root_nodes);
@@ -258,13 +280,14 @@ fn create_gltf<'gpu>(
     Ok(Gltf {
         nodes,
         root_nodes,
+        materials,
         meshes,
         images,
     })
 }
 
 #[profiling::function]
-fn create_mesh_from_primitive<'gpu>(
+fn create_primitive<'gpu>(
     gpu: &'gpu Gpu,
     frame_index: FrameIndex,
     gltf: &gltf_json::GltfJson,
