@@ -1,7 +1,7 @@
-use crate::buffer_ops;
 use crate::descriptors::Descriptors;
 use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
-use crate::{Camera, Canvas, Driver, Error, Scene, Texture};
+use crate::{buffer_ops, texture};
+use crate::{Camera, Canvas, Driver, Error, Scene};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
@@ -45,6 +45,7 @@ struct BufferAllocation(vk::Buffer, vk_mem::Allocation);
 /// specific FrameLocal struct is reused. This allows for processing a
 /// frame while the previous one is still being rendered.
 struct FrameLocal {
+    in_use: AtomicBool,
     finished_command_buffers_sp: vk::Semaphore,
     frame_end_fence: vk::Fence,
     temp_buffers: (Sender<BufferAllocation>, Receiver<BufferAllocation>),
@@ -91,6 +92,7 @@ pub struct Gpu<'a> {
 
     pub(crate) descriptors: Descriptors,
     pub(crate) texture_indices: Vec<AtomicBool>,
+    fallback_white_image: Option<(vk::Image, vk::ImageView, vk_mem::Allocation)>,
 
     frame_locals: Vec<FrameLocal>,
     render_wait_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
@@ -100,6 +102,11 @@ impl Drop for Gpu<'_> {
     #[profiling::function]
     fn drop(&mut self) {
         let _ = self.wait_idle();
+
+        if let Some((image, image_view, allocation)) = self.fallback_white_image {
+            let _ = self.allocator.destroy_image(image, &allocation);
+            unsafe { self.device.destroy_image_view(image_view, None) };
+        }
 
         self.descriptors.clean_up(&self.device);
         unsafe { self.device.destroy_fence(self.frame_start_fence, None) };
@@ -364,6 +371,7 @@ impl Gpu<'_> {
                         .map_err(Error::VulkanSemaphoreCreation)
                 }?;
                 Ok(FrameLocal {
+                    in_use: AtomicBool::new(false),
                     finished_command_buffers_sp,
                     frame_end_fence,
                     temp_buffers: mpsc::channel(),
@@ -484,37 +492,46 @@ impl Gpu<'_> {
             texture_indices.push(AtomicBool::new(false));
         }
 
-        Ok((
-            Gpu {
-                driver,
+        let mut gpu = Gpu {
+            driver,
 
-                surface_ext,
-                swapchain_ext,
+            surface_ext,
+            swapchain_ext,
 
-                physical_device,
-                device,
-                allocator,
-                command_pool,
+            physical_device,
+            device,
+            allocator,
+            command_pool,
 
-                staging_cpu_buffer_pool,
-                temp_cpu_buffer_pools,
-                main_gpu_buffer_pool,
-                main_gpu_texture_pool,
+            staging_cpu_buffer_pool,
+            temp_cpu_buffer_pools,
+            main_gpu_buffer_pool,
+            main_gpu_texture_pool,
 
-                graphics_family_index,
-                surface_family_index,
-                graphics_queue,
-                surface_queue,
-                frame_start_fence,
+            graphics_family_index,
+            surface_family_index,
+            graphics_queue,
+            surface_queue,
+            frame_start_fence,
 
-                descriptors,
-                texture_indices,
+            descriptors,
+            texture_indices,
+            fallback_white_image: None,
 
-                frame_locals,
-                render_wait_semaphores: mpsc::channel(),
-            },
-            physical_devices,
-        ))
+            frame_locals,
+            render_wait_semaphores: mpsc::channel(),
+        };
+
+        // Create and set the white image to be used as a default texture for materials.
+        let frame_index = FrameIndex { index: 0 };
+        let pixels = &[0xFF, 0xFF, 0xFF, 0xFF];
+        let white_image = texture::create_texture(&gpu, frame_index, pixels, 1, 1, vk::Format::R8G8B8A8_UNORM)?;
+        let image_views = &[Some(white_image.1); 5];
+        gpu.descriptors
+            .set_uniform_images(&gpu, Pipeline::Default, 1, 1, image_views, 0..MAX_TEXTURE_COUNT);
+        gpu.fallback_white_image = Some(white_image);
+
+        Ok((gpu, physical_devices))
     }
 
     pub(crate) fn image_index(&self, frame_index: FrameIndex) -> usize {
@@ -654,21 +671,13 @@ impl Gpu<'_> {
             self.device.reset_fences(&fences).map_err(Error::VulkanFenceReset)?;
         }
 
-        self.cleanup_temp_buffers(frame_local)?;
-        self.cleanup_temp_command_buffers(frame_local);
-        self.cleanup_temp_semaphores(frame_local);
+        if frame_local.in_use.load(Ordering::Relaxed) {
+            self.cleanup_temp_buffers(frame_local)?;
+            self.cleanup_temp_command_buffers(frame_local);
+            self.cleanup_temp_semaphores(frame_local);
+        }
 
         Ok(frame_index)
-    }
-
-    /// Set the fallback texture. This should be set before loading
-    /// any other textures, otherwise they will be overwritten with
-    /// the fallback texture.
-    pub fn set_fallback_texture(&self, fallback_texture: &Texture<'_>) {
-        let image_view = fallback_texture.image_view;
-        let image_views = &[Some(image_view); 5];
-        self.descriptors
-            .set_uniform_images(self, Pipeline::Default, 1, 1, image_views, 0..MAX_TEXTURE_COUNT);
     }
 
     pub(crate) fn reserve_texture_index(
@@ -704,14 +713,22 @@ impl Gpu<'_> {
     /// future. Use [Gpu::wait_frame] to block until that
     /// happens.
     #[profiling::function]
-    pub fn render_frame(&self, frame_index: FrameIndex, canvas: &Canvas, camera: &Camera, scene: &Scene) -> Result<(), Error> {
+    pub fn render_frame(
+        &self,
+        frame_index: FrameIndex,
+        canvas: &Canvas,
+        camera: &Camera,
+        scene: &Scene,
+        debug_value: u32,
+    ) -> Result<(), Error> {
         let frame_local = self.frame_local(frame_index);
+        frame_local.in_use.store(true, Ordering::Relaxed);
         camera.update(canvas, frame_index)?;
 
         let image_index = self.image_index(frame_index);
         let command_buffer = canvas.command_buffers[image_index];
         let framebuffer = canvas.framebuffers[image_index];
-        self.record_commmand_buffer(frame_index, command_buffer, framebuffer, canvas, scene)?;
+        self.record_commmand_buffer(frame_index, command_buffer, framebuffer, canvas, scene, debug_value)?;
 
         let render_wait_semaphores = self.render_wait_semaphores.1.try_iter().collect::<Vec<WaitSemaphore>>();
         let mut wait_semaphores = Vec::with_capacity(render_wait_semaphores.len());
@@ -764,6 +781,7 @@ impl Gpu<'_> {
         framebuffer: vk::Framebuffer,
         canvas: &Canvas,
         scene: &Scene,
+        debug_value: u32,
     ) -> Result<(), Error> {
         unsafe {
             profiling::scope!("reset command buffer");
@@ -858,6 +876,7 @@ impl Gpu<'_> {
 
                 let push_constants = [PushConstantStruct {
                     texture_index: material.texture_index.0,
+                    debug_value,
                 }];
                 let push_constants = bytemuck::bytes_of(&push_constants);
                 unsafe {

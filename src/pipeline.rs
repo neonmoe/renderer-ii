@@ -10,6 +10,7 @@ pub const MAX_TEXTURE_COUNT: u32 = 128; // Keep in sync with shaders/constants.g
 pub struct PushConstantStruct {
     // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
     pub texture_index: u32,
+    pub debug_value: u32,
 }
 
 unsafe impl bytemuck::Zeroable for PushConstantStruct {}

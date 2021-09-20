@@ -1,5 +1,4 @@
 use log::LevelFilter;
-use neonvk::vk;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
@@ -51,10 +50,6 @@ fn fallible_main() -> anyhow::Result<()> {
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::new();
 
-    let pink = [0xDD, 0x33, 0xDD, 0xFF];
-    let fallback_texture = neonvk::Texture::new(&gpu, loading_frame_index, &pink, 1, 1, vk::Format::R8G8B8A8_UNORM)?;
-    gpu.set_fallback_texture(&fallback_texture);
-
     let mut resources = neonvk::GltfResources::default();
     resources::load_resources(&mut resources);
     let sponza_model = neonvk::Gltf::from_gltf(&gpu, loading_frame_index, include_str!("sponza/glTF/Sponza.gltf"), &mut resources)?;
@@ -73,7 +68,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let quad = neonvk::Mesh::new::<u16>(&gpu, loading_frame_index, quad_vertices, quad_indices, neonvk::Pipeline::Default)?;
 
     // Get the first frame out of the way, to upload the meshes.
-    gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new())?;
+    gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new(), 0)?;
 
     let start_time = Instant::now();
     let mut frame_instants = Vec::with_capacity(10_000);
@@ -83,6 +78,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut size_changed = false;
     let mut immediate_present = false;
+    let mut debug_value = 0;
     'running: loop {
         profiling::finish_frame!();
         let frame_start_seconds = (Instant::now() - start_time).as_secs_f32();
@@ -101,6 +97,16 @@ fn fallible_main() -> anyhow::Result<()> {
                     immediate_present = !immediate_present;
                     size_changed = true;
                 }
+
+                Event::KeyDown { keycode, .. } => match keycode {
+                    Some(Keycode::Num0) => debug_value = 0,
+                    Some(Keycode::Num1) => debug_value = 1,
+                    Some(Keycode::Num2) => debug_value = 2,
+                    Some(Keycode::Num3) => debug_value = 3,
+                    Some(Keycode::Num4) => debug_value = 4,
+                    Some(Keycode::Num5) => debug_value = 5,
+                    _ => {}
+                },
 
                 Event::Window {
                     win_event: WindowEvent::SizeChanged(_, _),
@@ -139,7 +145,7 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;
-        match gpu.render_frame(frame_index, &canvas, &camera, &scene) {
+        match gpu.render_frame(frame_index, &canvas, &camera, &scene, debug_value) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),

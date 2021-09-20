@@ -13,8 +13,30 @@ layout(set = 1, binding = 5) uniform texture2D emissive[MAX_TEXTURE_COUNT];
 
 layout(push_constant) uniform PushConstantStruct {
     int texture_index;
+    int debug_texture;
 } push_constant;
 
 void main() {
-    out_color = texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
+    switch (push_constant.debug_texture) {
+    // The actual rendering case, enabled by default and by pressing 0 in the sandbox:
+    default:
+        out_color = texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
+        break;
+    // Debugging cases, selectable with keys 1-5 in the sandbox:
+    case 1:
+        out_color = texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
+        break;
+    case 2:
+        out_color = texture(sampler2D(metallic_roughness[push_constant.texture_index], tex_sampler), in_uv);
+        break;
+    case 3:
+        out_color = texture(sampler2D(normal[push_constant.texture_index], tex_sampler), in_uv);
+        break;
+    case 4:
+        out_color = texture(sampler2D(occlusion[push_constant.texture_index], tex_sampler), in_uv);
+        break;
+    case 5:
+        out_color = texture(sampler2D(emissive[push_constant.texture_index], tex_sampler), in_uv);
+        break;
+    }
 }
