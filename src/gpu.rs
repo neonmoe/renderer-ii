@@ -38,6 +38,28 @@ pub struct GpuInfo {
 
 struct WaitSemaphore(vk::Semaphore, vk::PipelineStageFlags);
 
+struct BufferAllocation(vk::Buffer, vk_mem::Allocation);
+
+/// Synchronization objects and buffers used during a single frame,
+/// which is only cleaned up after enough frames have passed that the
+/// specific FrameLocal struct is reused. This allows for processing a
+/// frame while the previous one is still being rendered.
+struct FrameLocal {
+    finished_command_buffers_sp: vk::Semaphore,
+    frame_end_fence: vk::Fence,
+    temp_buffers: (Sender<BufferAllocation>, Receiver<BufferAllocation>),
+    temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
+    temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
+}
+
+#[derive(PartialEq, Eq, Hash)]
+pub(crate) struct TextureIndex(u32);
+impl TextureIndex {
+    pub(crate) unsafe fn inner(&self) -> u32 {
+        self.0
+    }
+}
+
 /// The main half of the rendering pair, along with [Canvas].
 ///
 /// Each instance of [Gpu] contains a handle to a single physical
@@ -72,20 +94,6 @@ pub struct Gpu<'a> {
 
     frame_locals: Vec<FrameLocal>,
     render_wait_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
-}
-
-struct BufferAllocation(vk::Buffer, vk_mem::Allocation);
-
-/// Synchronization objects and buffers used during a single frame,
-/// which is only cleaned up after enough frames have passed that the
-/// specific FrameLocal struct is reused. This allows for processing a
-/// frame while the previous one is still being rendered.
-struct FrameLocal {
-    finished_command_buffers_sp: vk::Semaphore,
-    frame_end_fence: vk::Fence,
-    temp_buffers: (Sender<BufferAllocation>, Receiver<BufferAllocation>),
-    temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
-    temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
 }
 
 impl Drop for Gpu<'_> {
@@ -658,11 +666,19 @@ impl Gpu<'_> {
     /// the fallback texture.
     pub fn set_fallback_texture(&self, fallback_texture: &Texture<'_>) {
         let image_view = fallback_texture.image_view;
+        let image_views = &[Some(image_view); 5];
         self.descriptors
-            .set_uniform_images(self, Pipeline::Default, (1, 1), image_view, 0..MAX_TEXTURE_COUNT);
+            .set_uniform_images(self, Pipeline::Default, 1, 1, image_views, 0..MAX_TEXTURE_COUNT);
     }
 
-    pub(crate) fn reserve_texture_index(&self, image_view: vk::ImageView) -> Result<u32, Error> {
+    pub(crate) fn reserve_texture_index(
+        &self,
+        base_color: Option<vk::ImageView>,
+        metallic_roughness: Option<vk::ImageView>,
+        normal: Option<vk::ImageView>,
+        occlusion: Option<vk::ImageView>,
+        emission: Option<vk::ImageView>,
+    ) -> Result<TextureIndex, Error> {
         let index = self
             .texture_indices
             .iter()
@@ -672,9 +688,10 @@ impl Gpu<'_> {
                     .is_ok()
             })
             .ok_or(Error::TextureIndexReserve)? as u32;
+        let image_views = &[base_color, metallic_roughness, normal, occlusion, emission];
         self.descriptors
-            .set_uniform_images(self, Pipeline::Default, (1, 1), image_view, index..index + 1);
-        Ok(index)
+            .set_uniform_images(self, Pipeline::Default, 1, 1, image_views, index..index + 1);
+        Ok(TextureIndex(index))
     }
 
     pub(crate) fn release_texture_index(&self, index: u32) {
@@ -818,7 +835,7 @@ impl Gpu<'_> {
                 };
             }
 
-            for (&(mesh, texture_index), transforms) in meshes {
+            for (&(mesh, material), transforms) in meshes {
                 profiling::scope!("mesh");
                 let (transform_buffer, allocation, alloc_info) = {
                     profiling::scope!("transform buffer creation");
@@ -839,7 +856,9 @@ impl Gpu<'_> {
                 self.add_temporary_buffer(frame_index, transform_buffer, allocation);
                 buffer_ops::copy_to_allocation(transforms, self, &allocation, &alloc_info)?;
 
-                let push_constants = [PushConstantStruct { texture_index }];
+                let push_constants = [PushConstantStruct {
+                    texture_index: material.texture_index.0,
+                }];
                 let push_constants = bytemuck::bytes_of(&push_constants);
                 unsafe {
                     profiling::scope!("push constants");

@@ -132,6 +132,30 @@ pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as u
                 descriptor_count: MAX_TEXTURE_COUNT,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
             },
+            DescriptorSetLayoutParams {
+                binding: 2,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            },
+            DescriptorSetLayoutParams {
+                binding: 3,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            },
+            DescriptorSetLayoutParams {
+                binding: 4,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            },
+            DescriptorSetLayoutParams {
+                binding: 5,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            },
         ],
     ],
 }];

@@ -1,4 +1,4 @@
-use crate::{Gltf, Mesh, Texture};
+use crate::{Gltf, Material, Mesh};
 use ultraviolet::Mat4;
 
 pub struct MeshIter<'a> {
@@ -18,7 +18,7 @@ impl MeshIter<'_> {
 }
 
 impl<'a> Iterator for MeshIter<'a> {
-    type Item = (&'a Mesh<'a>, &'a Texture<'a>, Mat4);
+    type Item = (&'a Mesh<'a>, &'a Material<'a>, Mat4);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.current_sub_iter.as_mut().and_then(Iterator::next) {
@@ -52,14 +52,13 @@ struct InnerMeshIter<'a> {
 }
 
 impl<'a> Iterator for InnerMeshIter<'a> {
-    type Item = (&'a Mesh<'a>, &'a Texture<'a>, Mat4);
+    type Item = (&'a Mesh<'a>, &'a Material<'a>, Mat4);
 
     fn next(&mut self) -> Option<Self::Item> {
         let meshes = self.gltf.meshes.get(self.mesh_index)?;
         let (mesh, material_index) = meshes.get(self.primitive_index)?;
         let material = self.gltf.materials.get(*material_index).unwrap();
-        let texture = self.gltf.images.get(material.base_color).unwrap();
         self.primitive_index += 1;
-        Some((mesh, texture, self.transform))
+        Some((mesh, material, self.transform))
     }
 }

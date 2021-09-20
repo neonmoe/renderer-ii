@@ -1,10 +1,9 @@
-use crate::{Mesh, Pipeline, Texture};
+use crate::{Material, Mesh, Pipeline};
 use std::collections::HashMap;
 use ultraviolet::Mat4;
 
-type TextureIndex = u32;
-type MeshMap<'m> = HashMap<(&'m Mesh<'m>, TextureIndex), Vec<Mat4>>;
-type PipelineMap<'m> = HashMap<Pipeline, MeshMap<'m>>;
+type MeshMap<'a> = HashMap<(&'a Mesh<'a>, &'a Material<'a>), Vec<Mat4>>;
+type PipelineMap<'a> = HashMap<Pipeline, MeshMap<'a>>;
 
 /// A container for the meshes rendered during a particular frame, and
 /// the transforms those meshes are rendered with.
@@ -29,9 +28,9 @@ impl<'a> Scene<'a> {
     // Because the same set of textures should be used across
     // materials. A slice of textures could solve this as well, but I
     // doubt that would perform that well.
-    pub fn queue(&mut self, mesh: &'a Mesh, texture: &Texture, transform: Mat4) {
+    pub fn queue(&mut self, mesh: &'a Mesh, material: &'a Material, transform: Mat4) {
         let mesh_map = self.pipeline_map.entry(mesh.pipeline).or_insert_with(HashMap::new);
-        let mesh_vec = mesh_map.entry((mesh, texture.texture_index)).or_insert_with(Vec::new);
+        let mesh_vec = mesh_map.entry((mesh, material)).or_insert_with(Vec::new);
         mesh_vec.push(transform);
     }
 }

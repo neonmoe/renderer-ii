@@ -30,8 +30,16 @@ pub use driver::Driver;
 mod error;
 pub use error::Error;
 
+mod gltf;
+pub use gltf::{Gltf, GltfResources, MeshIter};
+
 mod gpu;
 pub use gpu::{FrameIndex, Gpu, GpuId, GpuInfo};
+
+pub mod image_loading;
+
+mod material;
+pub use material::Material;
 
 mod mesh;
 pub use mesh::{IndexType, Mesh};
@@ -44,8 +52,3 @@ pub use scene::Scene;
 
 mod texture;
 pub use texture::Texture;
-
-mod gltf;
-pub use gltf::{Gltf, GltfResources, MeshIter};
-
-pub mod image_loading;

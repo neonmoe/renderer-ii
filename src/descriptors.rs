@@ -187,13 +187,17 @@ impl Descriptors {
         unsafe { gpu.device.update_descriptor_sets(&[write_descriptor_set], &[]) };
     }
 
+    /// Uploads the image_views to the given set, starting at
+    /// first_binding . The range parameter controls which indices of
+    /// the texture array are filled.
     #[profiling::function]
     pub(crate) fn set_uniform_images(
         &self,
         gpu: &Gpu,
         pipeline: Pipeline,
-        (set, binding): (u32, u32),
-        image_view: vk::ImageView,
+        set: u32,
+        first_binding: u32,
+        image_views: &[Option<vk::ImageView>],
         range: Range<u32>,
     ) {
         // NOTE: Technically, this could be overwriting textures still
@@ -204,20 +208,23 @@ impl Descriptors {
             let pipeline_idx = pipeline as usize;
             let set_idx = set as usize;
             let descriptor_set = frame_sets[pipeline_idx][set_idx];
-            let descriptor_image_info = vk::DescriptorImageInfo::builder()
-                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image_view(image_view)
-                .build();
-            let descriptor_image_infos = vec![descriptor_image_info; range.len()];
-            let params = &PIPELINE_PARAMETERS[pipeline_idx].descriptor_sets[set_idx][binding as usize];
-            let write_descriptor_sets = [vk::WriteDescriptorSet::builder()
-                .dst_set(descriptor_set)
-                .dst_binding(binding)
-                .dst_array_element(range.start)
-                .descriptor_type(params.descriptor_type)
-                .image_info(&descriptor_image_infos)
-                .build()];
-            unsafe { gpu.device.update_descriptor_sets(&write_descriptor_sets, &[]) };
+            for (i, image_view) in image_views.iter().filter_map(Option::as_ref).enumerate() {
+                let descriptor_image_info = vk::DescriptorImageInfo::builder()
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(*image_view)
+                    .build();
+                let descriptor_image_infos = vec![descriptor_image_info; range.len()];
+                let binding = first_binding + i as u32;
+                let params = &PIPELINE_PARAMETERS[pipeline_idx].descriptor_sets[set_idx][binding as usize];
+                let write_descriptor_sets = [vk::WriteDescriptorSet::builder()
+                    .dst_set(descriptor_set)
+                    .dst_binding(binding)
+                    .dst_array_element(range.start)
+                    .descriptor_type(params.descriptor_type)
+                    .image_info(&descriptor_image_infos)
+                    .build()];
+                unsafe { gpu.device.update_descriptor_sets(&write_descriptor_sets, &[]) };
+            }
         }
     }
 

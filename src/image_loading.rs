@@ -1,8 +1,52 @@
 use crate::Error;
 use ash::vk;
 
+/// If the `format` is a 'UNORM' format, and has an SRGB variant,
+/// return that.
+///
+/// Does not work for the 3D ASTC ones.
+pub fn to_srgb(format: vk::Format) -> vk::Format {
+    match format {
+        vk::Format::R8_UNORM => vk::Format::R8_SRGB,
+        vk::Format::R8G8_UNORM => vk::Format::R8G8_SRGB,
+        vk::Format::R8G8B8_UNORM => vk::Format::R8G8B8_SRGB,
+        vk::Format::R8G8B8A8_UNORM => vk::Format::R8G8B8A8_SRGB,
+        vk::Format::B8G8R8_UNORM => vk::Format::B8G8R8_SRGB,
+        vk::Format::B8G8R8A8_UNORM => vk::Format::B8G8R8A8_SRGB,
+        vk::Format::A8B8G8R8_UNORM_PACK32 => vk::Format::A8B8G8R8_SRGB_PACK32,
+        vk::Format::BC2_UNORM_BLOCK => vk::Format::BC2_SRGB_BLOCK,
+        vk::Format::BC3_UNORM_BLOCK => vk::Format::BC3_SRGB_BLOCK,
+        vk::Format::BC7_UNORM_BLOCK => vk::Format::BC7_SRGB_BLOCK,
+        vk::Format::BC1_RGB_UNORM_BLOCK => vk::Format::BC1_RGB_SRGB_BLOCK,
+        vk::Format::BC1_RGBA_UNORM_BLOCK => vk::Format::BC1_RGBA_SRGB_BLOCK,
+        vk::Format::ETC2_R8G8B8_UNORM_BLOCK => vk::Format::ETC2_R8G8B8_SRGB_BLOCK,
+        vk::Format::ETC2_R8G8B8A1_UNORM_BLOCK => vk::Format::ETC2_R8G8B8A1_SRGB_BLOCK,
+        vk::Format::ETC2_R8G8B8A8_UNORM_BLOCK => vk::Format::ETC2_R8G8B8A8_SRGB_BLOCK,
+        vk::Format::PVRTC1_2BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC1_2BPP_SRGB_BLOCK_IMG,
+        vk::Format::PVRTC1_4BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC1_4BPP_SRGB_BLOCK_IMG,
+        vk::Format::PVRTC2_2BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC2_2BPP_SRGB_BLOCK_IMG,
+        vk::Format::PVRTC2_4BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC2_4BPP_SRGB_BLOCK_IMG,
+        vk::Format::ASTC_4X4_UNORM_BLOCK => vk::Format::ASTC_4X4_SRGB_BLOCK,
+        vk::Format::ASTC_5X4_UNORM_BLOCK => vk::Format::ASTC_5X4_SRGB_BLOCK,
+        vk::Format::ASTC_5X5_UNORM_BLOCK => vk::Format::ASTC_5X5_SRGB_BLOCK,
+        vk::Format::ASTC_6X5_UNORM_BLOCK => vk::Format::ASTC_6X5_SRGB_BLOCK,
+        vk::Format::ASTC_6X6_UNORM_BLOCK => vk::Format::ASTC_6X6_SRGB_BLOCK,
+        vk::Format::ASTC_8X5_UNORM_BLOCK => vk::Format::ASTC_8X5_SRGB_BLOCK,
+        vk::Format::ASTC_8X6_UNORM_BLOCK => vk::Format::ASTC_8X6_SRGB_BLOCK,
+        vk::Format::ASTC_8X8_UNORM_BLOCK => vk::Format::ASTC_8X8_SRGB_BLOCK,
+        vk::Format::ASTC_10X5_UNORM_BLOCK => vk::Format::ASTC_10X5_SRGB_BLOCK,
+        vk::Format::ASTC_10X6_UNORM_BLOCK => vk::Format::ASTC_10X6_SRGB_BLOCK,
+        vk::Format::ASTC_10X8_UNORM_BLOCK => vk::Format::ASTC_10X8_SRGB_BLOCK,
+        vk::Format::ASTC_10X10_UNORM_BLOCK => vk::Format::ASTC_10X10_SRGB_BLOCK,
+        vk::Format::ASTC_12X10_UNORM_BLOCK => vk::Format::ASTC_12X10_SRGB_BLOCK,
+        vk::Format::ASTC_12X12_UNORM_BLOCK => vk::Format::ASTC_12X12_SRGB_BLOCK,
+        f => f,
+    }
+}
+
+/// Loads a png into (width, height, format, pixel bytes).
 #[profiling::function]
-pub fn load_png(bytes: &[u8], srgb: bool) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {
+pub fn load_png(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {
     use png::{BitDepth, ColorType, Decoder};
     let decoder = Decoder::new(bytes);
     let mut reader = decoder.read_info().map_err(Error::PngDecoding)?;
@@ -13,9 +57,7 @@ pub fn load_png(bytes: &[u8], srgb: bool) -> Result<(u32, u32, vk::Format, Vec<u
     let (bits, colors) = (info.bit_depth, info.color_type);
     let (format, needs_padding) = {
         match (bits, colors) {
-            (BitDepth::Eight, ColorType::Rgba) if srgb => (vk::Format::R8G8B8A8_SRGB, false),
             (BitDepth::Eight, ColorType::Rgba) => (vk::Format::R8G8B8A8_UNORM, false),
-            (BitDepth::Eight, ColorType::Rgb) if srgb => (vk::Format::R8G8B8A8_SRGB, true),
             (BitDepth::Eight, ColorType::Rgb) => (vk::Format::R8G8B8A8_UNORM, true),
             (BitDepth::Eight, ColorType::Grayscale) => (vk::Format::R8_UNORM, false),
             (_, _) => return Err(Error::UnsupportedImageFormat(bits, colors)),
@@ -27,8 +69,9 @@ pub fn load_png(bytes: &[u8], srgb: bool) -> Result<(u32, u32, vk::Format, Vec<u
     Ok((info.width, info.height, format, pixels))
 }
 
+/// Loads a jpeg into (width, height, format, pixel bytes).
 #[profiling::function]
-pub fn load_jpeg(bytes: &[u8], srgb: bool) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {
+pub fn load_jpeg(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {
     use jpeg_decoder::{Decoder, PixelFormat};
     let mut decoder = Decoder::new(bytes);
     let mut pixels = decoder.decode().map_err(Error::JpegDecoding)?;
@@ -36,7 +79,6 @@ pub fn load_jpeg(bytes: &[u8], srgb: bool) -> Result<(u32, u32, vk::Format, Vec<
     let (width, height) = (info.width as u32, info.height as u32);
     let (format, needs_padding) = match info.pixel_format {
         PixelFormat::L8 => (vk::Format::R8_UNORM, false),
-        PixelFormat::RGB24 if srgb => (vk::Format::R8G8B8A8_SRGB, true),
         PixelFormat::RGB24 => (vk::Format::R8G8B8A8_SRGB, true),
         PixelFormat::CMYK32 => return Err(Error::MiscImageDecoding("cmyk is not supported as pixel format")),
     };

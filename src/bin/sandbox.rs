@@ -52,7 +52,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let camera = neonvk::Camera::new();
 
     let pink = [0xDD, 0x33, 0xDD, 0xFF];
-    let fallback_texture = neonvk::Texture::new(&gpu, loading_frame_index, &pink, 1, 1, vk::Format::R8G8B8A8_SRGB)?;
+    let fallback_texture = neonvk::Texture::new(&gpu, loading_frame_index, &pink, 1, 1, vk::Format::R8G8B8A8_UNORM)?;
     gpu.set_fallback_texture(&fallback_texture);
 
     let mut resources = neonvk::GltfResources::default();
@@ -60,8 +60,10 @@ fn fallible_main() -> anyhow::Result<()> {
     let sponza_model = neonvk::Gltf::from_gltf(&gpu, loading_frame_index, include_str!("sponza/glTF/Sponza.gltf"), &mut resources)?;
     let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), &mut resources)?;
 
-    let (tex_w, tex_h, tex_format, tex_bytes) = neonvk::image_loading::load_png(include_bytes!("tree.png"), true)?;
+    let (tex_w, tex_h, tex_format, tex_bytes) = neonvk::image_loading::load_png(include_bytes!("tree.png"))?;
+    let tex_format = neonvk::image_loading::to_srgb(tex_format);
     let tree_texture = neonvk::Texture::new(&gpu, loading_frame_index, &tex_bytes, tex_w, tex_h, tex_format)?;
+    let tree_material = neonvk::Material::new(&gpu, Some(tree_texture), None, None, None, None)?;
 
     let quad_vertices: &[&[u8]] = &[
         bytemuck::bytes_of(&[[-0.5f32, 0.5, 0.0], [-0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [0.5, -0.5, 0.0]]),
@@ -122,18 +124,18 @@ fn fallible_main() -> anyhow::Result<()> {
             * Mat4::from_rotation_y(frame_start_seconds * 0.1);
         scene.queue(
             &quad,
-            &tree_texture,
+            &tree_material,
             Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 1.5, 0.0)) * rotation,
         );
-        for (mesh, texture, transform) in cube_model.mesh_iter() {
+        for (mesh, material, transform) in cube_model.mesh_iter() {
             scene.queue(
                 mesh,
-                texture,
+                material,
                 Mat4::from_translation(ultraviolet::Vec3::new(0.5, 1.5, 0.0)) * Mat4::from_scale(0.5) * rotation * transform,
             );
         }
-        for (mesh, texture, transform) in sponza_model.mesh_iter() {
-            scene.queue(mesh, texture, transform);
+        for (mesh, material, transform) in sponza_model.mesh_iter() {
+            scene.queue(mesh, material, transform);
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;

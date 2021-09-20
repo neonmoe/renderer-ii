@@ -1,4 +1,5 @@
-use crate::{image_loading, Error, FrameIndex, Gpu, Mesh, Pipeline, Texture};
+use crate::{image_loading, Error, FrameIndex, Gpu, Material, Mesh, Pipeline, Texture};
+use ash::vk;
 use std::borrow::Cow;
 use ultraviolet::{Isometry3, Mat4, Rotor3, Vec3, Vec4};
 
@@ -21,16 +22,11 @@ struct Node {
     transform: Mat4,
 }
 
-struct Material {
-    base_color: usize,
-}
-
 pub struct Gltf<'a> {
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
-    materials: Vec<Material>,
     meshes: Vec<Vec<(Mesh<'a>, usize)>>,
-    images: Vec<Texture<'a>>,
+    materials: Vec<Material<'a>>,
 }
 
 impl Gltf<'_> {
@@ -242,22 +238,36 @@ fn create_gltf<'gpu>(
             } else {
                 return Err(Error::GltfSpec("image does not have an uri nor a mimetype + buffer view"));
             };
-
-            // TODO: SRGB detection for glTF textures
-            let (width, height, format, pixels) = image_load(&bytes, false)?;
-            Texture::new(gpu, frame_index, &pixels, width, height, format)
+            image_load(&bytes)
         })
-        .collect::<Result<Vec<Texture<'_>>, Error>>()?;
+        .collect::<Result<Vec<(u32, u32, vk::Format, Vec<u8>)>, Error>>()?;
 
     let materials = gltf
         .materials
         .iter()
         .map(|material| {
+            let make_texture = |images: &[(u32, u32, vk::Format, Vec<u8>)], texture_info: &gltf_json::TextureInfo, srgb: bool| {
+                let (width, height, format, pixels) = images.get(texture_info.index).ok_or(Error::GltfOob("image"))?;
+                let format = if srgb { image_loading::to_srgb(*format) } else { *format };
+                Texture::new(gpu, frame_index, pixels, *width, *height, format)
+            };
             let pbr = material.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
-            let texture_info = pbr.base_color_texture.as_ref().ok_or(Error::GltfMisc("base color missing"))?;
-            Ok(Material {
-                base_color: texture_info.index,
-            })
+            macro_rules! handle_optional_result {
+                ($expression:expr) => {
+                    match $expression {
+                        Some(Ok(ok)) => Some(ok),
+                        Some(Err(err)) => return Err(err),
+                        None => None,
+                    }
+                };
+            }
+            let base_color = handle_optional_result!(pbr.base_color_texture.as_ref().map(|tex| make_texture(&images, tex, true)));
+            let metallic_roughness =
+                handle_optional_result!(pbr.metallic_roughness_texture.as_ref().map(|tex| make_texture(&images, tex, false)));
+            let normal = handle_optional_result!(material.normal_texture.as_ref().map(|tex| make_texture(&images, tex, false)));
+            let occlusion = handle_optional_result!(material.occlusion_texture.as_ref().map(|tex| make_texture(&images, tex, false)));
+            let emissive = handle_optional_result!(material.emissive_texture.as_ref().map(|tex| make_texture(&images, tex, false)));
+            Material::new(gpu, base_color, metallic_roughness, normal, occlusion, emissive)
         })
         .collect::<Result<Vec<Material>, Error>>()?;
 
@@ -282,7 +292,6 @@ fn create_gltf<'gpu>(
         root_nodes,
         materials,
         meshes,
-        images,
     })
 }
 
