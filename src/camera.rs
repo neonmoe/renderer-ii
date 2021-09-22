@@ -15,9 +15,10 @@ impl GlobalTransforms {
             _projection: projection::perspective_reversed_infinite_z_vk(
                 74f32.to_radians(),
                 canvas.extent.width as f32 / canvas.extent.height as f32,
-                0.1,
+                0.5, // Lower values seem to cause Z-fighting in the sponza scene.
+                     // Might be better to use two projection matrixes for e.g. 0.1->5, 5->inf.
             ),
-            _view: Mat4::look_at(Vec3::new(0.0, 1.6, 1.5), Vec3::new(0.0, 1.6, 0.0), Vec3::new(0.0, 1.0, 0.0)),
+            _view: Mat4::look_at(Vec3::new(3.0, 1.6, 0.5), Vec3::new(0.0, 1.6, 0.0), Vec3::new(0.0, 1.0, 0.0)),
         }
     }
 }

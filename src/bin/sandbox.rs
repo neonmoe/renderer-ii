@@ -79,6 +79,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut size_changed = false;
     let mut immediate_present = false;
     let mut debug_value = 0;
+    let mut render_test_meshes = true;
     'running: loop {
         profiling::finish_frame!();
         let frame_start_seconds = (Instant::now() - start_time).as_secs_f32();
@@ -105,6 +106,7 @@ fn fallible_main() -> anyhow::Result<()> {
                     Some(Keycode::Num3) => debug_value = 3,
                     Some(Keycode::Num4) => debug_value = 4,
                     Some(Keycode::Num5) => debug_value = 5,
+                    Some(Keycode::T) => render_test_meshes = !render_test_meshes,
                     _ => {}
                 },
 
@@ -125,23 +127,25 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         let mut scene = neonvk::Scene::new();
-        let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1)
-            * Mat4::from_rotation_x(frame_start_seconds * 0.1)
-            * Mat4::from_rotation_y(frame_start_seconds * 0.1);
-        scene.queue(
-            &quad,
-            &tree_material,
-            Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 1.5, 0.0)) * rotation,
-        );
-        for (mesh, material, transform) in cube_model.mesh_iter() {
-            scene.queue(
-                mesh,
-                material,
-                Mat4::from_translation(ultraviolet::Vec3::new(0.5, 1.5, 0.0)) * Mat4::from_scale(0.5) * rotation * transform,
-            );
-        }
         for (mesh, material, transform) in sponza_model.mesh_iter() {
             scene.queue(mesh, material, transform);
+        }
+        if render_test_meshes {
+            let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1)
+                * Mat4::from_rotation_x(frame_start_seconds * 0.1)
+                * Mat4::from_rotation_y(frame_start_seconds * 0.1);
+            scene.queue(
+                &quad,
+                &tree_material,
+                Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 1.5, 0.0)) * rotation,
+            );
+            for (mesh, material, transform) in cube_model.mesh_iter() {
+                scene.queue(
+                    mesh,
+                    material,
+                    Mat4::from_translation(ultraviolet::Vec3::new(0.5, 1.5, 0.0)) * Mat4::from_scale(0.5) * rotation * transform,
+                );
+            }
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;
