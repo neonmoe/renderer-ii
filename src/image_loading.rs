@@ -44,6 +44,31 @@ pub fn to_srgb(format: vk::Format) -> vk::Format {
     }
 }
 
+/// If the `format` is a 'UNORM' format, return the 'SNORM' variant if
+/// there is one.
+pub fn to_snorm(format: vk::Format) -> vk::Format {
+    match format {
+        vk::Format::R8_UNORM => vk::Format::R8_SNORM,
+        vk::Format::R8G8_UNORM => vk::Format::R8G8_SNORM,
+        vk::Format::R8G8B8_UNORM => vk::Format::R8G8B8_SNORM,
+        vk::Format::R8G8B8A8_UNORM => vk::Format::R8G8B8A8_SNORM,
+        vk::Format::B8G8R8_UNORM => vk::Format::B8G8R8_SNORM,
+        vk::Format::B8G8R8A8_UNORM => vk::Format::B8G8R8A8_SNORM,
+        vk::Format::A8B8G8R8_UNORM_PACK32 => vk::Format::A8B8G8R8_SNORM_PACK32,
+        vk::Format::A2R10G10B10_UNORM_PACK32 => vk::Format::A2R10G10B10_SNORM_PACK32,
+        vk::Format::A2B10G10R10_UNORM_PACK32 => vk::Format::A2B10G10R10_SNORM_PACK32,
+        vk::Format::R16_UNORM => vk::Format::R16_SNORM,
+        vk::Format::R16G16_UNORM => vk::Format::R16G16_SNORM,
+        vk::Format::R16G16B16_UNORM => vk::Format::R16G16B16_SNORM,
+        vk::Format::R16G16B16A16_UNORM => vk::Format::R16G16B16A16_SNORM,
+        vk::Format::BC4_UNORM_BLOCK => vk::Format::BC4_SNORM_BLOCK,
+        vk::Format::BC5_UNORM_BLOCK => vk::Format::BC5_SNORM_BLOCK,
+        vk::Format::EAC_R11_UNORM_BLOCK => vk::Format::EAC_R11_SNORM_BLOCK,
+        vk::Format::EAC_R11G11_UNORM_BLOCK => vk::Format::EAC_R11G11_SNORM_BLOCK,
+        f => f,
+    }
+}
+
 /// Loads a png into (width, height, format, pixel bytes).
 #[profiling::function]
 pub fn load_png(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {

@@ -99,6 +99,16 @@ pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as u
             stride: mem::size_of::<Vec2>() as u32,
             input_rate: vk::VertexInputRate::VERTEX,
         },
+        vk::VertexInputBindingDescription {
+            binding: 3,
+            stride: mem::size_of::<Vec3>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        },
+        vk::VertexInputBindingDescription {
+            binding: 4,
+            stride: mem::size_of::<Vec4>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        },
     ],
     attributes: &[
         INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
@@ -115,6 +125,18 @@ pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as u
             binding: 2,
             location: 5,
             format: vk::Format::R32G32_SFLOAT,
+            offset: 0,
+        },
+        vk::VertexInputAttributeDescription {
+            binding: 3,
+            location: 6,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: 0,
+        },
+        vk::VertexInputAttributeDescription {
+            binding: 4,
+            location: 7,
+            format: vk::Format::R32G32B32A32_SFLOAT,
             offset: 0,
         },
     ],

@@ -245,13 +245,32 @@ fn create_gltf<'gpu>(
     let materials = gltf
         .materials
         .iter()
-        .map(|material| {
-            let make_texture = |images: &[(u32, u32, vk::Format, Vec<u8>)], texture_info: &gltf_json::TextureInfo, srgb: bool| {
-                let (width, height, format, pixels) = images.get(texture_info.index).ok_or(Error::GltfOob("image"))?;
-                let format = if srgb { image_loading::to_srgb(*format) } else { *format };
-                Texture::new(gpu, frame_index, pixels, *width, *height, format)
+        .map(|mat| {
+            enum TextureKind {
+                Srgb,
+                Normal,
+                Linear,
+            }
+            use TextureKind::*;
+
+            let mktex = |images: &[(u32, u32, vk::Format, Vec<u8>)], texture_info: &gltf_json::TextureInfo, kind: TextureKind| {
+                let texture = match gltf.textures.get(texture_info.index) {
+                    Some(tex) => tex,
+                    None => return Some(Err(Error::GltfOob("texture"))),
+                };
+                let image_index = texture.source?;
+                let (width, height, format, pixels) = match images.get(image_index) {
+                    Some(image) => image,
+                    None => return Some(Err(Error::GltfOob("image"))),
+                };
+                let format = match kind {
+                    Srgb => image_loading::to_srgb(*format),
+                    Normal => image_loading::to_snorm(*format),
+                    _ => *format,
+                };
+                Some(Texture::new(gpu, frame_index, pixels, *width, *height, format))
             };
-            let pbr = material.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
+
             macro_rules! handle_optional_result {
                 ($expression:expr) => {
                     match $expression {
@@ -261,12 +280,14 @@ fn create_gltf<'gpu>(
                     }
                 };
             }
-            let base_color = handle_optional_result!(pbr.base_color_texture.as_ref().map(|tex| make_texture(&images, tex, true)));
+
+            let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
+            let base_color = handle_optional_result!(pbr.base_color_texture.as_ref().and_then(|tex| mktex(&images, tex, Srgb)));
             let metallic_roughness =
-                handle_optional_result!(pbr.metallic_roughness_texture.as_ref().map(|tex| make_texture(&images, tex, false)));
-            let normal = handle_optional_result!(material.normal_texture.as_ref().map(|tex| make_texture(&images, tex, false)));
-            let occlusion = handle_optional_result!(material.occlusion_texture.as_ref().map(|tex| make_texture(&images, tex, false)));
-            let emissive = handle_optional_result!(material.emissive_texture.as_ref().map(|tex| make_texture(&images, tex, false)));
+                handle_optional_result!(pbr.metallic_roughness_texture.as_ref().and_then(|tex| mktex(&images, tex, Linear)));
+            let normal = handle_optional_result!(mat.normal_texture.as_ref().and_then(|tex| mktex(&images, tex, Normal)));
+            let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex, Linear)));
+            let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex, Srgb)));
             Material::new(gpu, base_color, metallic_roughness, normal, occlusion, emissive)
         })
         .collect::<Result<Vec<Material>, Error>>()?;
@@ -309,16 +330,34 @@ fn create_primitive<'gpu>(
     let pos_accessor = *primitive
         .attributes
         .get("POSITION")
-        .ok_or(Error::GltfMisc("missing POSITION attribute"))?;
+        .ok_or(Error::GltfMisc("missing position attributes"))?;
     let pos_buffer = get_slice_from_accessor(gltf, buffers, pos_accessor, GLTF_FLOAT, "VEC3")?;
 
     let tex_accessor = *primitive
         .attributes
         .get("TEXCOORD_0")
-        .ok_or(Error::GltfMisc("missing TEXCOORD_0 attribute"))?;
+        .ok_or(Error::GltfMisc("missing UV0 attributes"))?;
     let tex_buffer = get_slice_from_accessor(gltf, buffers, tex_accessor, GLTF_FLOAT, "VEC2")?;
 
-    let mesh = Mesh::new::<u16>(gpu, frame_index, &[pos_buffer, tex_buffer], index_buffer, Pipeline::Default)?;
+    let normal_accessor = *primitive
+        .attributes
+        .get("NORMAL")
+        .ok_or(Error::GltfMisc("missing normal attributes"))?;
+    let normal_buffer = get_slice_from_accessor(gltf, buffers, normal_accessor, GLTF_FLOAT, "VEC3")?;
+
+    let tangent_accessor = *primitive
+        .attributes
+        .get("TANGENT")
+        .ok_or(Error::GltfMisc("missing tangent attributes"))?;
+    let tangent_buffer = get_slice_from_accessor(gltf, buffers, tangent_accessor, GLTF_FLOAT, "VEC4")?;
+
+    let mesh = Mesh::new::<u16>(
+        gpu,
+        frame_index,
+        &[pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
+        index_buffer,
+        Pipeline::Default,
+    )?;
 
     Ok(mesh)
 }

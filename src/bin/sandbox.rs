@@ -63,6 +63,13 @@ fn fallible_main() -> anyhow::Result<()> {
     let quad_vertices: &[&[u8]] = &[
         bytemuck::bytes_of(&[[-0.5f32, 0.5, 0.0], [-0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [0.5, -0.5, 0.0]]),
         bytemuck::bytes_of(&[[0.0f32, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]),
+        bytemuck::bytes_of(&[[0.0f32, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]]),
+        bytemuck::bytes_of(&[
+            [1.0f32, 0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 1.0],
+        ]),
     ];
     let quad_indices: &[u8] = bytemuck::bytes_of(&[0u16, 1, 2, 3, 2, 1]);
     let quad = neonvk::Mesh::new::<u16>(&gpu, loading_frame_index, quad_vertices, quad_indices, neonvk::Pipeline::Default)?;
