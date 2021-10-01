@@ -18,8 +18,12 @@ layout(location = 2) out vec4 out_tangent;
 void main() {
     gl_Position = uf_transforms.proj * uf_transforms.view * in_transform * vec4(in_position, 1.0);
     out_uv = in_uv;
-    mat4 normalTransform = transpose(inverse(in_transform));
-    out_normal = normalize((normalTransform * vec4(in_normal, 1.0)).xyz);
-    // Not sure if tangent.w would be affected by the normalTransform. Would be neat if it wasn't.
-    out_tangent = vec4(normalize((normalTransform * vec4(in_tangent.xyz, 1.0)).xyz), 1.0);
+    // Normals and tangents should not be translated, and the translation is specified in the 4th column.
+    mat3 rotation_scale = mat3(in_transform);
+    out_tangent = vec4(normalize(rotation_scale * in_tangent.xyz), in_tangent.w);
+    // For non-uniform scales, this scales the normals appropriately (otherwise only rotation would be enough)
+    mat3 normal_transform = transpose(inverse(rotation_scale));
+    out_normal = normalize(normal_transform * in_normal);
+    // Ensure 90 degree angle between normal and tangent.
+    out_tangent.xyz = normalize(out_tangent.xyz - dot(out_tangent.xyz, out_normal) * out_normal);
 }

@@ -28,7 +28,8 @@ void main() {
     vec4 emissive = texture(sampler2D(emissive[push_constant.texture_index], tex_sampler), in_uv);
 
     vec3 bitangent = in_tangent.w * cross(in_normal, in_tangent.xyz);
-    vec3 normal = normalize(normal_tex.x * in_tangent.xyz + normal_tex.y * bitangent + normal_tex.z * in_normal);
+    mat3 tangent_to_world = mat3(in_tangent.xyz, bitangent, in_normal);
+    vec3 normal = tangent_to_world * normal_tex;
 
     switch (push_constant.debug_texture) {
     // The actual rendering case, enabled by default and by pressing 0 in the sandbox:
