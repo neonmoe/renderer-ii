@@ -4,25 +4,17 @@ use crate::{Error, FrameIndex, Gpu};
 use ash::version::DeviceV1_0;
 use ash::vk;
 
-pub struct Texture<'a> {
-    gpu: &'a Gpu<'a>,
+pub struct Texture {
     pub(crate) image_view: vk::ImageView,
 }
 
-impl Texture<'_> {
+impl Texture {
     #[profiling::function]
-    pub fn new<'a>(
-        gpu: &'a Gpu<'_>,
-        frame_index: FrameIndex,
-        pixels: &[u8],
-        width: u32,
-        height: u32,
-        format: vk::Format,
-    ) -> Result<Texture<'a>, Error> {
+    pub fn new(gpu: &Gpu, frame_index: FrameIndex, pixels: &[u8], width: u32, height: u32, format: vk::Format) -> Result<Texture, Error> {
         let (upload_fence, staging_buffer, image) = create_texture(gpu, frame_index, pixels, width, height, format)?;
         let image_view = image.1;
         gpu.resources.add_image(upload_fence, Some(staging_buffer), image);
-        Ok(Texture { gpu, image_view })
+        Ok(Texture { image_view })
     }
 }
 

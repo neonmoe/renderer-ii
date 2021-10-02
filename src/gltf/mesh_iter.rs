@@ -2,13 +2,13 @@ use crate::{Gltf, Material, Mesh};
 use ultraviolet::Mat4;
 
 pub struct MeshIter<'a> {
-    gltf: &'a Gltf<'a>,
+    gltf: &'a Gltf,
     node_queue: Vec<usize>,
     current_sub_iter: Option<InnerMeshIter<'a>>,
 }
 
 impl MeshIter<'_> {
-    pub(crate) fn new<'a>(gltf: &'a Gltf<'a>, node_queue: Vec<usize>) -> MeshIter<'a> {
+    pub(crate) fn new(gltf: &Gltf, node_queue: Vec<usize>) -> MeshIter<'_> {
         MeshIter {
             gltf,
             node_queue,
@@ -18,7 +18,7 @@ impl MeshIter<'_> {
 }
 
 impl<'a> Iterator for MeshIter<'a> {
-    type Item = (&'a Mesh<'a>, &'a Material<'a>, Mat4);
+    type Item = (&'a Mesh, &'a Material, Mat4);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.current_sub_iter.as_mut().and_then(Iterator::next) {
@@ -45,14 +45,14 @@ impl<'a> Iterator for MeshIter<'a> {
 }
 
 struct InnerMeshIter<'a> {
-    gltf: &'a Gltf<'a>,
+    gltf: &'a Gltf,
     mesh_index: usize,
     primitive_index: usize,
     transform: Mat4,
 }
 
 impl<'a> Iterator for InnerMeshIter<'a> {
-    type Item = (&'a Mesh<'a>, &'a Material<'a>, Mat4);
+    type Item = (&'a Mesh, &'a Material, Mat4);
 
     fn next(&mut self) -> Option<Self::Item> {
         let meshes = self.gltf.meshes.get(self.mesh_index)?;

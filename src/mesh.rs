@@ -5,9 +5,9 @@ use std::{mem, ptr};
 use ultraviolet::Vec4;
 
 #[derive(PartialEq, Eq, Hash)]
-pub struct Mesh<'a> {
+pub struct Mesh {
     /// Contains the vertices and indices.
-    pub(crate) mesh_buffer: Buffer<'a>,
+    pub(crate) mesh_buffer: Buffer,
 
     pub pipeline: Pipeline,
     pub(crate) index_count: u32,
@@ -16,7 +16,7 @@ pub struct Mesh<'a> {
     pub(crate) vertices_offsets: Vec<vk::DeviceSize>,
 }
 
-impl Mesh<'_> {
+impl Mesh {
     /// Creates a new mesh. Ensure that the vertices match the
     /// pipeline.
     ///
@@ -25,13 +25,13 @@ impl Mesh<'_> {
     /// packed.
     // TODO: Meshes that refer to existing buffers, instead of owning them themselves
     #[profiling::function]
-    pub fn new<'a, I: IndexType>(
-        gpu: &'a Gpu<'_>,
+    pub fn new<I: IndexType>(
+        gpu: &Gpu,
         frame_index: FrameIndex,
         vertices: &[&[u8]],
         indices: &[u8],
         pipeline: Pipeline,
-    ) -> Result<Mesh<'a>, Error> {
+    ) -> Result<Mesh, Error> {
         // The destination memory is aligned to 16 bytes (size of
         // Vec4), as well as the individual slices in it. Just to make
         // sure that alignment isn't causing problems.

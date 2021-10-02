@@ -22,20 +22,20 @@ struct Node {
     transform: Mat4,
 }
 
-pub struct Gltf<'a> {
+pub struct Gltf {
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
-    meshes: Vec<Vec<(Mesh<'a>, usize)>>,
-    materials: Vec<Material<'a>>,
+    meshes: Vec<Vec<(Mesh, usize)>>,
+    materials: Vec<Material>,
 }
 
-impl Gltf<'_> {
+impl Gltf {
     /// Loads the glTF scene from the contents of a .glb file.
     ///
     /// Any external files referenced in the glTF are searched
     /// relative to `directory`.
     #[profiling::function]
-    pub fn from_glb<'gpu>(gpu: &'gpu Gpu, frame_index: FrameIndex, glb: &[u8], resources: &mut GltfResources) -> Result<Gltf<'gpu>, Error> {
+    pub fn from_glb(gpu: &Gpu, frame_index: FrameIndex, glb: &[u8], resources: &mut GltfResources) -> Result<Gltf, Error> {
         fn read_u32(bytes: &[u8]) -> u32 {
             debug_assert!(bytes.len() == 4);
             if let [a, b, c, d] = *bytes {
@@ -102,12 +102,7 @@ impl Gltf<'_> {
     /// Any external files referenced in the glTF are searched
     /// relative to `directory`.
     #[profiling::function]
-    pub fn from_gltf<'gpu>(
-        gpu: &'gpu Gpu,
-        frame_index: FrameIndex,
-        gltf: &str,
-        resources: &mut GltfResources,
-    ) -> Result<Gltf<'gpu>, Error> {
+    pub fn from_gltf(gpu: &Gpu, frame_index: FrameIndex, gltf: &str, resources: &mut GltfResources) -> Result<Gltf, Error> {
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(gltf).map_err(Error::GltfJsonDeserialization)?;
         create_gltf(gpu, frame_index, gltf, resources, None)
     }
@@ -118,13 +113,13 @@ impl Gltf<'_> {
 }
 
 #[profiling::function]
-fn create_gltf<'gpu>(
-    gpu: &'gpu Gpu,
+fn create_gltf(
+    gpu: &Gpu,
     frame_index: FrameIndex,
     gltf: gltf_json::GltfJson,
     resources: &mut GltfResources,
     bin_buffer: Option<&[u8]>,
-) -> Result<Gltf<'gpu>, Error> {
+) -> Result<Gltf, Error> {
     if let Some(min_version) = &gltf.asset.min_version {
         let min_version_f32 = str::parse::<f32>(min_version);
         if min_version_f32 != Ok(2.0) {
@@ -166,9 +161,9 @@ fn create_gltf<'gpu>(
                     let material_index = primitive.material.ok_or(Error::GltfMisc("material missing"))?;
                     Ok((mesh, material_index))
                 })
-                .collect::<Result<Vec<(Mesh<'_>, usize)>, Error>>()
+                .collect::<Result<Vec<(Mesh, usize)>, Error>>()
         })
-        .collect::<Result<Vec<Vec<(Mesh<'_>, usize)>>, Error>>()?;
+        .collect::<Result<Vec<Vec<(Mesh, usize)>>, Error>>()?;
 
     let nodes = gltf
         .nodes
@@ -317,13 +312,13 @@ fn create_gltf<'gpu>(
 }
 
 #[profiling::function]
-fn create_primitive<'gpu>(
-    gpu: &'gpu Gpu,
+fn create_primitive(
+    gpu: &Gpu,
     frame_index: FrameIndex,
     gltf: &gltf_json::GltfJson,
     buffers: &[Cow<'_, [u8]>],
     primitive: &gltf_json::Primitive,
-) -> Result<Mesh<'gpu>, Error> {
+) -> Result<Mesh, Error> {
     let index_accessor = primitive.indices.ok_or(Error::GltfMisc("missing indices"))?;
     let index_buffer = get_slice_from_accessor(gltf, buffers, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
 

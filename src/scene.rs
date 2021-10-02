@@ -2,7 +2,7 @@ use crate::{Material, Mesh, Pipeline};
 use std::collections::HashMap;
 use ultraviolet::Mat4;
 
-type MeshMap<'a> = HashMap<(&'a Mesh<'a>, &'a Material<'a>), Vec<Mat4>>;
+type MeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
 type PipelineMap<'a> = HashMap<Pipeline, MeshMap<'a>>;
 
 /// A container for the meshes rendered during a particular frame, and

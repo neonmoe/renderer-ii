@@ -54,11 +54,6 @@ struct FrameLocal {
 
 #[derive(PartialEq, Eq, Hash)]
 pub(crate) struct TextureIndex(u32);
-impl TextureIndex {
-    pub(crate) unsafe fn inner(&self) -> u32 {
-        self.0
-    }
-}
 
 /// The main half of the rendering pair, along with [Canvas].
 ///

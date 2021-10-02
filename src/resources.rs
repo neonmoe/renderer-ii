@@ -1,7 +1,9 @@
 use crate::Error;
 use ash::Device;
 use ash::{version::DeviceV1_0, vk};
-use std::sync::Mutex; // for now
+use std::sync::Mutex; // TODO: Make Resources mutable
+
+// TODO: Add resource removal (via refcounting?)
 
 pub(crate) struct AllocatedImage(pub(crate) vk::Image, pub(crate) vk::ImageView, pub(crate) vk_mem::Allocation);
 pub(crate) struct AllocatedBuffer(pub(crate) vk::Buffer, pub(crate) vk_mem::Allocation);

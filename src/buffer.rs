@@ -5,26 +5,25 @@ use ash::vk;
 use std::hash::{Hash, Hasher};
 use std::mem;
 
-pub struct Buffer<'a> {
-    gpu: &'a Gpu<'a>,
+pub struct Buffer {
     pub(crate) buffer: vk::Buffer,
 }
 
-impl PartialEq for Buffer<'_> {
+impl PartialEq for Buffer {
     fn eq(&self, other: &Self) -> bool {
         self.buffer == other.buffer
     }
 }
 
-impl Eq for Buffer<'_> {}
+impl Eq for Buffer {}
 
-impl Hash for Buffer<'_> {
+impl Hash for Buffer {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.buffer.hash(state);
     }
 }
 
-impl Buffer<'_> {
+impl Buffer {
     /// Creates a new buffer. Ensure that the vertices match the
     /// pipeline. If not `editable`, call [Gpu::wait_buffer_uploads]
     /// after your buffer creation code, before they're rendered.
@@ -32,7 +31,7 @@ impl Buffer<'_> {
     /// Currently the buffers are always created as INDEX | VERTEX |
     /// UNIFORM buffers.
     #[profiling::function]
-    pub fn new<'a, T>(gpu: &'a Gpu<'_>, frame_index: FrameIndex, data: &[T]) -> Result<Buffer<'a>, Error> {
+    pub fn new<T>(gpu: &Gpu, frame_index: FrameIndex, data: &[T]) -> Result<Buffer, Error> {
         let buffer_size = (data.len() * mem::size_of::<T>()) as vk::DeviceSize;
         let buffer_create_info = vk::BufferCreateInfo::builder()
             .size(buffer_size)
@@ -63,6 +62,6 @@ impl Buffer<'_> {
             AllocatedBuffer(buffer, allocation),
         );
 
-        Ok(Buffer { gpu, buffer })
+        Ok(Buffer { buffer })
     }
 }
