@@ -7,7 +7,7 @@ use std::{mem, ptr};
 #[profiling::function]
 pub(crate) fn copy_to_allocation<T>(
     src: &[T],
-    gpu: &Gpu,
+    allocator: &vk_mem::Allocator,
     allocation: &vk_mem::Allocation,
     alloc_info: &vk_mem::AllocationInfo,
 ) -> Result<(), Error> {
@@ -15,7 +15,7 @@ pub(crate) fn copy_to_allocation<T>(
     let size = src.len() * mem::size_of::<T>();
     let src_ptr = src.as_ptr() as *const u8;
     unsafe { ptr::copy_nonoverlapping(src_ptr, dst_ptr, size) };
-    gpu.allocator
+    allocator
         .flush_allocation(allocation, 0, vk::WHOLE_SIZE as usize)
         .map_err(Error::VmaFlushAllocation)?;
     Ok(())
@@ -25,30 +25,29 @@ pub(crate) fn copy_to_allocation<T>(
 pub(crate) fn start_buffer_upload(
     gpu: &Gpu,
     frame_index: FrameIndex,
-    pool: vk_mem::AllocatorPool,
     buffer: vk::Buffer,
     buffer_size: vk::DeviceSize,
-) -> Result<(vk::Buffer, vk_mem::Allocation), Error> {
-    let (buffer, allocation) = gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::VERTEX_INPUT, |cb| {
-        queue_buffer_copy(&gpu.device, cb, &gpu.allocator, pool, buffer, buffer_size)
+) -> Result<(vk::Fence, vk::Buffer, vk_mem::Allocation), Error> {
+    let (upload_fence, (buffer, allocation)) = gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::VERTEX_INPUT, |cb| {
+        queue_buffer_copy(&gpu.device, cb, &gpu.allocator, buffer, buffer_size)
     })?;
-    Ok((buffer, allocation))
+    Ok((upload_fence, buffer, allocation))
 }
 
 #[profiling::function]
 pub(crate) fn start_image_upload(
     gpu: &Gpu,
     frame_index: FrameIndex,
-    pool: vk_mem::AllocatorPool,
     pixels: vk::Buffer,
     extent: vk::Extent3D,
     format: vk::Format,
-) -> Result<(vk::Image, vk_mem::Allocation, u32), Error> {
-    let (image, allocation, mip_levels) = gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |cb| {
-        queue_image_copy(&gpu.device, cb, &gpu.allocator, pool, pixels, extent, format)
-    })?;
+) -> Result<(vk::Fence, vk::Image, vk_mem::Allocation, u32), Error> {
+    let (upload_fence, (image, allocation, mip_levels)) =
+        gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |cb| {
+            queue_image_copy(&gpu.device, cb, &gpu.allocator, pixels, extent, format)
+        })?;
 
-    Ok((image, allocation, mip_levels))
+    Ok((upload_fence, image, allocation, mip_levels))
 }
 
 #[profiling::function]
@@ -56,7 +55,6 @@ fn queue_buffer_copy(
     device: &Device,
     command_buffer: vk::CommandBuffer,
     allocator: &vk_mem::Allocator,
-    pool: vk_mem::AllocatorPool,
     src: vk::Buffer,
     buffer_size: vk::DeviceSize,
 ) -> Result<(vk::Buffer, vk_mem::Allocation), Error> {
@@ -71,7 +69,7 @@ fn queue_buffer_copy(
         )
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
     let allocation_create_info = vk_mem::AllocationCreateInfo {
-        pool: Some(pool),
+        required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
         ..Default::default()
     };
     let (buffer, allocation, _) = {
@@ -91,7 +89,6 @@ fn queue_image_copy(
     device: &Device,
     command_buffer: vk::CommandBuffer,
     allocator: &vk_mem::Allocator,
-    pool: vk_mem::AllocatorPool,
     pixel_buffer: vk::Buffer,
     mut extent: vk::Extent3D,
     format: vk::Format,
@@ -109,7 +106,7 @@ fn queue_image_copy(
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .samples(vk::SampleCountFlags::TYPE_1);
     let allocation_info = vk_mem::AllocationCreateInfo {
-        pool: Some(pool),
+        required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
         ..Default::default()
     };
     let (image, allocation, _) = allocator

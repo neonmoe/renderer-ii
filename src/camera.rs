@@ -53,7 +53,7 @@ impl Camera {
                 .map_err(Error::VmaBufferAllocation)?
         };
         gpu.add_temporary_buffer(frame_index, buffer, allocation);
-        buffer_ops::copy_to_allocation(&[GlobalTransforms::new(canvas)], gpu, &allocation, &alloc_info)?;
+        buffer_ops::copy_to_allocation(&[GlobalTransforms::new(canvas)], &gpu.allocator, &allocation, &alloc_info)?;
         gpu.descriptors
             .set_uniform_buffer(gpu, frame_index, Pipeline::Default, 0, 0, buffer);
         Ok(())

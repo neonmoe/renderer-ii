@@ -13,6 +13,7 @@ mod buffer;
 mod buffer_ops;
 mod debug_utils;
 mod descriptors;
+mod resources;
 
 // public-facing modules:
 

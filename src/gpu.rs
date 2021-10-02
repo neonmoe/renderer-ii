@@ -1,5 +1,6 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
+use crate::resources::{AllocatedBuffer, Resources};
 use crate::{buffer_ops, texture};
 use crate::{Camera, Canvas, Driver, Error, Scene};
 use ash::extensions::{ext, khr};
@@ -38,8 +39,6 @@ pub struct GpuInfo {
 
 struct WaitSemaphore(vk::Semaphore, vk::PipelineStageFlags);
 
-struct BufferAllocation(vk::Buffer, vk_mem::Allocation);
-
 /// Synchronization objects and buffers used during a single frame,
 /// which is only cleaned up after enough frames have passed that the
 /// specific FrameLocal struct is reused. This allows for processing a
@@ -48,7 +47,7 @@ struct FrameLocal {
     in_use: AtomicBool,
     finished_command_buffers_sp: vk::Semaphore,
     frame_end_fence: vk::Fence,
-    temp_buffers: (Sender<BufferAllocation>, Receiver<BufferAllocation>),
+    temp_buffers: (Sender<AllocatedBuffer>, Receiver<AllocatedBuffer>),
     temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
     temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
 }
@@ -79,10 +78,7 @@ pub struct Gpu<'a> {
     pub(crate) allocator: vk_mem::Allocator,
     pub(crate) command_pool: vk::CommandPool,
 
-    pub(crate) staging_cpu_buffer_pool: vk_mem::AllocatorPool,
     temp_cpu_buffer_pools: Vec<vk_mem::AllocatorPool>,
-    pub(crate) main_gpu_buffer_pool: vk_mem::AllocatorPool,
-    pub(crate) main_gpu_texture_pool: vk_mem::AllocatorPool,
 
     pub(crate) graphics_family_index: u32,
     pub(crate) surface_family_index: u32,
@@ -92,7 +88,7 @@ pub struct Gpu<'a> {
 
     pub(crate) descriptors: Descriptors,
     pub(crate) texture_indices: Vec<AtomicBool>,
-    fallback_white_image: Option<(vk::Image, vk::ImageView, vk_mem::Allocation)>,
+    pub(crate) resources: Resources,
 
     frame_locals: Vec<FrameLocal>,
     render_wait_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
@@ -103,9 +99,8 @@ impl Drop for Gpu<'_> {
     fn drop(&mut self) {
         let _ = self.wait_idle();
 
-        if let Some((image, image_view, allocation)) = self.fallback_white_image {
-            let _ = self.allocator.destroy_image(image, &allocation);
-            unsafe { self.device.destroy_image_view(image_view, None) };
+        if let Err(err) = self.resources.clean_up(&self.device, &self.allocator) {
+            log::error!("Error during resource cleanup: {}", err);
         }
 
         self.descriptors.clean_up(&self.device);
@@ -126,9 +121,6 @@ impl Drop for Gpu<'_> {
 
         {
             profiling::scope!("destroy vma allocator");
-            let _ = self.allocator.destroy_pool(&self.staging_cpu_buffer_pool);
-            let _ = self.allocator.destroy_pool(&self.main_gpu_buffer_pool);
-            let _ = self.allocator.destroy_pool(&self.main_gpu_texture_pool);
             for temp_cpu_buffer_pool in &self.temp_cpu_buffer_pools {
                 let _ = self.allocator.destroy_pool(temp_cpu_buffer_pool);
             }
@@ -418,22 +410,10 @@ impl Gpu<'_> {
             .size(1024)
             .usage(mesh_usage | uniform_usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let cpu_staging_buffer_info = vk::BufferCreateInfo::builder()
-            .size(1024)
-            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let cpu_alloc_info = vk_mem::AllocationCreateInfo {
             required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
             ..Default::default()
         };
-        let staging_cpu_buffer_pool = allocator
-            .create_pool(&vk_mem::AllocatorPoolCreateInfo {
-                memory_type_index: allocator
-                    .find_memory_type_index_for_buffer_info(&cpu_staging_buffer_info, &cpu_alloc_info)
-                    .map_err(Error::VmaFindMemoryType)?,
-                ..pool_defaults
-            })
-            .map_err(Error::VmaPoolCreation)?;
         let temp_cpu_buffer_pools = (0..frame_in_use_count)
             .map(|_| {
                 allocator
@@ -448,51 +428,14 @@ impl Gpu<'_> {
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let gpu_buffer_info = vk::BufferCreateInfo::builder()
-            .size(1024)
-            .usage(vk::BufferUsageFlags::TRANSFER_DST | uniform_usage | mesh_usage)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let gpu_image_info = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .format(vk::Format::R8G8B8A8_SRGB)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .extent(vk::Extent3D {
-                width: 1024,
-                height: 1024,
-                depth: 1,
-            })
-            .mip_levels(9)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1);
-        let gpu_alloc_info = vk_mem::AllocationCreateInfo {
-            required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            ..Default::default()
-        };
-        let main_gpu_buffer_pool = allocator
-            .create_pool(&vk_mem::AllocatorPoolCreateInfo {
-                memory_type_index: allocator
-                    .find_memory_type_index_for_buffer_info(&gpu_buffer_info, &gpu_alloc_info)
-                    .map_err(Error::VmaFindMemoryType)?,
-                ..pool_defaults
-            })
-            .map_err(Error::VmaPoolCreation)?;
-        let main_gpu_texture_pool = allocator
-            .create_pool(&vk_mem::AllocatorPoolCreateInfo {
-                memory_type_index: allocator
-                    .find_memory_type_index_for_image_info(&gpu_image_info, &gpu_alloc_info)
-                    .map_err(Error::VmaFindMemoryType)?,
-                ..pool_defaults
-            })
-            .map_err(Error::VmaPoolCreation)?;
-
         let mut texture_indices = Vec::with_capacity(MAX_TEXTURE_COUNT as usize);
         for _ in 0..MAX_TEXTURE_COUNT {
             texture_indices.push(AtomicBool::new(false));
         }
 
-        let mut gpu = Gpu {
+        let resources = Resources::new();
+
+        let gpu = Gpu {
             driver,
 
             surface_ext,
@@ -503,10 +446,7 @@ impl Gpu<'_> {
             allocator,
             command_pool,
 
-            staging_cpu_buffer_pool,
             temp_cpu_buffer_pools,
-            main_gpu_buffer_pool,
-            main_gpu_texture_pool,
 
             graphics_family_index,
             surface_family_index,
@@ -516,7 +456,7 @@ impl Gpu<'_> {
 
             descriptors,
             texture_indices,
-            fallback_white_image: None,
+            resources,
 
             frame_locals,
             render_wait_semaphores: mpsc::channel(),
@@ -525,11 +465,12 @@ impl Gpu<'_> {
         // Create and set the white image to be used as a default texture for materials.
         let frame_index = FrameIndex { index: 0 };
         let pixels = &[0xFF, 0xFF, 0xFF, 0xFF];
-        let white_image = texture::create_texture(&gpu, frame_index, pixels, 1, 1, vk::Format::R8G8B8A8_UNORM)?;
+        let (upload_fence, staging_buffer, white_image) =
+            texture::create_texture(&gpu, frame_index, pixels, 1, 1, vk::Format::R8G8B8A8_UNORM)?;
         let image_views = &[Some(white_image.1); 5];
+        gpu.resources.add_image(upload_fence, Some(staging_buffer), white_image);
         gpu.descriptors
-            .set_uniform_images(&gpu, Pipeline::Default, 1, 1, image_views, 0..MAX_TEXTURE_COUNT);
-        gpu.fallback_white_image = Some(white_image);
+            .set_uniform_images(&gpu.device, Pipeline::Default, 1, 1, image_views, 0..MAX_TEXTURE_COUNT);
 
         Ok((gpu, physical_devices))
     }
@@ -548,7 +489,7 @@ impl Gpu<'_> {
 
     #[profiling::function]
     pub(crate) fn add_temporary_buffer(&self, frame_index: FrameIndex, buffer: vk::Buffer, allocation: vk_mem::Allocation) {
-        let buffer_allocation = BufferAllocation(buffer, allocation);
+        let buffer_allocation = AllocatedBuffer(buffer, allocation);
         let temp_buffer_sender = &self.frame_local(frame_index).temp_buffers.0;
         let _ = temp_buffer_sender.send(buffer_allocation);
     }
@@ -559,7 +500,7 @@ impl Gpu<'_> {
         frame_index: FrameIndex,
         wait_stage: vk::PipelineStageFlags,
         f: F,
-    ) -> Result<T, Error> {
+    ) -> Result<(vk::Fence, T), Error> {
         let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(self.command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
@@ -574,6 +515,12 @@ impl Gpu<'_> {
         let signal_semaphore = unsafe {
             self.device
                 .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                .map_err(Error::VulkanSemaphoreCreation)
+        }?;
+
+        let signal_fence = unsafe {
+            self.device
+                .create_fence(&vk::FenceCreateInfo::default(), None)
                 .map_err(Error::VulkanFenceCreation)
         }?;
 
@@ -594,7 +541,7 @@ impl Gpu<'_> {
             .build()];
         unsafe {
             self.device
-                .queue_submit(self.graphics_queue, &submit_infos, vk::Fence::null())
+                .queue_submit(self.graphics_queue, &submit_infos, signal_fence)
                 .map_err(Error::VulkanQueueSubmit)
         }?;
 
@@ -604,7 +551,7 @@ impl Gpu<'_> {
         let _ = temp_semaphore_sender.send(signal_semaphore);
         let render_wait_semaphore_sender = &self.render_wait_semaphores.0;
         let _ = render_wait_semaphore_sender.send(WaitSemaphore(signal_semaphore, wait_stage));
-        Ok(result)
+        Ok((signal_fence, result))
     }
 
     #[profiling::function]
@@ -626,7 +573,7 @@ impl Gpu<'_> {
 
     #[profiling::function]
     fn cleanup_temp_buffers(&self, frame_local: &FrameLocal) -> Result<(), Error> {
-        for BufferAllocation(buffer, allocation) in frame_local.temp_buffers.1.try_iter() {
+        for AllocatedBuffer(buffer, allocation) in frame_local.temp_buffers.1.try_iter() {
             self.allocator
                 .destroy_buffer(buffer, &allocation)
                 .map_err(Error::VmaBufferDestruction)?;
@@ -653,6 +600,8 @@ impl Gpu<'_> {
     /// frees the resources that can now be freed up.
     #[profiling::function]
     pub fn wait_frame(&self, canvas: &Canvas) -> Result<FrameIndex, Error> {
+        self.resources.clean_up_staging_memory(&self.device, &self.allocator)?;
+
         let (image_index, _) = unsafe {
             profiling::scope!("acquire next image");
             self.swapchain_ext
@@ -699,7 +648,7 @@ impl Gpu<'_> {
             .ok_or(Error::TextureIndexReserve)? as u32;
         let image_views = &[base_color, metallic_roughness, normal, occlusion, emission];
         self.descriptors
-            .set_uniform_images(self, Pipeline::Default, 1, 1, image_views, index..index + 1);
+            .set_uniform_images(&self.device, Pipeline::Default, 1, 1, image_views, index..index + 1);
         Ok(TextureIndex(index))
     }
 
@@ -872,7 +821,7 @@ impl Gpu<'_> {
                         .map_err(Error::VmaBufferAllocation)?
                 };
                 self.add_temporary_buffer(frame_index, transform_buffer, allocation);
-                buffer_ops::copy_to_allocation(transforms, self, &allocation, &alloc_info)?;
+                buffer_ops::copy_to_allocation(transforms, &self.allocator, &allocation, &alloc_info)?;
 
                 let push_constants = [PushConstantStruct {
                     texture_index: material.texture_index.0,

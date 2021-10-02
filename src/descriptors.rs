@@ -193,7 +193,7 @@ impl Descriptors {
     #[profiling::function]
     pub(crate) fn set_uniform_images(
         &self,
-        gpu: &Gpu,
+        device: &Device,
         pipeline: Pipeline,
         set: u32,
         first_binding: u32,
@@ -223,7 +223,7 @@ impl Descriptors {
                     .descriptor_type(params.descriptor_type)
                     .image_info(&descriptor_image_infos)
                     .build()];
-                unsafe { gpu.device.update_descriptor_sets(&write_descriptor_sets, &[]) };
+                unsafe { device.update_descriptor_sets(&write_descriptor_sets, &[]) };
             }
         }
     }

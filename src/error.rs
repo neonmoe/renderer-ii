@@ -73,6 +73,8 @@ pub enum Error {
     VulkanImageViewCreation(#[source] vk::Result),
     #[error("could not create sampler")]
     VulkanSamplerCreation(#[source] vk::Result),
+    #[error("could not get fence status")]
+    VulkanFenceStatus(#[source] vk::Result),
     #[error("vma (via vk-mem-rs) allocator creation failed")]
     VmaAllocatorCreation(#[source] vk_mem::error::Error),
     #[error("vma (via vk-mem-rs) allocator pool creation failed")]
@@ -139,4 +141,6 @@ pub enum Error {
     JpegDecoding(jpeg_decoder::Error),
     #[error("error during image decoding: {0}")]
     MiscImageDecoding(&'static str),
+    #[error("resource cleanup failed")]
+    ResourceCleanup(#[source] vk_mem::error::Error),
 }
