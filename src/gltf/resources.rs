@@ -29,6 +29,7 @@ impl Default for GltfResources {
 }
 
 impl GltfResources {
+    #[profiling::function]
     pub fn insert<U: Into<PathBuf>, B: Into<Vec<u8>>>(&mut self, uri: U, bytes: B) {
         self.resource_cache.insert(uri.into(), bytes.into());
     }
@@ -42,6 +43,7 @@ impl GltfResources {
     /// remove the borrowed element from the map. An append-only
     /// HashMap would be nice, but I don't really want that much more
     /// code just for this.
+    #[profiling::function]
     pub fn get_or_load<U: Into<PathBuf>>(&mut self, uri: U) -> Result<Vec<u8>, Error> {
         let uri: PathBuf = uri.into();
         match self.resource_cache.entry(uri.clone()) {

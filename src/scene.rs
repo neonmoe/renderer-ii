@@ -28,6 +28,7 @@ impl<'a> Scene<'a> {
     // Because the same set of textures should be used across
     // materials. A slice of textures could solve this as well, but I
     // doubt that would perform that well.
+    #[profiling::function]
     pub fn queue(&mut self, mesh: &'a Mesh, material: &'a Material, transform: Mat4) {
         let mesh_map = self.pipeline_map.entry(mesh.pipeline).or_insert_with(HashMap::new);
         let mesh_vec = mesh_map.entry((mesh, material)).or_insert_with(Vec::new);

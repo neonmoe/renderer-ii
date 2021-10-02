@@ -29,6 +29,7 @@ pub struct Resources {
 }
 
 impl Resources {
+    #[profiling::function]
     pub(crate) fn new() -> Resources {
         Resources {
             loading_images: Mutex::new(Vec::new()),
@@ -40,6 +41,7 @@ impl Resources {
 
     /// Cleans up the staging memory for buffers and images which have
     /// been uploaded. Should be called ~every frame.
+    #[profiling::function]
     pub(crate) fn clean_up_staging_memory(&self, device: &Device, allocator: &vk_mem::Allocator) -> Result<(), Error> {
         let mut loading_images = self.loading_images.lock().unwrap();
         let mut images = self.images.lock().unwrap();
@@ -92,6 +94,7 @@ impl Resources {
         Ok(())
     }
 
+    #[profiling::function]
     pub(crate) fn add_buffer(&self, upload_fence: vk::Fence, staging_buffer: Option<AllocatedBuffer>, target_buffer: AllocatedBuffer) {
         if let Some(staging_buffer) = staging_buffer {
             let mut buffers = self.loading_buffers.lock().unwrap();
@@ -106,6 +109,7 @@ impl Resources {
         }
     }
 
+    #[profiling::function]
     pub(crate) fn add_image(&self, upload_fence: vk::Fence, staging_buffer: Option<AllocatedBuffer>, target_image: AllocatedImage) {
         if let Some(staging_buffer) = staging_buffer {
             let mut images = self.loading_images.lock().unwrap();
@@ -123,6 +127,7 @@ impl Resources {
     /// Cleans up all the Vulkan resources. Cannot be implemented in
     /// Drop, because [Gpu] needs to explicitly clean up the resources
     /// in its Drop.
+    #[profiling::function]
     pub(crate) fn clean_up(&self, device: &Device, allocator: &vk_mem::Allocator) -> Result<(), Error> {
         let mut guard = self.loading_buffers.lock().unwrap();
         while let Some(LoadingBuffer {
@@ -162,10 +167,12 @@ impl Resources {
     }
 }
 
+#[profiling::function]
 fn destroy_buffer(allocator: &vk_mem::Allocator, buffer: AllocatedBuffer) -> Result<(), Error> {
     allocator.destroy_buffer(buffer.0, &buffer.1).map_err(Error::ResourceCleanup)
 }
 
+#[profiling::function]
 fn destroy_image(device: &Device, allocator: &vk_mem::Allocator, image: AllocatedImage) -> Result<(), Error> {
     unsafe { device.destroy_image_view(image.1, None) };
     allocator.destroy_image(image.0, &image.2).map_err(Error::ResourceCleanup)

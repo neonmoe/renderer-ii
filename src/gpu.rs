@@ -50,6 +50,8 @@ struct FrameLocal {
     temp_buffers: (Sender<AllocatedBuffer>, Receiver<AllocatedBuffer>),
     temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
     temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
+    // TODO: Add per-frame rendering command pools which get reset as pools intead of just resetting the individual command buffers
+    // Creating many buffers (which should be cleaned up after) will be needed for multithreaded draw submission too
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -94,12 +96,22 @@ impl Drop for Gpu<'_> {
     fn drop(&mut self) {
         let _ = self.wait_idle();
 
-        if let Err(err) = self.resources.clean_up(&self.device, &self.allocator) {
-            log::error!("Error during resource cleanup: {}", err);
+        {
+            profiling::scope!("destroy resources");
+            if let Err(err) = self.resources.clean_up(&self.device, &self.allocator) {
+                log::error!("Error during resource cleanup: {}", err);
+            }
         }
 
-        self.descriptors.clean_up(&self.device);
-        unsafe { self.device.destroy_fence(self.frame_start_fence, None) };
+        {
+            profiling::scope!("destroy frame locals");
+            self.descriptors.clean_up(&self.device);
+        }
+
+        {
+            profiling::scope!("destroy frame locals");
+            unsafe { self.device.destroy_fence(self.frame_start_fence, None) };
+        }
 
         for frame_local in &self.frame_locals {
             profiling::scope!("destroy frame locals");
@@ -123,7 +135,7 @@ impl Drop for Gpu<'_> {
         }
 
         {
-            profiling::scope!("destroy vma command pools");
+            profiling::scope!("destroy command pools");
             unsafe { self.device.destroy_command_pool(self.command_pool, None) };
         }
 
@@ -624,6 +636,7 @@ impl Gpu<'_> {
         Ok(frame_index)
     }
 
+    #[profiling::function]
     pub(crate) fn reserve_texture_index(
         &self,
         base_color: Option<vk::ImageView>,
@@ -647,6 +660,7 @@ impl Gpu<'_> {
         Ok(TextureIndex(index))
     }
 
+    #[profiling::function]
     pub(crate) fn release_texture_index(&self, index: u32) {
         self.texture_indices[index as usize].store(false, Ordering::Relaxed);
     }
