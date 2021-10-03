@@ -1,5 +1,5 @@
 use crate::buffer_ops;
-use crate::resources::AllocatedBuffer;
+use crate::resources::{AllocatedBuffer, RefCountedStatus};
 use crate::{Error, FrameIndex, Gpu};
 use ash::vk;
 use std::hash::{Hash, Hasher};
@@ -7,6 +7,7 @@ use std::mem;
 
 pub struct Buffer {
     pub(crate) buffer: vk::Buffer,
+    _buffer_ref: RefCountedStatus,
 }
 
 impl PartialEq for Buffer {
@@ -56,12 +57,12 @@ impl Buffer {
             }
         };
 
-        gpu.resources.add_buffer(
+        let _buffer_ref = gpu.resources.add_buffer(
             upload_fence,
             Some(AllocatedBuffer(staging_buffer, staging_allocation)),
             AllocatedBuffer(buffer, allocation),
         );
 
-        Ok(Buffer { buffer })
+        Ok(Buffer { buffer, _buffer_ref })
     }
 }

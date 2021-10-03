@@ -35,13 +35,7 @@ impl Material {
         _occlusion: Option<Texture>,
         _emissive: Option<Texture>,
     ) -> Result<Material, Error> {
-        let texture_index = gpu.reserve_texture_index(
-            _base_color.as_ref().map(|mat| mat.image_view),
-            _metallic_roughness.as_ref().map(|mat| mat.image_view),
-            _normal.as_ref().map(|mat| mat.image_view),
-            _occlusion.as_ref().map(|mat| mat.image_view),
-            _emissive.as_ref().map(|mat| mat.image_view),
-        )?;
+        let texture_index = gpu.reserve_texture_index(&_base_color, &_metallic_roughness, &_normal, &_occlusion, &_emissive)?;
         Ok(Material {
             texture_index,
             _base_color,

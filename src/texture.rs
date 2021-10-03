@@ -1,11 +1,13 @@
 use crate::buffer_ops;
-use crate::resources::{AllocatedBuffer, AllocatedImage};
+use crate::resources::{AllocatedBuffer, AllocatedImage, RefCountedStatus, WeakRefCountedStatus};
 use crate::{Error, FrameIndex, Gpu};
 use ash::version::DeviceV1_0;
 use ash::vk;
+use std::rc::Rc;
 
 pub struct Texture {
     pub(crate) image_view: vk::ImageView,
+    texture_ref: RefCountedStatus,
 }
 
 impl Texture {
@@ -13,8 +15,12 @@ impl Texture {
     pub fn new(gpu: &Gpu, frame_index: FrameIndex, pixels: &[u8], width: u32, height: u32, format: vk::Format) -> Result<Texture, Error> {
         let (upload_fence, staging_buffer, image) = create_texture(gpu, frame_index, pixels, width, height, format)?;
         let image_view = image.1;
-        gpu.resources.add_image(upload_fence, Some(staging_buffer), image);
-        Ok(Texture { image_view })
+        let texture_ref = gpu.resources.add_image(upload_fence, Some(staging_buffer), image);
+        Ok(Texture { image_view, texture_ref })
+    }
+
+    pub(crate) fn create_weak_ref(&self) -> WeakRefCountedStatus {
+        Rc::downgrade(&self.texture_ref)
     }
 }
 
