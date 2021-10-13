@@ -1,11 +1,28 @@
-use crate::Error;
+use crate::{Error, FrameIndex, Gpu, Texture};
 use ash::vk;
+
+#[derive(Clone, Copy)]
+pub enum TextureKind {
+    SrgbColor,
+    LinearColor,
+    NormalMap,
+}
+
+impl TextureKind {
+    fn convert_format(self, format: vk::Format) -> vk::Format {
+        match self {
+            TextureKind::SrgbColor => to_srgb(format),
+            TextureKind::NormalMap => to_snorm(format),
+            TextureKind::LinearColor => format,
+        }
+    }
+}
 
 /// If the `format` is a 'UNORM' format, and has an SRGB variant,
 /// return that.
 ///
 /// Does not work for the 3D ASTC ones.
-pub fn to_srgb(format: vk::Format) -> vk::Format {
+fn to_srgb(format: vk::Format) -> vk::Format {
     match format {
         vk::Format::R8_UNORM => vk::Format::R8_SRGB,
         vk::Format::R8G8_UNORM => vk::Format::R8G8_SRGB,
@@ -46,7 +63,7 @@ pub fn to_srgb(format: vk::Format) -> vk::Format {
 
 /// If the `format` is a 'UNORM' format, return the 'SNORM' variant if
 /// there is one.
-pub fn to_snorm(format: vk::Format) -> vk::Format {
+fn to_snorm(format: vk::Format) -> vk::Format {
     match format {
         vk::Format::R8_UNORM => vk::Format::R8_SNORM,
         vk::Format::R8G8_UNORM => vk::Format::R8G8_SNORM,
@@ -71,7 +88,7 @@ pub fn to_snorm(format: vk::Format) -> vk::Format {
 
 /// Loads a png into (width, height, format, pixel bytes).
 #[profiling::function]
-pub fn load_png(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {
+pub fn load_png(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureKind) -> Result<Texture, Error> {
     use png::{BitDepth, ColorType, Decoder};
     let decoder = Decoder::new(bytes);
     let mut reader = decoder.read_info().map_err(Error::PngDecoding)?;
@@ -91,12 +108,13 @@ pub fn load_png(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> 
     if needs_padding {
         pixels = pad_rgb24_to_rgba32(&pixels);
     }
-    Ok((info.width, info.height, format, pixels))
+    let format = kind.convert_format(format);
+    Texture::new(gpu, frame_index, &pixels, info.width, info.height, format)
 }
 
 /// Loads a jpeg into (width, height, format, pixel bytes).
 #[profiling::function]
-pub fn load_jpeg(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error> {
+pub fn load_jpeg(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureKind) -> Result<Texture, Error> {
     use jpeg_decoder::{Decoder, PixelFormat};
     let mut decoder = Decoder::new(bytes);
     let mut pixels = decoder.decode().map_err(Error::JpegDecoding)?;
@@ -110,7 +128,8 @@ pub fn load_jpeg(bytes: &[u8]) -> Result<(u32, u32, vk::Format, Vec<u8>), Error>
     if needs_padding {
         pixels = pad_rgb24_to_rgba32(&pixels);
     }
-    Ok((width, height, format, pixels))
+    let format = kind.convert_format(format);
+    Texture::new(gpu, frame_index, &pixels, width, height, format)
 }
 
 /// Allocates a new, properly sized pixel array, and fills it out with

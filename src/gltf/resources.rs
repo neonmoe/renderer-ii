@@ -9,6 +9,7 @@ use std::path::PathBuf;
 /// Can be shared between multiple glTFs. If they refer to the same
 /// resources, this will even help with memory consumption, as they
 /// will share the resource cache.
+#[derive(Default)]
 pub struct GltfResources {
     /// A cache of loaded resources. The keys map to glTF URIs.
     ///
@@ -17,15 +18,6 @@ pub struct GltfResources {
     pub resource_cache: HashMap<PathBuf, Vec<u8>>,
     /// The base path from which missing resources are loaded.
     pub loading_path: Option<PathBuf>,
-}
-
-impl Default for GltfResources {
-    fn default() -> GltfResources {
-        GltfResources {
-            resource_cache: HashMap::new(),
-            loading_path: None,
-        }
-    }
 }
 
 impl GltfResources {

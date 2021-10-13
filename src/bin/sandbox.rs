@@ -55,9 +55,12 @@ fn fallible_main() -> anyhow::Result<()> {
     let sponza_model = neonvk::Gltf::from_gltf(&gpu, loading_frame_index, include_str!("sponza/glTF/Sponza.gltf"), &mut resources)?;
     let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), &mut resources)?;
 
-    let (tex_w, tex_h, tex_format, tex_bytes) = neonvk::image_loading::load_png(include_bytes!("tree.png"))?;
-    let tex_format = neonvk::image_loading::to_srgb(tex_format);
-    let tree_texture = neonvk::Texture::new(&gpu, loading_frame_index, &tex_bytes, tex_w, tex_h, tex_format)?;
+    let tree_texture = neonvk::image_loading::load_png(
+        &gpu,
+        loading_frame_index,
+        include_bytes!("tree.png"),
+        neonvk::image_loading::TextureKind::SrgbColor,
+    )?;
     let tree_material = neonvk::Material::new(&gpu, Some(tree_texture), None, None, None, None)?;
 
     let quad_vertices: &[&[u8]] = &[
