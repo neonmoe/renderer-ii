@@ -1,9 +1,9 @@
+use glam::{Mat4, Vec3};
 use log::LevelFilter;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
 use std::time::{Duration, Instant};
-use ultraviolet::Mat4;
 
 use logger::Logger;
 static LOGGER: Logger = Logger;
@@ -144,16 +144,12 @@ fn fallible_main() -> anyhow::Result<()> {
             let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1)
                 * Mat4::from_rotation_x(frame_start_seconds * 0.1)
                 * Mat4::from_rotation_y(frame_start_seconds * 0.1);
-            scene.queue(
-                &quad,
-                &tree_material,
-                Mat4::from_translation(ultraviolet::Vec3::new(-0.5, 1.5, 0.0)) * rotation,
-            );
+            scene.queue(&quad, &tree_material, Mat4::from_translation(Vec3::new(0.0, 0.5, -0.5)) * rotation);
             for (mesh, material, transform) in cube_model.mesh_iter() {
                 scene.queue(
                     mesh,
                     material,
-                    Mat4::from_translation(ultraviolet::Vec3::new(0.5, 1.5, 0.0)) * Mat4::from_scale(0.5) * rotation * transform,
+                    Mat4::from_translation(Vec3::new(0.0, 0.5, 0.5)) * Mat4::from_scale(Vec3::new(0.5, 0.5, 0.5)) * rotation * transform,
                 );
             }
         }

@@ -174,8 +174,9 @@ impl Canvas<'_> {
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(usage);
             let allocation_create_info = vk_mem::AllocationCreateInfo {
-                usage: vk_mem::MemoryUsage::GpuOnly,
-                flags: vk_mem::AllocationCreateFlags::STRATEGY_MIN_FRAGMENTATION,
+                flags: vk_mem::AllocationCreateFlags::STRATEGY_MIN_FRAGMENTATION | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
+                required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                preferred_flags: vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
                 ..Default::default()
             };
             gpu.allocator.create_image(&image_create_info, &allocation_create_info)
@@ -482,7 +483,7 @@ fn create_pipelines(
         let pipeline_depth_stencil_create_info = vk::PipelineDepthStencilStateCreateInfo::builder()
             .depth_test_enable(true)
             .depth_write_enable(true)
-            .depth_compare_op(vk::CompareOp::GREATER);
+            .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL);
 
         let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState::builder()
             .color_write_mask(

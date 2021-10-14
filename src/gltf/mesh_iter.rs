@@ -1,5 +1,5 @@
 use crate::{Gltf, Material, Mesh};
-use ultraviolet::Mat4;
+use glam::Mat4;
 
 pub struct MeshIter<'a> {
     gltf: &'a Gltf,

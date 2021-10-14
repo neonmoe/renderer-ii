@@ -1,8 +1,8 @@
 use crate::buffer::Buffer;
 use crate::{Error, FrameIndex, Gpu, Pipeline};
 use ash::vk;
+use glam::Vec4;
 use std::{mem, ptr};
-use ultraviolet::Vec4;
 
 #[derive(PartialEq, Eq, Hash)]
 pub struct Mesh {
@@ -42,7 +42,7 @@ impl Mesh {
         for vertices in vertices {
             total_size += round_size(vertices.len());
         }
-        let mut data: Vec<Vec4> = vec![Vec4::zero(); total_size];
+        let mut data: Vec<Vec4> = vec![Vec4::ZERO; total_size];
         let mut buffer_dst_ptr = data.as_mut_ptr() as *mut u8;
         let indices_src_ptr = indices.as_ptr();
         unsafe {

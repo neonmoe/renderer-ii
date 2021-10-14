@@ -1,6 +1,6 @@
 use ash::vk;
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use std::mem;
-use ultraviolet::{Mat4, Vec2, Vec3, Vec4};
 
 pub const MAX_TEXTURE_COUNT: u32 = 128; // Keep in sync with shaders/constants.glsl.
 

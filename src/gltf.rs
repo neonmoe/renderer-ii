@@ -1,7 +1,7 @@
 use crate::image_loading::{self, TextureKind};
 use crate::{Error, FrameIndex, Gpu, Material, Mesh, Pipeline, Texture};
+use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
-use ultraviolet::{Isometry3, Mat4, Rotor3, Vec3, Vec4};
 
 mod gltf_json;
 mod mesh_iter;
@@ -170,28 +170,21 @@ fn create_gltf(
         .iter()
         .map(|node| {
             let transform = if let Some(&[x0, y0, z0, w0, x1, y1, z1, w1, x2, y2, z2, w2, x3, y3, z3, w3]) = node.matrix.as_deref() {
-                // Both the source and destination here are
-                // actually column major: each Vec4 is a column.
-                Mat4::new(
-                    Vec4::new(x0, y0, z0, w0),
-                    Vec4::new(x1, y1, z1, w1),
-                    Vec4::new(x2, y2, z2, w2),
-                    Vec4::new(x3, y3, z3, w3),
-                )
+                Mat4::from_cols_array(&[x0, y0, z0, w0, x1, y1, z1, w1, x2, y2, z2, w2, x3, y3, z3, w3])
             } else {
                 let translation = match node.translation.as_deref() {
                     Some(&[x, y, z]) => Vec3::new(x, y, z),
-                    _ => Vec3::zero(),
+                    _ => Vec3::ZERO,
                 };
                 let rotation = match node.rotation.as_deref() {
-                    Some(&[x, y, z, w]) => Rotor3::from_quaternion_array([x, y, z, w]),
-                    _ => Rotor3::identity(),
+                    Some(&[x, y, z, w]) => Quat::from_xyzw(x, y, z, w),
+                    _ => Quat::IDENTITY,
                 };
                 let scale = match node.scale.as_deref() {
                     Some(&[x, y, z]) => Vec3::new(x, y, z),
-                    _ => Vec3::one(),
+                    _ => Vec3::new(1.0, 1.0, 1.0),
                 };
-                Isometry3::new(translation, rotation).into_homogeneous_matrix() * Mat4::from_nonuniform_scale(scale)
+                Mat4::from_scale_rotation_translation(scale, rotation, translation)
             };
             Node {
                 mesh: node.mesh,

@@ -7,12 +7,12 @@ use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
 use ash::{vk, Device, Instance};
+use glam::Mat4;
 use std::ffi::CStr;
 use std::mem;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender};
-use ultraviolet::Mat4;
 
 /// Get from [Gpu::wait_frame].
 #[derive(Clone, Copy)]
@@ -281,7 +281,7 @@ impl Gpu<'_> {
                 let pd_type = match properties.device_type {
                     vk::PhysicalDeviceType::DISCRETE_GPU => " (Discrete GPU)",
                     vk::PhysicalDeviceType::INTEGRATED_GPU => " (Integrated GPU)",
-                    vk::PhysicalDeviceType::VIRTUAL_GPU => " (vCPU)",
+                    vk::PhysicalDeviceType::VIRTUAL_GPU => " (vGPU)",
                     vk::PhysicalDeviceType::CPU => " (CPU)",
                     _ => "",
                 };
@@ -420,6 +420,7 @@ impl Gpu<'_> {
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let cpu_alloc_info = vk_mem::AllocationCreateInfo {
             required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
+            preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
             ..Default::default()
         };
         let temp_cpu_buffer_pools = (0..frame_in_use_count)
