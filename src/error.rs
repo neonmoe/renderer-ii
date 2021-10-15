@@ -143,4 +143,8 @@ pub enum Error {
     MiscImageDecoding(&'static str),
     #[error("resource cleanup failed")]
     ResourceCleanup(#[source] vk_mem::error::Error),
+    #[error("malformed ktx file")]
+    BadKtx,
+    #[error("could not load ktx: {0}")]
+    UnsupportedKtxFeature(&'static str),
 }

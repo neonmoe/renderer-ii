@@ -105,12 +105,12 @@ impl Drop for Gpu<'_> {
         }
 
         {
-            profiling::scope!("destroy frame locals");
+            profiling::scope!("destroy descriptors");
             self.descriptors.clean_up(&self.device);
         }
 
         {
-            profiling::scope!("destroy frame locals");
+            profiling::scope!("destroy frame start fence");
             unsafe { self.device.destroy_fence(self.frame_start_fence, None) };
         }
 
@@ -475,7 +475,7 @@ impl Gpu<'_> {
         // Create and set the white image to be used as a default texture for materials.
         let frame_index = FrameIndex { index: 0 };
         let pixels = &[0xFF, 0xFF, 0xFF, 0xFF];
-        let white_texture = Texture::new(&gpu, frame_index, pixels, 1, 1, vk::Format::R8G8B8A8_UNORM)?;
+        let white_texture = Texture::new(&gpu, frame_index, pixels, None, 1, 1, vk::Format::R8G8B8A8_UNORM)?;
         let image_views = &[Some(white_texture.image_view); 5];
         gpu.descriptors
             .set_uniform_images(&gpu.device, Pipeline::Default, 1, 1, image_views, 0..MAX_TEXTURE_COUNT);

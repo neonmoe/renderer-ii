@@ -1,6 +1,8 @@
 use crate::{Error, FrameIndex, Gpu, Texture};
 use ash::vk;
 
+mod ktx;
+
 #[derive(Clone, Copy)]
 pub enum TextureKind {
     SrgbColor,
@@ -86,6 +88,22 @@ fn to_snorm(format: vk::Format) -> vk::Format {
     }
 }
 
+/// Loads a ktx into (width, height, format, pixel bytes). Note that
+/// the pixel bytes do not map to a linear rgba array: the data is
+/// compressed. The format reflects this.
+#[profiling::function]
+pub fn load_ktx(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureKind) -> Result<Texture, Error> {
+    let ktx::KtxData {
+        width,
+        height,
+        format,
+        pixels,
+        mip_ranges,
+    } = ktx::decode(bytes)?;
+    let format = kind.convert_format(format);
+    Texture::new(gpu, frame_index, &pixels, Some(mip_ranges), width, height, format)
+}
+
 /// Loads a png into (width, height, format, pixel bytes).
 #[profiling::function]
 pub fn load_png(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureKind) -> Result<Texture, Error> {
@@ -109,7 +127,7 @@ pub fn load_png(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureK
         pixels = pad_rgb24_to_rgba32(&pixels);
     }
     let format = kind.convert_format(format);
-    Texture::new(gpu, frame_index, &pixels, info.width, info.height, format)
+    Texture::new(gpu, frame_index, &pixels, None, info.width, info.height, format)
 }
 
 /// Loads a jpeg into (width, height, format, pixel bytes).
@@ -129,7 +147,7 @@ pub fn load_jpeg(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: Texture
         pixels = pad_rgb24_to_rgba32(&pixels);
     }
     let format = kind.convert_format(format);
-    Texture::new(gpu, frame_index, &pixels, width, height, format)
+    Texture::new(gpu, frame_index, &pixels, None, width, height, format)
 }
 
 /// Allocates a new, properly sized pixel array, and fills it out with

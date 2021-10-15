@@ -2,6 +2,7 @@ use crate::{Error, FrameIndex, Gpu};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::Device;
+use std::ops::Range;
 use std::{mem, ptr};
 
 #[profiling::function]
@@ -39,12 +40,17 @@ pub(crate) fn start_image_upload(
     gpu: &Gpu,
     frame_index: FrameIndex,
     pixels: vk::Buffer,
+    mipmap_ranges: Option<&[Range<usize>]>,
     extent: vk::Extent3D,
     format: vk::Format,
 ) -> Result<(vk::Fence, vk::Image, vk_mem::Allocation, u32), Error> {
     let (upload_fence, (image, allocation, mip_levels)) =
         gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |cb| {
-            queue_image_copy(&gpu.device, cb, &gpu.allocator, pixels, extent, format)
+            if let Some(mipmap_ranges) = mipmap_ranges {
+                queue_image_copy_with_explicit_mipmaps(&gpu.device, cb, &gpu.allocator, pixels, mipmap_ranges, extent, format)
+            } else {
+                queue_image_copy_with_generated_mipmaps(&gpu.device, cb, &gpu.allocator, pixels, extent, format)
+            }
         })?;
 
     Ok((upload_fence, image, allocation, mip_levels))
@@ -85,7 +91,7 @@ fn queue_buffer_copy(
 }
 
 #[profiling::function]
-fn queue_image_copy(
+fn queue_image_copy_with_generated_mipmaps(
     device: &Device,
     command_buffer: vk::CommandBuffer,
     allocator: &vk_mem::Allocator,
@@ -257,7 +263,7 @@ fn queue_image_copy(
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .image(image)
             .subresource_range(subresource_range)
-            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .src_access_mask(vk::AccessFlags::TRANSFER_READ)
             .dst_access_mask(vk::AccessFlags::SHADER_READ)
             .build();
         unsafe {
@@ -274,4 +280,127 @@ fn queue_image_copy(
     }
 
     Ok((image, allocation, mip_levels))
+}
+
+#[profiling::function]
+fn queue_image_copy_with_explicit_mipmaps(
+    device: &Device,
+    command_buffer: vk::CommandBuffer,
+    allocator: &vk_mem::Allocator,
+    pixel_buffer: vk::Buffer,
+    mip_ranges: &[Range<usize>],
+    mut extent: vk::Extent3D,
+    format: vk::Format,
+) -> Result<(vk::Image, vk_mem::Allocation, u32), Error> {
+    let image_info = vk::ImageCreateInfo::builder()
+        .image_type(vk::ImageType::TYPE_2D)
+        .extent(extent)
+        .mip_levels(mip_ranges.len() as u32)
+        .array_layers(1)
+        .format(format)
+        .tiling(vk::ImageTiling::OPTIMAL)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .samples(vk::SampleCountFlags::TYPE_1);
+    let allocation_info = vk_mem::AllocationCreateInfo {
+        required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        ..Default::default()
+    };
+    let (image, allocation, _) = allocator
+        .create_image(&image_info, &allocation_info)
+        .map_err(Error::VmaImageAllocation)?;
+
+    for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
+        let subresource_range = vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(mip_level as u32)
+            .level_count(1)
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
+
+        let barrier_from_undefined_to_transfer_dst = vk::ImageMemoryBarrier::builder()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(image)
+            .subresource_range(subresource_range)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .build();
+        unsafe {
+            device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier_from_undefined_to_transfer_dst],
+            );
+        }
+
+        let subresource_layers_dst = vk::ImageSubresourceLayers::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .mip_level(mip_level as u32)
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
+
+        // NOTE: Only works for square block sizes. May cause issues down the line.
+        let texel_size = (mip_range.len() as f32).sqrt() as u32;
+        let image_copy_region = vk::BufferImageCopy::builder()
+            .buffer_offset(mip_range.start as vk::DeviceSize)
+            .buffer_row_length(extent.width.max(texel_size))
+            .buffer_image_height(extent.height.max(texel_size))
+            .image_subresource(subresource_layers_dst)
+            .image_extent(extent)
+            .build();
+        unsafe {
+            device.cmd_copy_buffer_to_image(
+                command_buffer,
+                pixel_buffer,
+                image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[image_copy_region],
+            );
+        }
+
+        extent.width = (extent.width / 2).max(1);
+        extent.height = (extent.height / 2).max(1);
+        extent.depth = (extent.depth / 2).max(1);
+
+        let subresource_range = vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(mip_level as u32)
+            .level_count(1)
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
+        let barrier_from_transfer_src_to_shader = vk::ImageMemoryBarrier::builder()
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .image(image)
+            .subresource_range(subresource_range)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .build();
+        unsafe {
+            device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier_from_transfer_src_to_shader],
+            );
+        }
+    }
+
+    Ok((image, allocation, mip_ranges.len() as u32))
 }

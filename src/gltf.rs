@@ -204,7 +204,8 @@ fn create_gltf(
                 image_load = match mime_type.as_str() {
                     "image/jpeg" => image_loading::load_jpeg,
                     "image/png" => image_loading::load_png,
-                    _ => return Err(Error::GltfSpec("mime type of texture is not image/png or image/jpeg")),
+                    "image/ktx" => image_loading::load_ktx,
+                    _ => return Err(Error::GltfSpec("mime type of texture is not image/ktx, image/png or image/jpeg")),
                 };
                 let buffer_view = gltf.buffer_views.get(*buffer_view).ok_or(Error::GltfOob("texture buffer view"))?;
                 let buffer = buffers.get(buffer_view.buffer).ok_or(Error::GltfOob("texture buffer"))?;
@@ -215,7 +216,9 @@ fn create_gltf(
                 }
                 bytes = Cow::Borrowed(&buffer[offset..offset + length]);
             } else if let Some(uri) = &image.uri {
-                image_load = if uri.ends_with(".png") {
+                image_load = if uri.ends_with(".ktx") {
+                    image_loading::load_ktx
+                } else if uri.ends_with(".png") {
                     image_loading::load_png
                 } else if uri.ends_with(".jpg") || uri.ends_with(".jpeg") {
                     image_loading::load_jpeg
