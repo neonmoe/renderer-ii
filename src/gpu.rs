@@ -158,8 +158,8 @@ impl Gpu<'_> {
     /// The inner tuples consist of: whether the gpu is the one picked
     /// in this function call, the display name, and the id passed to
     /// a new [Gpu] when recreating it with a new physical device.
-    #[profiling::function]
     pub fn new(driver: &Driver, preferred_physical_device: Option<[u8; 16]>) -> Result<(Gpu<'_>, Vec<GpuInfo>), Error> {
+        profiling::scope!("new_gpu");
         let surface_ext = khr::Surface::new(&driver.entry, &driver.instance);
         let queue_family_supports_surface = |pd: vk::PhysicalDevice, index: u32| {
             let support = unsafe { surface_ext.get_physical_device_surface_support(pd, index, driver.surface) };
@@ -503,63 +503,68 @@ impl Gpu<'_> {
         let _ = temp_buffer_sender.send(buffer_allocation);
     }
 
-    #[profiling::function]
     pub(crate) fn run_command_buffer<T, F: FnOnce(vk::CommandBuffer) -> Result<T, Error>>(
         &self,
         frame_index: FrameIndex,
         wait_stage: vk::PipelineStageFlags,
         f: F,
     ) -> Result<(vk::Fence, T), Error> {
-        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(self.command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-        let command_buffers = unsafe {
-            self.device
-                .allocate_command_buffers(&command_buffer_allocate_info)
-                .map_err(Error::VulkanCommandBuffersAllocation)
-        }?;
+        let command_buffers = {
+            profiling::scope!("allocate command buffer");
+            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+                .command_pool(self.command_pool)
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_buffer_count(1);
+            unsafe { self.device.allocate_command_buffers(&command_buffer_allocate_info) }.map_err(Error::VulkanCommandBuffersAllocation)?
+        };
         let temp_command_buffer = command_buffers[0];
 
-        let signal_semaphore = unsafe {
-            self.device
-                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                .map_err(Error::VulkanSemaphoreCreation)
-        }?;
+        let signal_semaphore = {
+            profiling::scope!("create semaphore");
+            unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.map_err(Error::VulkanSemaphoreCreation)?
+        };
 
-        let signal_fence = unsafe {
-            self.device
-                .create_fence(&vk::FenceCreateInfo::default(), None)
-                .map_err(Error::VulkanFenceCreation)
-        }?;
+        let signal_fence = {
+            profiling::scope!("create fence");
+            unsafe { self.device.create_fence(&vk::FenceCreateInfo::default(), None) }.map_err(Error::VulkanFenceCreation)?
+        };
 
-        let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-        unsafe {
-            self.device
-                .begin_command_buffer(temp_command_buffer, &command_buffer_begin_info)
-                .map_err(Error::VulkanBeginCommandBuffer)
-        }?;
+        {
+            profiling::scope!("begin command buffer recording");
+            let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            unsafe { self.device.begin_command_buffer(temp_command_buffer, &command_buffer_begin_info) }
+                .map_err(Error::VulkanBeginCommandBuffer)?;
+        }
         let result = f(temp_command_buffer)?;
-        unsafe { self.device.end_command_buffer(temp_command_buffer) }.map_err(Error::VulkanEndCommandBuffer)?;
+        {
+            profiling::scope!("end command buffer recording");
+            unsafe { self.device.end_command_buffer(temp_command_buffer) }.map_err(Error::VulkanEndCommandBuffer)?;
+        }
 
-        let command_buffers = [temp_command_buffer];
-        let signal_semaphores = [signal_semaphore];
-        let submit_infos = [vk::SubmitInfo::builder()
-            .command_buffers(&command_buffers)
-            .signal_semaphores(&signal_semaphores)
-            .build()];
-        unsafe {
-            self.device
-                .queue_submit(self.graphics_queue, &submit_infos, signal_fence)
-                .map_err(Error::VulkanQueueSubmit)
-        }?;
+        {
+            profiling::scope!("submit command buffer");
+            let command_buffers = [temp_command_buffer];
+            let signal_semaphores = [signal_semaphore];
+            let submit_infos = [vk::SubmitInfo::builder()
+                .command_buffers(&command_buffers)
+                .signal_semaphores(&signal_semaphores)
+                .build()];
+            unsafe {
+                self.device
+                    .queue_submit(self.graphics_queue, &submit_infos, signal_fence)
+                    .map_err(Error::VulkanQueueSubmit)
+            }?;
+        }
 
-        let temp_cmdbuf_sender = &self.frame_local(frame_index).temp_command_buffers.0;
-        let _ = temp_cmdbuf_sender.send(temp_command_buffer);
-        let temp_semaphore_sender = &self.frame_local(frame_index).temp_semaphores.0;
-        let _ = temp_semaphore_sender.send(signal_semaphore);
-        let render_wait_semaphore_sender = &self.render_wait_semaphores.0;
-        let _ = render_wait_semaphore_sender.send(WaitSemaphore(signal_semaphore, wait_stage));
+        {
+            profiling::scope!("queue for gc");
+            let temp_cmdbuf_sender = &self.frame_local(frame_index).temp_command_buffers.0;
+            let _ = temp_cmdbuf_sender.send(temp_command_buffer);
+            let temp_semaphore_sender = &self.frame_local(frame_index).temp_semaphores.0;
+            let _ = temp_semaphore_sender.send(signal_semaphore);
+            let render_wait_semaphore_sender = &self.render_wait_semaphores.0;
+            let _ = render_wait_semaphore_sender.send(WaitSemaphore(signal_semaphore, wait_stage));
+        }
         Ok((signal_fence, result))
     }
 

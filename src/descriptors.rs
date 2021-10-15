@@ -40,13 +40,13 @@ impl Descriptors {
         }
     }
 
-    #[profiling::function]
     pub fn new(
         device: &Device,
         physical_device_properties: &vk::PhysicalDeviceProperties,
         physical_device_features: &vk::PhysicalDeviceFeatures,
         frame_count: u32,
     ) -> Result<Descriptors, Error> {
+        profiling::scope!("new_descriptors");
         let sampler_create_info = vk::SamplerCreateInfo::builder()
             .mag_filter(vk::Filter::LINEAR)
             .min_filter(vk::Filter::LINEAR)

@@ -5,7 +5,7 @@ use std::cell::Cell;
 use std::rc::{Rc, Weak};
 use std::sync::Mutex; // TODO: Make Resources mutable
 
-// TODO: Add resource removal (via refcounting?)
+// TODO: Should probably be renamed to GpuGarbageCollector
 
 pub(crate) struct AllocatedImage(pub(crate) vk::Image, pub(crate) vk::ImageView, pub(crate) vk_mem::Allocation);
 pub(crate) struct AllocatedBuffer(pub(crate) vk::Buffer, pub(crate) vk_mem::Allocation);
@@ -43,8 +43,8 @@ pub struct Resources {
 }
 
 impl Resources {
-    #[profiling::function]
     pub(crate) fn new() -> Resources {
+        profiling::scope!("new_resources");
         Resources {
             loading_images: Mutex::new(Vec::new()),
             loading_buffers: Mutex::new(Vec::new()),

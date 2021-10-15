@@ -48,7 +48,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut canvas = neonvk::Canvas::new(&gpu, None, width, height, false)?;
 
     let loading_frame_index = gpu.wait_frame(&canvas)?;
-    let camera = neonvk::Camera::new();
+    let camera = neonvk::Camera::default();
 
     let mut resources = neonvk::GltfResources::default();
     resources::load_resources(&mut resources);

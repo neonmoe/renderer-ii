@@ -13,7 +13,6 @@ pub struct Texture {
 }
 
 impl Texture {
-    #[profiling::function]
     pub fn new(
         gpu: &Gpu,
         frame_index: FrameIndex,
@@ -23,20 +22,24 @@ impl Texture {
         height: u32,
         format: vk::Format,
     ) -> Result<Texture, Error> {
-        let buffer_size = pixels.len() as vk::DeviceSize;
-        let buffer_create_info = vk::BufferCreateInfo::builder()
-            .size(buffer_size)
-            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let allocation_create_info = vk_mem::AllocationCreateInfo {
-            flags: vk_mem::AllocationCreateFlags::MAPPED,
-            required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
-            ..Default::default()
+        profiling::scope!("new_texture");
+
+        let (staging_buffer, staging_allocation, staging_alloc_info) = {
+            profiling::scope!("allocate and create staging buffer");
+            let buffer_size = pixels.len() as vk::DeviceSize;
+            let buffer_create_info = vk::BufferCreateInfo::builder()
+                .size(buffer_size)
+                .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE);
+            let allocation_create_info = vk_mem::AllocationCreateInfo {
+                flags: vk_mem::AllocationCreateFlags::MAPPED,
+                required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
+                ..Default::default()
+            };
+            gpu.allocator
+                .create_buffer(&buffer_create_info, &allocation_create_info)
+                .map_err(Error::VmaBufferAllocation)?
         };
-        let (staging_buffer, staging_allocation, staging_alloc_info) = gpu
-            .allocator
-            .create_buffer(&buffer_create_info, &allocation_create_info)
-            .map_err(Error::VmaBufferAllocation)?;
         buffer_ops::copy_to_allocation(pixels, &gpu.allocator, &staging_allocation, &staging_alloc_info)?;
 
         let image_extent = vk::Extent3D { width, height, depth: 1 };
@@ -49,19 +52,22 @@ impl Texture {
                 }
             };
 
-        let subresource_range = vk::ImageSubresourceRange::builder()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .base_mip_level(0)
-            .level_count(mip_levels)
-            .base_array_layer(0)
-            .layer_count(1)
-            .build();
-        let image_view_create_info = vk::ImageViewCreateInfo::builder()
-            .image(image)
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .format(format)
-            .subresource_range(subresource_range);
-        let image_view = unsafe { gpu.device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation)?;
+        let image_view = {
+            profiling::scope!("create image view");
+            let subresource_range = vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(mip_levels)
+                .base_array_layer(0)
+                .layer_count(1)
+                .build();
+            let image_view_create_info = vk::ImageViewCreateInfo::builder()
+                .image(image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(format)
+                .subresource_range(subresource_range);
+            unsafe { gpu.device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation)?
+        };
 
         let staging_buffer = AllocatedBuffer(staging_buffer, staging_allocation);
         let image = AllocatedImage(image, image_view, allocation);

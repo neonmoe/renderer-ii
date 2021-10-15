@@ -24,7 +24,6 @@ impl Mesh {
     /// attribute, containing the values for that attribute tightly
     /// packed.
     // TODO: Meshes that refer to existing buffers, instead of owning them themselves
-    #[profiling::function]
     pub fn new<I: IndexType>(
         gpu: &Gpu,
         frame_index: FrameIndex,
@@ -32,10 +31,11 @@ impl Mesh {
         indices: &[u8],
         pipeline: Pipeline,
     ) -> Result<Mesh, Error> {
+        profiling::scope!("new_mesh");
+
         // The destination memory is aligned to 16 bytes (size of
         // Vec4), as well as the individual slices in it. Just to make
         // sure that alignment isn't causing problems.
-
         let round_size = |len: usize| if len % 16 == 0 { len } else { len + (16 - (len % 16)) };
         let indices_size = indices.len();
         let mut total_size = round_size(indices_size);

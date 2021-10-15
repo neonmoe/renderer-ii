@@ -31,14 +31,10 @@ fn reverse_z_rh_infinite_projection(fov: f32, aspect_ratio: f32, near: f32) -> M
     Mat4::from_cols_array(&[sx, 0.0, 0.0, 0.0, 0.0, -sy, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, near, 0.0])
 }
 
+#[derive(Default)]
 pub struct Camera {}
 
 impl Camera {
-    #[profiling::function]
-    pub fn new<'a>() -> Camera {
-        Camera {}
-    }
-
     /// Updates Vulkan buffers with the current state of the
     /// [Camera] and [Canvas].
     #[profiling::function]

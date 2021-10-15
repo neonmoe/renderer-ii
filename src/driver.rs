@@ -40,8 +40,8 @@ impl Drop for Driver {
 }
 
 impl Driver {
-    #[profiling::function]
     pub fn new(window: &dyn HasRawWindowHandle) -> Result<Driver, Error> {
+        profiling::scope!("new_driver");
         let entry = unsafe { Entry::new().unwrap() };
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))

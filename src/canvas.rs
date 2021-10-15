@@ -112,7 +112,6 @@ impl Canvas<'_> {
     /// used. Otherwise, FIFO. FIFO only releases frames after they've
     /// been displayed on screen, so it caps the fps to the screen's
     /// refresh rate.
-    #[profiling::function]
     pub fn new<'a>(
         gpu: &'a Gpu,
         old_canvas: Option<&Canvas>,
@@ -120,6 +119,7 @@ impl Canvas<'_> {
         fallback_height: u32,
         immediate_present: bool,
     ) -> Result<Canvas<'a>, Error> {
+        profiling::scope!("new_canvas");
         let device = &gpu.device;
         let swapchain_ext = &gpu.swapchain_ext;
         let queue_family_indices = [gpu.graphics_family_index, gpu.surface_family_index];
