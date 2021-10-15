@@ -64,22 +64,22 @@ fn queue_buffer_copy(
     src: vk::Buffer,
     buffer_size: vk::DeviceSize,
 ) -> Result<(vk::Buffer, vk_mem::Allocation), Error> {
-    let buffer_create_info = vk::BufferCreateInfo::builder()
-        .size(buffer_size)
-        .usage(
-            // Just prepare for everything for simplicity.
-            vk::BufferUsageFlags::TRANSFER_DST
-                | vk::BufferUsageFlags::VERTEX_BUFFER
-                | vk::BufferUsageFlags::INDEX_BUFFER
-                | vk::BufferUsageFlags::UNIFORM_BUFFER,
-        )
-        .sharing_mode(vk::SharingMode::EXCLUSIVE);
-    let allocation_create_info = vk_mem::AllocationCreateInfo {
-        required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        ..Default::default()
-    };
     let (buffer, allocation, _) = {
-        profiling::scope!("allocate vulkan buffer");
+        profiling::scope!("allocate gpu buffer");
+        let buffer_create_info = vk::BufferCreateInfo::builder()
+            .size(buffer_size)
+            .usage(
+                // Just prepare for everything for simplicity.
+                vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::VERTEX_BUFFER
+                    | vk::BufferUsageFlags::INDEX_BUFFER
+                    | vk::BufferUsageFlags::UNIFORM_BUFFER,
+            )
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let allocation_create_info = vk_mem::AllocationCreateInfo {
+            required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            ..Default::default()
+        };
         allocator
             .create_buffer(&buffer_create_info, &allocation_create_info)
             .map_err(Error::VmaBufferAllocation)?
@@ -100,24 +100,27 @@ fn queue_image_copy_with_generated_mipmaps(
     format: vk::Format,
 ) -> Result<(vk::Image, vk_mem::Allocation, u32), Error> {
     let mip_levels = ((extent.width.max(extent.height) as f32).log2()) as u32 + 1;
-    let image_info = vk::ImageCreateInfo::builder()
-        .image_type(vk::ImageType::TYPE_2D)
-        .extent(extent)
-        .mip_levels(mip_levels)
-        .array_layers(1)
-        .format(format)
-        .tiling(vk::ImageTiling::OPTIMAL)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .samples(vk::SampleCountFlags::TYPE_1);
-    let allocation_info = vk_mem::AllocationCreateInfo {
-        required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        ..Default::default()
+    let (image, allocation, _) = {
+        profiling::scope!("allocate gpu texture");
+        let image_info = vk::ImageCreateInfo::builder()
+            .image_type(vk::ImageType::TYPE_2D)
+            .extent(extent)
+            .mip_levels(mip_levels)
+            .array_layers(1)
+            .format(format)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .samples(vk::SampleCountFlags::TYPE_1);
+        let allocation_info = vk_mem::AllocationCreateInfo {
+            required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            ..Default::default()
+        };
+        allocator
+            .create_image(&image_info, &allocation_info)
+            .map_err(Error::VmaImageAllocation)?
     };
-    let (image, allocation, _) = allocator
-        .create_image(&image_info, &allocation_info)
-        .map_err(Error::VmaImageAllocation)?;
 
     for mip_level in 0..mip_levels {
         let subresource_range = vk::ImageSubresourceRange::builder()
@@ -292,24 +295,27 @@ fn queue_image_copy_with_explicit_mipmaps(
     mut extent: vk::Extent3D,
     format: vk::Format,
 ) -> Result<(vk::Image, vk_mem::Allocation, u32), Error> {
-    let image_info = vk::ImageCreateInfo::builder()
-        .image_type(vk::ImageType::TYPE_2D)
-        .extent(extent)
-        .mip_levels(mip_ranges.len() as u32)
-        .array_layers(1)
-        .format(format)
-        .tiling(vk::ImageTiling::OPTIMAL)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .samples(vk::SampleCountFlags::TYPE_1);
-    let allocation_info = vk_mem::AllocationCreateInfo {
-        required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        ..Default::default()
+    let (image, allocation, _) = {
+        profiling::scope!("allocate gpu texture");
+        let image_info = vk::ImageCreateInfo::builder()
+            .image_type(vk::ImageType::TYPE_2D)
+            .extent(extent)
+            .mip_levels(mip_ranges.len() as u32)
+            .array_layers(1)
+            .format(format)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .samples(vk::SampleCountFlags::TYPE_1);
+        let allocation_info = vk_mem::AllocationCreateInfo {
+            required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            ..Default::default()
+        };
+        allocator
+            .create_image(&image_info, &allocation_info)
+            .map_err(Error::VmaImageAllocation)?
     };
-    let (image, allocation, _) = allocator
-        .create_image(&image_info, &allocation_info)
-        .map_err(Error::VmaImageAllocation)?;
 
     for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
         let subresource_range = vk::ImageSubresourceRange::builder()

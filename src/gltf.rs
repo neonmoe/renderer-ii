@@ -2,6 +2,7 @@ use crate::image_loading::{self, TextureKind};
 use crate::{Error, FrameIndex, Gpu, Material, Mesh, Pipeline, Texture};
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 mod gltf_json;
 mod mesh_iter;
@@ -150,140 +151,192 @@ fn create_gltf(
         }
     }
 
-    let meshes = gltf
-        .meshes
-        .iter()
-        .map(|mesh| {
-            mesh.primitives
-                .iter()
-                .map(|primitive| {
-                    let mesh = create_primitive(gpu, frame_index, &gltf, &buffers, primitive)?;
-                    let material_index = primitive.material.ok_or(Error::GltfMisc("material missing"))?;
-                    Ok((mesh, material_index))
-                })
-                .collect::<Result<Vec<(Mesh, usize)>, Error>>()
-        })
-        .collect::<Result<Vec<Vec<(Mesh, usize)>>, Error>>()?;
+    let meshes = {
+        profiling::scope!("meshes");
+        gltf.meshes
+            .iter()
+            .map(|mesh| {
+                mesh.primitives
+                    .iter()
+                    .map(|primitive| {
+                        let mesh = create_primitive(gpu, frame_index, &gltf, &buffers, primitive)?;
+                        let material_index = primitive.material.ok_or(Error::GltfMisc("material missing"))?;
+                        Ok((mesh, material_index))
+                    })
+                    .collect::<Result<Vec<(Mesh, usize)>, Error>>()
+            })
+            .collect::<Result<Vec<Vec<(Mesh, usize)>>, Error>>()?
+    };
 
-    let nodes = gltf
-        .nodes
-        .iter()
-        .map(|node| {
-            let transform = if let Some(&[x0, y0, z0, w0, x1, y1, z1, w1, x2, y2, z2, w2, x3, y3, z3, w3]) = node.matrix.as_deref() {
-                Mat4::from_cols_array(&[x0, y0, z0, w0, x1, y1, z1, w1, x2, y2, z2, w2, x3, y3, z3, w3])
-            } else {
-                let translation = match node.translation.as_deref() {
-                    Some(&[x, y, z]) => Vec3::new(x, y, z),
-                    _ => Vec3::ZERO,
-                };
-                let rotation = match node.rotation.as_deref() {
-                    Some(&[x, y, z, w]) => Quat::from_xyzw(x, y, z, w),
-                    _ => Quat::IDENTITY,
-                };
-                let scale = match node.scale.as_deref() {
-                    Some(&[x, y, z]) => Vec3::new(x, y, z),
-                    _ => Vec3::new(1.0, 1.0, 1.0),
-                };
-                Mat4::from_scale_rotation_translation(scale, rotation, translation)
-            };
-            Node {
-                mesh: node.mesh,
-                children: node.children.clone(),
-                transform,
-            }
-        })
-        .collect::<Vec<Node>>();
-
-    let images = gltf
-        .images
-        .iter()
-        .map(|image| {
-            let image_load;
-            let bytes;
-            if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
-                image_load = match mime_type.as_str() {
-                    "image/jpeg" => image_loading::load_jpeg,
-                    "image/png" => image_loading::load_png,
-                    "image/ktx" => image_loading::load_ktx,
-                    _ => return Err(Error::GltfSpec("mime type of texture is not image/ktx, image/png or image/jpeg")),
-                };
-                let buffer_view = gltf.buffer_views.get(*buffer_view).ok_or(Error::GltfOob("texture buffer view"))?;
-                let buffer = buffers.get(buffer_view.buffer).ok_or(Error::GltfOob("texture buffer"))?;
-                let offset = buffer_view.byte_offset.unwrap_or(0);
-                let length = buffer_view.byte_length;
-                if offset + length >= buffer.len() {
-                    return Err(Error::GltfOob("texture buffer view bytes"));
-                }
-                bytes = Cow::Borrowed(&buffer[offset..offset + length]);
-            } else if let Some(uri) = &image.uri {
-                image_load = if uri.ends_with(".ktx") {
-                    image_loading::load_ktx
-                } else if uri.ends_with(".png") {
-                    image_loading::load_png
-                } else if uri.ends_with(".jpg") || uri.ends_with(".jpeg") {
-                    image_loading::load_jpeg
+    let nodes = {
+        profiling::scope!("nodes");
+        gltf.nodes
+            .iter()
+            .map(|node| {
+                let transform = if let Some(&[x0, y0, z0, w0, x1, y1, z1, w1, x2, y2, z2, w2, x3, y3, z3, w3]) = node.matrix.as_deref() {
+                    Mat4::from_cols_array(&[x0, y0, z0, w0, x1, y1, z1, w1, x2, y2, z2, w2, x3, y3, z3, w3])
                 } else {
-                    return Err(Error::GltfMisc("image uri does not end in .png, .jpg or .jpeg"));
+                    let translation = match node.translation.as_deref() {
+                        Some(&[x, y, z]) => Vec3::new(x, y, z),
+                        _ => Vec3::ZERO,
+                    };
+                    let rotation = match node.rotation.as_deref() {
+                        Some(&[x, y, z, w]) => Quat::from_xyzw(x, y, z, w),
+                        _ => Quat::IDENTITY,
+                    };
+                    let scale = match node.scale.as_deref() {
+                        Some(&[x, y, z]) => Vec3::new(x, y, z),
+                        _ => Vec3::new(1.0, 1.0, 1.0),
+                    };
+                    Mat4::from_scale_rotation_translation(scale, rotation, translation)
                 };
-                bytes = Cow::Owned(resources.get_or_load(uri)?);
-            } else {
-                return Err(Error::GltfSpec("image does not have an uri nor a mimetype + buffer view"));
-            };
-            // TODO: Convert format to srgb or snorm depending on use
-            // - base colors and emissive maps: srgb
-            // - normal maps: snorm
-            image_load(gpu, frame_index, &bytes, TextureKind::LinearColor)
-        })
-        .collect::<Result<Vec<Texture>, Error>>()?;
+                Node {
+                    mesh: node.mesh,
+                    children: node.children.clone(),
+                    transform,
+                }
+            })
+            .collect::<Vec<Node>>()
+    };
 
-    let materials = gltf
-        .materials
-        .iter()
-        .map(|mat| {
-            let mktex = |images: &[Texture], texture_info: &gltf_json::TextureInfo| {
-                let texture = match gltf.textures.get(texture_info.index) {
-                    Some(tex) => tex,
-                    None => return Some(Err(Error::GltfOob("texture"))),
-                };
-                let image_index = texture.source?;
-                let texture = match images.get(image_index) {
-                    Some(texture) => texture,
-                    None => return Some(Err(Error::GltfOob("image"))),
-                };
-                Some(Ok(texture.clone()))
-            };
-
-            macro_rules! handle_optional_result {
-                ($expression:expr) => {
-                    match $expression {
-                        Some(Ok(ok)) => Some(ok),
-                        Some(Err(err)) => return Err(err),
-                        None => None,
+    let image_texture_kinds = {
+        profiling::scope!("image kind map creation");
+        let mut image_texture_kinds = HashMap::new();
+        for material in &gltf.materials {
+            if let Some(pbr) = &material.pbr_metallic_roughness {
+                if let Some(base_color) = &pbr.base_color_texture {
+                    let texture = gltf.textures.get(base_color.index).ok_or(Error::GltfOob("texture"))?;
+                    if let Some(image_index) = texture.source {
+                        image_texture_kinds.insert(image_index, TextureKind::SrgbColor);
                     }
-                };
+                }
+                if let Some(metallic_roughness) = &pbr.metallic_roughness_texture {
+                    let texture = gltf.textures.get(metallic_roughness.index).ok_or(Error::GltfOob("texture"))?;
+                    if let Some(image_index) = texture.source {
+                        image_texture_kinds.insert(image_index, TextureKind::LinearColor);
+                    }
+                }
             }
+            if let Some(normal) = &material.normal_texture {
+                let texture = gltf.textures.get(normal.index).ok_or(Error::GltfOob("texture"))?;
+                if let Some(image_index) = texture.source {
+                    image_texture_kinds.insert(image_index, TextureKind::NormalMap);
+                }
+            }
+            if let Some(emissive) = &material.emissive_texture {
+                let texture = gltf.textures.get(emissive.index).ok_or(Error::GltfOob("texture"))?;
+                if let Some(image_index) = texture.source {
+                    image_texture_kinds.insert(image_index, TextureKind::SrgbColor);
+                }
+            }
+            if let Some(occlusion) = &material.occlusion_texture {
+                let texture = gltf.textures.get(occlusion.index).ok_or(Error::GltfOob("texture"))?;
+                if let Some(image_index) = texture.source {
+                    image_texture_kinds.insert(image_index, TextureKind::LinearColor);
+                }
+            }
+        }
+        image_texture_kinds
+    };
 
-            let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
-            let base_color = handle_optional_result!(pbr.base_color_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-            let metallic_roughness = handle_optional_result!(pbr.metallic_roughness_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-            let normal = handle_optional_result!(mat.normal_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-            let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-            let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-            Material::new(gpu, base_color, metallic_roughness, normal, occlusion, emissive)
-        })
-        .collect::<Result<Vec<Material>, Error>>()?;
+    let images = {
+        profiling::scope!("images");
+        gltf.images
+            .iter()
+            .enumerate()
+            .map(|(i, image)| {
+                let image_load;
+                let bytes;
+                if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
+                    image_load = match mime_type.as_str() {
+                        "image/jpeg" => image_loading::load_jpeg,
+                        "image/png" => image_loading::load_png,
+                        "image/ktx" => image_loading::load_ktx,
+                        _ => return Err(Error::GltfSpec("mime type of texture is not image/ktx, image/png or image/jpeg")),
+                    };
+                    let buffer_view = gltf.buffer_views.get(*buffer_view).ok_or(Error::GltfOob("texture buffer view"))?;
+                    let buffer = buffers.get(buffer_view.buffer).ok_or(Error::GltfOob("texture buffer"))?;
+                    let offset = buffer_view.byte_offset.unwrap_or(0);
+                    let length = buffer_view.byte_length;
+                    if offset + length >= buffer.len() {
+                        return Err(Error::GltfOob("texture buffer view bytes"));
+                    }
+                    bytes = Cow::Borrowed(&buffer[offset..offset + length]);
+                } else if let Some(uri) = &image.uri {
+                    image_load = if uri.ends_with(".ktx") {
+                        image_loading::load_ktx
+                    } else if uri.ends_with(".png") {
+                        image_loading::load_png
+                    } else if uri.ends_with(".jpg") || uri.ends_with(".jpeg") {
+                        image_loading::load_jpeg
+                    } else {
+                        return Err(Error::GltfMisc("image uri does not end in .png, .jpg or .jpeg"));
+                    };
+                    bytes = Cow::Owned(resources.get_or_load(uri)?);
+                } else {
+                    return Err(Error::GltfSpec("image does not have an uri nor a mimetype + buffer view"));
+                };
 
-    let mut visited_nodes = vec![false; nodes.len()];
-    let mut queue = Vec::with_capacity(nodes.len());
-    queue.extend_from_slice(&root_nodes);
-    while let Some(node) = queue.pop() {
-        if visited_nodes[node] {
-            return Err(Error::GltfInvalidNodeGraph);
-        } else {
-            visited_nodes[node] = true;
-            if let Some(children) = &nodes[node].children {
-                for child in children {
-                    queue.push(*child);
+                let texture_kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
+                image_load(gpu, frame_index, &bytes, texture_kind)
+            })
+            .collect::<Result<Vec<Texture>, Error>>()?
+    };
+
+    let materials = {
+        profiling::scope!("materials");
+        gltf.materials
+            .iter()
+            .map(|mat| {
+                let mktex = |images: &[Texture], texture_info: &gltf_json::TextureInfo| {
+                    let texture = match gltf.textures.get(texture_info.index) {
+                        Some(tex) => tex,
+                        None => return Some(Err(Error::GltfOob("texture"))),
+                    };
+                    let image_index = texture.source?;
+                    let texture = match images.get(image_index) {
+                        Some(texture) => texture,
+                        None => return Some(Err(Error::GltfOob("image"))),
+                    };
+                    Some(Ok(texture.clone()))
+                };
+
+                macro_rules! handle_optional_result {
+                    ($expression:expr) => {
+                        match $expression {
+                            Some(Ok(ok)) => Some(ok),
+                            Some(Err(err)) => return Err(err),
+                            None => None,
+                        }
+                    };
+                }
+
+                let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
+                let base_color = handle_optional_result!(pbr.base_color_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+                let metallic_roughness =
+                    handle_optional_result!(pbr.metallic_roughness_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+                let normal = handle_optional_result!(mat.normal_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+                let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+                let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+                Material::new(gpu, base_color, metallic_roughness, normal, occlusion, emissive)
+            })
+            .collect::<Result<Vec<Material>, Error>>()?
+    };
+
+    {
+        profiling::scope!("node graph creation");
+        let mut visited_nodes = vec![false; nodes.len()];
+        let mut queue = Vec::with_capacity(nodes.len());
+        queue.extend_from_slice(&root_nodes);
+        while let Some(node) = queue.pop() {
+            if visited_nodes[node] {
+                return Err(Error::GltfInvalidNodeGraph);
+            } else {
+                visited_nodes[node] = true;
+                if let Some(children) = &nodes[node].children {
+                    for child in children {
+                        queue.push(*child);
+                    }
                 }
             }
         }
