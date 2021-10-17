@@ -21,6 +21,13 @@ pub struct GltfResources {
 }
 
 impl GltfResources {
+    pub fn with_path(path: PathBuf) -> GltfResources {
+        GltfResources {
+            loading_path: Some(path),
+            ..Default::default()
+        }
+    }
+
     #[profiling::function]
     pub fn insert<U: Into<PathBuf>, B: Into<Vec<u8>>>(&mut self, uri: U, bytes: B) {
         self.resource_cache.insert(uri.into(), bytes.into());

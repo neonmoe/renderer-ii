@@ -105,6 +105,7 @@ pub fn load_ktx(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureK
 }
 
 /// Loads a png into (width, height, format, pixel bytes).
+#[cfg(feature = "png")]
 #[profiling::function]
 pub fn load_png(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureKind) -> Result<Texture, Error> {
     use png::{BitDepth, ColorType, Decoder};
@@ -131,6 +132,7 @@ pub fn load_png(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureK
 }
 
 /// Loads a jpeg into (width, height, format, pixel bytes).
+#[cfg(feature = "jpeg-decoder")]
 #[profiling::function]
 pub fn load_jpeg(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureKind) -> Result<Texture, Error> {
     use jpeg_decoder::{Decoder, PixelFormat};

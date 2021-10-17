@@ -1,9 +1,12 @@
-use glam::{Mat4, Vec3};
 use log::LevelFilter;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+#[cfg(feature = "png")]
+use glam::{Mat4, Vec3};
 
 use logger::Logger;
 static LOGGER: Logger = Logger;
@@ -50,19 +53,23 @@ fn fallible_main() -> anyhow::Result<()> {
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::default();
 
-    let mut resources = neonvk::GltfResources::default();
-    resources::load_resources(&mut resources);
+    let resources_path = find_resources_path();
+    let mut resources = neonvk::GltfResources::with_path(resources_path);
     let sponza_model = neonvk::Gltf::from_gltf(&gpu, loading_frame_index, include_str!("sponza/glTF/Sponza.gltf"), &mut resources)?;
+    #[cfg(feature = "png")]
     let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), &mut resources)?;
 
+    #[cfg(feature = "png")]
     let tree_texture = neonvk::image_loading::load_png(
         &gpu,
         loading_frame_index,
         include_bytes!("tree.png"),
         neonvk::image_loading::TextureKind::SrgbColor,
     )?;
+    #[cfg(feature = "png")]
     let tree_material = neonvk::Material::new(&gpu, Some(tree_texture), None, None, None, None)?;
 
+    #[cfg(feature = "png")]
     let quad_vertices: &[&[u8]] = &[
         bytemuck::bytes_of(&[[-0.5f32, 0.5, 0.0], [-0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [0.5, -0.5, 0.0]]),
         bytemuck::bytes_of(&[[0.0f32, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]),
@@ -74,12 +81,15 @@ fn fallible_main() -> anyhow::Result<()> {
             [1.0, 0.0, 0.0, 1.0],
         ]),
     ];
+    #[cfg(feature = "png")]
     let quad_indices: &[u8] = bytemuck::bytes_of(&[0u16, 1, 2, 3, 2, 1]);
+    #[cfg(feature = "png")]
     let quad = neonvk::Mesh::new::<u16>(&gpu, loading_frame_index, quad_vertices, quad_indices, neonvk::Pipeline::Default)?;
 
     // Get the first frame out of the way, to upload the meshes.
     gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new(), 0)?;
 
+    #[cfg(feature = "png")]
     let start_time = Instant::now();
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
@@ -92,6 +102,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut render_test_meshes = true;
     'running: loop {
         profiling::finish_frame!();
+        #[cfg(feature = "png")]
         let frame_start_seconds = (Instant::now() - start_time).as_secs_f32();
 
         for event in event_pump.poll_iter() {
@@ -140,6 +151,7 @@ fn fallible_main() -> anyhow::Result<()> {
         for (mesh, material, transform) in sponza_model.mesh_iter() {
             scene.queue(mesh, material, transform);
         }
+        #[cfg(feature = "png")]
         if render_test_meshes {
             let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1)
                 * Mat4::from_rotation_x(frame_start_seconds * 0.1)
@@ -205,6 +217,24 @@ fn display_bytes(bytes: u64) -> String {
     }
 }
 
+/// Attempts to find the sponza/glTF directory to be used as a
+/// resources-directory.
+fn find_resources_path() -> PathBuf {
+    let current_path = Path::new(".").canonicalize().unwrap();
+    let path = if current_path.ends_with("src") {
+        "bin/sponza/glTF"
+    } else if current_path.ends_with("bin") {
+        "sponza/glTF"
+    } else if current_path.ends_with("sponza") {
+        "glTF"
+    } else if current_path.ends_with("glTF") {
+        "."
+    } else {
+        "src/bin/sponza/glTF"
+    };
+    PathBuf::from(path)
+}
+
 mod logger {
     use log::{Level, Log, Metadata, Record};
 
@@ -244,86 +274,5 @@ mod logger {
         }
 
         fn flush(&self) {}
-    }
-}
-
-mod resources {
-    macro_rules! insert_sponza_resource {
-        ($resources:expr, $expression:expr) => {
-            $resources.insert($expression, include_bytes!(concat!("sponza/glTF/", $expression)).as_ref())
-        };
-    }
-
-    pub fn load_resources(resources: &mut neonvk::GltfResources) {
-        insert_sponza_resource!(resources, "10381718147657362067.ktx");
-        insert_sponza_resource!(resources, "10388182081421875623.ktx");
-        insert_sponza_resource!(resources, "11474523244911310074.ktx");
-        insert_sponza_resource!(resources, "11490520546946913238.ktx");
-        insert_sponza_resource!(resources, "11872827283454512094.ktx");
-        insert_sponza_resource!(resources, "11968150294050148237.ktx");
-        insert_sponza_resource!(resources, "1219024358953944284.ktx");
-        insert_sponza_resource!(resources, "12501374198249454378.ktx");
-        insert_sponza_resource!(resources, "13196865903111448057.ktx");
-        insert_sponza_resource!(resources, "13824894030729245199.ktx");
-        insert_sponza_resource!(resources, "13982482287905699490.ktx");
-        insert_sponza_resource!(resources, "14118779221266351425.ktx");
-        insert_sponza_resource!(resources, "14170708867020035030.ktx");
-        insert_sponza_resource!(resources, "14267839433702832875.ktx");
-        insert_sponza_resource!(resources, "14650633544276105767.ktx");
-        insert_sponza_resource!(resources, "15295713303328085182.ktx");
-        insert_sponza_resource!(resources, "15722799267630235092.ktx");
-        insert_sponza_resource!(resources, "16275776544635328252.ktx");
-        insert_sponza_resource!(resources, "16299174074766089871.ktx");
-        insert_sponza_resource!(resources, "16885566240357350108.ktx");
-        insert_sponza_resource!(resources, "17556969131407844942.ktx");
-        insert_sponza_resource!(resources, "17876391417123941155.ktx");
-        insert_sponza_resource!(resources, "2051777328469649772.ktx");
-        insert_sponza_resource!(resources, "2185409758123873465.ktx");
-        insert_sponza_resource!(resources, "2299742237651021498.ktx");
-        insert_sponza_resource!(resources, "2374361008830720677.ktx");
-        insert_sponza_resource!(resources, "2411100444841994089.ktx");
-        insert_sponza_resource!(resources, "2775690330959970771.ktx");
-        insert_sponza_resource!(resources, "2969916736137545357.ktx");
-        insert_sponza_resource!(resources, "332936164838540657.ktx");
-        insert_sponza_resource!(resources, "3371964815757888145.ktx");
-        insert_sponza_resource!(resources, "3455394979645218238.ktx");
-        insert_sponza_resource!(resources, "3628158980083700836.ktx");
-        insert_sponza_resource!(resources, "3827035219084910048.ktx");
-        insert_sponza_resource!(resources, "4477655471536070370.ktx");
-        insert_sponza_resource!(resources, "4601176305987539675.ktx");
-        insert_sponza_resource!(resources, "466164707995436622.ktx");
-        insert_sponza_resource!(resources, "4675343432951571524.ktx");
-        insert_sponza_resource!(resources, "4871783166746854860.ktx");
-        insert_sponza_resource!(resources, "4910669866631290573.ktx");
-        insert_sponza_resource!(resources, "4975155472559461469.ktx");
-        insert_sponza_resource!(resources, "5061699253647017043.ktx");
-        insert_sponza_resource!(resources, "5792855332885324923.ktx");
-        insert_sponza_resource!(resources, "5823059166183034438.ktx");
-        insert_sponza_resource!(resources, "6047387724914829168.ktx");
-        insert_sponza_resource!(resources, "6151467286084645207.ktx");
-        insert_sponza_resource!(resources, "6593109234861095314.ktx");
-        insert_sponza_resource!(resources, "6667038893015345571.ktx");
-        insert_sponza_resource!(resources, "6772804448157695701.ktx");
-        insert_sponza_resource!(resources, "7056944414013900257.ktx");
-        insert_sponza_resource!(resources, "715093869573992647.ktx");
-        insert_sponza_resource!(resources, "7268504077753552595.ktx");
-        insert_sponza_resource!(resources, "7441062115984513793.ktx");
-        insert_sponza_resource!(resources, "755318871556304029.ktx");
-        insert_sponza_resource!(resources, "759203620573749278.ktx");
-        insert_sponza_resource!(resources, "7645212358685992005.ktx");
-        insert_sponza_resource!(resources, "7815564343179553343.ktx");
-        insert_sponza_resource!(resources, "8006627369776289000.ktx");
-        insert_sponza_resource!(resources, "8051790464816141987.ktx");
-        insert_sponza_resource!(resources, "8114461559286000061.ktx");
-        insert_sponza_resource!(resources, "8481240838833932244.ktx");
-        insert_sponza_resource!(resources, "8503262930880235456.ktx");
-        insert_sponza_resource!(resources, "8747919177698443163.ktx");
-        insert_sponza_resource!(resources, "8750083169368950601.ktx");
-        insert_sponza_resource!(resources, "8773302468495022225.ktx");
-        insert_sponza_resource!(resources, "8783994986360286082.ktx");
-        insert_sponza_resource!(resources, "9288698199695299068.ktx");
-        insert_sponza_resource!(resources, "9916269861720640319.ktx");
-        insert_sponza_resource!(resources, "Sponza.bin");
-        insert_sponza_resource!(resources, "white.ktx");
     }
 }

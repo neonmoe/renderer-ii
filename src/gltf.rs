@@ -249,9 +249,15 @@ fn create_gltf(
                 let bytes;
                 if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
                     image_load = match mime_type.as_str() {
-                        "image/jpeg" => image_loading::load_jpeg,
-                        "image/png" => image_loading::load_png,
                         "image/ktx" => image_loading::load_ktx,
+                        #[cfg(feature = "jpeg-decoder")]
+                        "image/jpeg" => image_loading::load_jpeg,
+                        #[cfg(not(feature = "jpeg-decoder"))]
+                        "image/jpeg" => return Err(Error::GltfMisc("image is a jpeg, but the jpeg-decoder feature is disabled")),
+                        #[cfg(feature = "png")]
+                        "image/png" => image_loading::load_png,
+                        #[cfg(not(feature = "png"))]
+                        "image/png" => return Err(Error::GltfMisc("image is a png, but the png feature is disabled")),
                         _ => return Err(Error::GltfSpec("mime type of texture is not image/ktx, image/png or image/jpeg")),
                     };
                     let buffer_view = gltf.buffer_views.get(*buffer_view).ok_or(Error::GltfOob("texture buffer view"))?;
@@ -263,14 +269,26 @@ fn create_gltf(
                     }
                     bytes = Cow::Borrowed(&buffer[offset..offset + length]);
                 } else if let Some(uri) = &image.uri {
-                    image_load = if uri.ends_with(".ktx") {
-                        image_loading::load_ktx
+                    let mime_type = if uri.ends_with(".ktx") {
+                        "image/ktx"
                     } else if uri.ends_with(".png") {
-                        image_loading::load_png
+                        "image/png"
                     } else if uri.ends_with(".jpg") || uri.ends_with(".jpeg") {
-                        image_loading::load_jpeg
+                        "image/jpeg"
                     } else {
-                        return Err(Error::GltfMisc("image uri does not end in .png, .jpg or .jpeg"));
+                        return Err(Error::GltfMisc("image uri does not end in .ktx, .png, .jpg, or .jpeg"));
+                    };
+                    image_load = match mime_type {
+                        "image/ktx" => image_loading::load_ktx,
+                        #[cfg(feature = "jpeg-decoder")]
+                        "image/jpeg" => image_loading::load_jpeg,
+                        #[cfg(not(feature = "jpeg-decoder"))]
+                        "image/jpeg" => return Err(Error::GltfMisc("image is a jpeg, but the jpeg-decoder feature is disabled")),
+                        #[cfg(feature = "png")]
+                        "image/png" => image_loading::load_png,
+                        #[cfg(not(feature = "png"))]
+                        "image/png" => return Err(Error::GltfMisc("image is a png, but the png feature is disabled")),
+                        _ => return Err(Error::GltfSpec("mime type of texture is not image/ktx, image/png or image/jpeg")),
                     };
                     bytes = Cow::Owned(resources.get_or_load(uri)?);
                 } else {
