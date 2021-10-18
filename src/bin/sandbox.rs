@@ -53,11 +53,13 @@ fn fallible_main() -> anyhow::Result<()> {
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     let camera = neonvk::Camera::default();
 
-    let resources_path = find_resources_path();
-    let mut resources = neonvk::GltfResources::with_path(resources_path);
+    let mut resources = neonvk::GltfResources::with_path(find_resources_path());
     let sponza_model = neonvk::Gltf::from_gltf(&gpu, loading_frame_index, include_str!("sponza/glTF/Sponza.gltf"), &mut resources)?;
     #[cfg(feature = "png")]
     let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), &mut resources)?;
+    // At this point the data has been copied to gpu-visible buffers,
+    // hence why it's not held by the Gltfs, and can be dropped here.
+    drop(resources);
 
     #[cfg(feature = "png")]
     let tree_texture = neonvk::image_loading::load_png(

@@ -3,6 +3,7 @@ use crate::{Error, FrameIndex, Gpu, Material, Mesh, Pipeline, Texture};
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 mod gltf_json;
 mod mesh_iter;
@@ -142,10 +143,10 @@ fn create_gltf(
     let mut buffers = Vec::with_capacity(gltf.buffers.len());
     for buffer in &gltf.buffers {
         if let Some(uri) = buffer.uri.as_ref() {
-            buffers.push(Cow::Owned(resources.get_or_load(uri)?));
+            buffers.push(resources.get_or_load(uri)?);
         } else {
             match bin_buffer {
-                Some(bin_buffer) => buffers.push(Cow::Borrowed(bin_buffer)),
+                Some(bin_buffer) => buffers.push(Rc::new(Cow::Borrowed(bin_buffer))),
                 None => return Err(Error::GlbBinMissing),
             }
         }
@@ -267,7 +268,7 @@ fn create_gltf(
                     if offset + length >= buffer.len() {
                         return Err(Error::GltfOob("texture buffer view bytes"));
                     }
-                    bytes = Cow::Borrowed(&buffer[offset..offset + length]);
+                    bytes = Rc::new(Cow::Borrowed(&buffer[offset..offset + length]));
                 } else if let Some(uri) = &image.uri {
                     let mime_type = if uri.ends_with(".ktx") {
                         "image/ktx"
@@ -290,7 +291,7 @@ fn create_gltf(
                         "image/png" => return Err(Error::GltfMisc("image is a png, but the png feature is disabled")),
                         _ => return Err(Error::GltfSpec("mime type of texture is not image/ktx, image/png or image/jpeg")),
                     };
-                    bytes = Cow::Owned(resources.get_or_load(uri)?);
+                    bytes = resources.get_or_load(uri)?;
                 } else {
                     return Err(Error::GltfSpec("image does not have an uri nor a mimetype + buffer view"));
                 };
@@ -373,7 +374,7 @@ fn create_primitive(
     gpu: &Gpu,
     frame_index: FrameIndex,
     gltf: &gltf_json::GltfJson,
-    buffers: &[Cow<'_, [u8]>],
+    buffers: &[Rc<Cow<'_, [u8]>>],
     primitive: &gltf_json::Primitive,
 ) -> Result<Mesh, Error> {
     let index_accessor = primitive.indices.ok_or(Error::GltfMisc("missing indices"))?;
@@ -417,7 +418,7 @@ fn create_primitive(
 #[profiling::function]
 fn get_slice_from_accessor<'buffer>(
     gltf: &gltf_json::GltfJson,
-    buffers: &'buffer [Cow<'_, [u8]>],
+    buffers: &'buffer [Rc<Cow<'_, [u8]>>],
     accessor: usize,
     ctype: i32,
     atype: &str,
