@@ -2,3 +2,4 @@
 /shaders/target
 Cargo.lock
 /.cargo
+/.vscode

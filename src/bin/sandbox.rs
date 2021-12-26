@@ -5,9 +5,6 @@ use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "png")]
-use glam::{Mat4, Vec3};
-
 use logger::Logger;
 static LOGGER: Logger = Logger;
 
@@ -55,44 +52,13 @@ fn fallible_main() -> anyhow::Result<()> {
 
     let mut resources = neonvk::GltfResources::with_path(find_resources_path());
     let sponza_model = neonvk::Gltf::from_gltf(&gpu, loading_frame_index, include_str!("sponza/glTF/Sponza.gltf"), &mut resources)?;
-    #[cfg(feature = "png")]
-    let cube_model = neonvk::Gltf::from_glb(&gpu, loading_frame_index, include_bytes!("testbox/testbox.glb"), &mut resources)?;
     // At this point the data has been copied to gpu-visible buffers,
     // hence why it's not held by the Gltfs, and can be dropped here.
     drop(resources);
 
-    #[cfg(feature = "png")]
-    let tree_texture = neonvk::image_loading::load_png(
-        &gpu,
-        loading_frame_index,
-        include_bytes!("tree.png"),
-        neonvk::image_loading::TextureKind::SrgbColor,
-    )?;
-    #[cfg(feature = "png")]
-    let tree_material = neonvk::Material::new(&gpu, Some(tree_texture), None, None, None, None)?;
-
-    #[cfg(feature = "png")]
-    let quad_vertices: &[&[u8]] = &[
-        bytemuck::bytes_of(&[[-0.5f32, 0.5, 0.0], [-0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [0.5, -0.5, 0.0]]),
-        bytemuck::bytes_of(&[[0.0f32, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]),
-        bytemuck::bytes_of(&[[0.0f32, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]]),
-        bytemuck::bytes_of(&[
-            [1.0f32, 0.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0, 1.0],
-        ]),
-    ];
-    #[cfg(feature = "png")]
-    let quad_indices: &[u8] = bytemuck::bytes_of(&[0u16, 1, 2, 3, 2, 1]);
-    #[cfg(feature = "png")]
-    let quad = neonvk::Mesh::new::<u16>(&gpu, loading_frame_index, quad_vertices, quad_indices, neonvk::Pipeline::Default)?;
-
     // Get the first frame out of the way, to upload the meshes.
     gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new(), 0)?;
 
-    #[cfg(feature = "png")]
-    let start_time = Instant::now();
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
 
@@ -101,11 +67,8 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut size_changed = false;
     let mut immediate_present = false;
     let mut debug_value = 0;
-    let mut render_test_meshes = true;
     'running: loop {
         profiling::finish_frame!();
-        #[cfg(feature = "png")]
-        let frame_start_seconds = (Instant::now() - start_time).as_secs_f32();
 
         for event in event_pump.poll_iter() {
             match event {
@@ -129,7 +92,6 @@ fn fallible_main() -> anyhow::Result<()> {
                     Some(Keycode::Num3) => debug_value = 3,
                     Some(Keycode::Num4) => debug_value = 4,
                     Some(Keycode::Num5) => debug_value = 5,
-                    Some(Keycode::T) => render_test_meshes = !render_test_meshes,
                     _ => {}
                 },
 
@@ -152,20 +114,6 @@ fn fallible_main() -> anyhow::Result<()> {
         let mut scene = neonvk::Scene::new();
         for (mesh, material, transform) in sponza_model.mesh_iter() {
             scene.queue(mesh, material, transform);
-        }
-        #[cfg(feature = "png")]
-        if render_test_meshes {
-            let rotation = Mat4::from_rotation_z(frame_start_seconds * 0.1)
-                * Mat4::from_rotation_x(frame_start_seconds * 0.1)
-                * Mat4::from_rotation_y(frame_start_seconds * 0.1);
-            scene.queue(&quad, &tree_material, Mat4::from_translation(Vec3::new(0.0, 0.5, -0.5)) * rotation);
-            for (mesh, material, transform) in cube_model.mesh_iter() {
-                scene.queue(
-                    mesh,
-                    material,
-                    Mat4::from_translation(Vec3::new(0.0, 0.5, 0.5)) * Mat4::from_scale(Vec3::new(0.5, 0.5, 0.5)) * rotation * transform,
-                );
-            }
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;

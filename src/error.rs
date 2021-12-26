@@ -133,15 +133,6 @@ pub enum Error {
     GltfSpec(&'static str),
     #[error("unimplemented gltf feature: {0}")]
     GltfMisc(&'static str),
-    #[cfg(feature = "png")]
-    #[error("unsupported image format, bit depth: {0:?}, color type {1:?}")]
-    UnsupportedImageFormat(png::BitDepth, png::ColorType),
-    #[cfg(feature = "png")]
-    #[error("error during png decoding")]
-    PngDecoding(png::DecodingError),
-    #[cfg(feature = "jpeg-decoder")]
-    #[error("error during jpeg decoding")]
-    JpegDecoding(jpeg_decoder::Error),
     #[error("error during image decoding: {0}")]
     MiscImageDecoding(&'static str),
     #[error("resource cleanup failed")]
