@@ -1,15 +1,11 @@
-use crate::buffer_ops;
-use crate::resources::{AllocatedBuffer, AllocatedImage, RefCountedStatus, WeakRefCountedStatus};
 use crate::{Error, FrameIndex, Gpu};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use std::ops::Range;
-use std::rc::Rc;
 
 #[derive(Clone)]
 pub struct Texture {
     pub(crate) image_view: vk::ImageView,
-    texture_ref: RefCountedStatus,
 }
 
 impl Texture {
@@ -24,33 +20,15 @@ impl Texture {
     ) -> Result<Texture, Error> {
         profiling::scope!("new_texture");
 
-        let (staging_buffer, staging_allocation, staging_alloc_info) = {
+        let (mip_levels, image) = {
             profiling::scope!("allocate and create staging buffer");
             let buffer_size = pixels.len() as vk::DeviceSize;
             let buffer_create_info = vk::BufferCreateInfo::builder()
                 .size(buffer_size)
                 .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            let allocation_create_info = vk_mem::AllocationCreateInfo {
-                flags: vk_mem::AllocationCreateFlags::MAPPED,
-                required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
-                ..Default::default()
-            };
-            gpu.allocator
-                .create_buffer(&buffer_create_info, &allocation_create_info)
-                .map_err(Error::VmaBufferAllocation)?
+            todo!()
         };
-        buffer_ops::copy_to_allocation(pixels, &gpu.allocator, &staging_allocation, &staging_alloc_info)?;
-
-        let image_extent = vk::Extent3D { width, height, depth: 1 };
-        let (upload_fence, image, allocation, mip_levels) =
-            match buffer_ops::start_image_upload(gpu, frame_index, staging_buffer, mipmap_ranges.as_deref(), image_extent, format) {
-                Ok(result) => result,
-                Err(err) => {
-                    let _ = gpu.allocator.destroy_buffer(staging_buffer, &staging_allocation);
-                    return Err(err);
-                }
-            };
 
         let image_view = {
             profiling::scope!("create image view");
@@ -69,14 +47,6 @@ impl Texture {
             unsafe { gpu.device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation)?
         };
 
-        let staging_buffer = AllocatedBuffer(staging_buffer, staging_allocation);
-        let image = AllocatedImage(image, image_view, allocation);
-        let image_view = image.1;
-        let texture_ref = gpu.resources.add_image(upload_fence, Some(staging_buffer), image);
-        Ok(Texture { image_view, texture_ref })
-    }
-
-    pub(crate) fn create_weak_ref(&self) -> WeakRefCountedStatus {
-        Rc::downgrade(&self.texture_ref)
+        todo!()
     }
 }

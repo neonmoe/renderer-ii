@@ -32,9 +32,9 @@ pub struct Canvas<'a> {
 
     pub(crate) swapchain: vk::SwapchainKHR,
     swapchain_image_views: Vec<vk::ImageView>,
-    color_images: Vec<(vk::Image, vk_mem::Allocation)>,
+    color_images: Vec<(vk::Image)>,
     color_image_views: Vec<vk::ImageView>,
-    depth_images: Vec<(vk::Image, vk_mem::Allocation)>,
+    depth_images: Vec<(vk::Image)>,
     depth_image_views: Vec<vk::ImageView>,
     pub(crate) framebuffers: Vec<vk::Framebuffer>,
     pub(crate) final_render_pass: vk::RenderPass,
@@ -72,19 +72,9 @@ impl Drop for Canvas<'_> {
             unsafe { device.destroy_image_view(image_view, None) };
         }
 
-        for (image, allocation) in &self.depth_images {
-            profiling::scope!("destroy depth image");
-            let _ = self.gpu.allocator.destroy_image(*image, allocation);
-        }
-
         for &image_view in &self.color_image_views {
             profiling::scope!("destroy main render target image view");
             unsafe { device.destroy_image_view(image_view, None) };
-        }
-
-        for (image, allocation) in &self.color_images {
-            profiling::scope!("destroy main render target image");
-            let _ = self.gpu.allocator.destroy_image(*image, allocation);
         }
 
         for &image_view in &self.swapchain_image_views {
@@ -173,13 +163,7 @@ impl Canvas<'_> {
                 .samples(SAMPLE_COUNT)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(usage);
-            let allocation_create_info = vk_mem::AllocationCreateInfo {
-                flags: vk_mem::AllocationCreateFlags::STRATEGY_MIN_FRAGMENTATION | vk_mem::AllocationCreateFlags::DEDICATED_MEMORY,
-                required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                preferred_flags: vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
-                ..Default::default()
-            };
-            gpu.allocator.create_image(&image_create_info, &allocation_create_info)
+            todo!()
         };
 
         // TODO: Add another set of images to render to, to allow for post processing
@@ -191,28 +175,20 @@ impl Canvas<'_> {
             .collect::<Result<Vec<_>, _>>()?;
 
         let color_images = (0..swapchain_image_views.len())
-            .map(|_| {
-                let (image, allocation, _) =
-                    create_image(SWAPCHAIN_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT).map_err(Error::VmaColorImageCreation)?;
-                Ok((image, allocation))
-            })
-            .collect::<Result<Vec<(vk::Image, vk_mem::Allocation)>, Error>>()?;
+            .map(|_| create_image(SWAPCHAIN_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT))
+            .collect::<Result<Vec<(vk::Image)>, Error>>()?;
         let color_image_views = color_images
             .iter()
-            .map(|&(image, _)| image)
+            .map(|&(image)| image)
             .map(create_image_view(vk::ImageAspectFlags::COLOR, SWAPCHAIN_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
         let depth_images = (0..swapchain_image_views.len())
-            .map(|_| {
-                let (image, allocation, _) =
-                    create_image(DEPTH_FORMAT, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT).map_err(Error::VmaDepthImageCreation)?;
-                Ok((image, allocation))
-            })
-            .collect::<Result<Vec<(vk::Image, vk_mem::Allocation)>, Error>>()?;
+            .map(|_| create_image(DEPTH_FORMAT, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT))
+            .collect::<Result<Vec<(vk::Image)>, Error>>()?;
         let depth_image_views = depth_images
             .iter()
-            .map(|&(image, _)| image)
+            .map(|&(image)| image)
             .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 

@@ -136,16 +136,14 @@ fn fallible_main() -> anyhow::Result<()> {
                 }
             })
             .sum();
-        let vram_usage = gpu
-            .calculate_vram_stats()
-            .map(|stats| (stats.total.usedBytes, stats.total.usedBytes + stats.total.unusedBytes));
-        if let (Some(avg_interval), Ok((used, alloced))) = (interval_sum.checked_div(interval_count as u32), vram_usage) {
+        if let Some(avg_interval) = interval_sum.checked_div(interval_count as u32) {
+            // TODO: VRAM stats
             let _ = window.set_title(&format!(
                 "{} ({:.2} ms frame interval, {} of VRAM in use, {} allocated)",
                 env!("CARGO_PKG_NAME"),
                 avg_interval.as_secs_f64() * 1000.0,
-                display_bytes(used),
-                display_bytes(alloced),
+                -1,
+                -1,
             ));
         }
     }

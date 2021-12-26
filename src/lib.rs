@@ -10,11 +10,8 @@ macro_rules! cstr {
 // internal modules:
 
 mod buffer;
-mod buffer_ops;
 mod debug_utils;
 mod descriptors;
-mod gpu_alloc;
-mod resources;
 
 // public-facing modules:
 

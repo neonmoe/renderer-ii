@@ -1,4 +1,3 @@
-use crate::buffer_ops;
 use crate::{Canvas, Error, FrameIndex, Pipeline};
 use ash::vk;
 use glam::{Mat4, Quat, Vec3};
@@ -40,24 +39,15 @@ impl Camera {
     #[profiling::function]
     pub(crate) fn update(&self, canvas: &Canvas, frame_index: FrameIndex) -> Result<(), Error> {
         let gpu = &canvas.gpu;
-        let (buffer, allocation, alloc_info) = {
+        let buffer = {
             profiling::scope!("create uniform buffer");
             let buffer_size = mem::size_of::<GlobalTransforms>() as vk::DeviceSize;
             let buffer_create_info = vk::BufferCreateInfo::builder()
                 .size(buffer_size)
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            let allocation_create_info = vk_mem::AllocationCreateInfo {
-                flags: vk_mem::AllocationCreateFlags::MAPPED,
-                pool: Some(gpu.get_temp_buffer_pool(frame_index)),
-                ..Default::default()
-            };
-            gpu.allocator
-                .create_buffer(&buffer_create_info, &allocation_create_info)
-                .map_err(Error::VmaBufferAllocation)?
+            todo!()
         };
-        gpu.add_temporary_buffer(frame_index, buffer, allocation);
-        buffer_ops::copy_to_allocation(&[GlobalTransforms::new(canvas)], &gpu.allocator, &allocation, &alloc_info)?;
         gpu.descriptors
             .set_uniform_buffer(gpu, frame_index, Pipeline::Default, 0, 0, buffer);
         Ok(())

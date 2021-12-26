@@ -1,7 +1,5 @@
-use crate::buffer_ops;
 use crate::descriptors::Descriptors;
 use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
-use crate::resources::{AllocatedBuffer, Resources};
 use crate::{Camera, Canvas, Driver, Error, Scene, Texture};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
@@ -47,7 +45,6 @@ struct FrameLocal {
     in_use: AtomicBool,
     finished_command_buffers_sp: vk::Semaphore,
     frame_end_fence: vk::Fence,
-    temp_buffers: (Sender<AllocatedBuffer>, Receiver<AllocatedBuffer>),
     temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
     temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
     // TODO: Add per-frame rendering command pools which get reset as pools intead of just resetting the individual command buffers
@@ -72,10 +69,7 @@ pub struct Gpu<'a> {
 
     pub(crate) physical_device: vk::PhysicalDevice,
     pub(crate) device: Device,
-    pub(crate) allocator: vk_mem::Allocator,
     pub(crate) command_pool: vk::CommandPool,
-
-    temp_cpu_buffer_pools: Vec<vk_mem::AllocatorPool>,
 
     pub(crate) graphics_family_index: u32,
     pub(crate) surface_family_index: u32,
@@ -85,7 +79,6 @@ pub struct Gpu<'a> {
 
     pub(crate) descriptors: Descriptors,
     pub(crate) texture_indices: Vec<AtomicBool>,
-    pub(crate) resources: Resources,
     white_texture: Option<Texture>,
 
     frame_locals: Vec<FrameLocal>,
@@ -96,13 +89,6 @@ impl Drop for Gpu<'_> {
     #[profiling::function]
     fn drop(&mut self) {
         let _ = self.wait_idle();
-
-        {
-            profiling::scope!("destroy resources");
-            if let Err(err) = self.resources.clean_up(&self.device, &self.allocator) {
-                log::error!("Error during resource cleanup: {}", err);
-            }
-        }
 
         {
             profiling::scope!("destroy descriptors");
@@ -117,7 +103,6 @@ impl Drop for Gpu<'_> {
         for frame_local in &self.frame_locals {
             profiling::scope!("destroy frame locals");
 
-            let _ = self.cleanup_temp_buffers(frame_local);
             self.cleanup_temp_command_buffers(frame_local);
             self.cleanup_temp_semaphores(frame_local);
 
@@ -125,14 +110,6 @@ impl Drop for Gpu<'_> {
                 self.device.destroy_semaphore(frame_local.finished_command_buffers_sp, None);
                 self.device.destroy_fence(frame_local.frame_end_fence, None);
             }
-        }
-
-        {
-            profiling::scope!("destroy vma allocator");
-            for temp_cpu_buffer_pool in &self.temp_cpu_buffer_pools {
-                let _ = self.allocator.destroy_pool(temp_cpu_buffer_pool);
-            }
-            self.allocator.destroy();
         }
 
         {
@@ -374,7 +351,6 @@ impl Gpu<'_> {
                     in_use: AtomicBool::new(false),
                     finished_command_buffers_sp,
                     frame_end_fence,
-                    temp_buffers: mpsc::channel(),
                     temp_command_buffers: mpsc::channel(),
                     temp_semaphores: mpsc::channel(),
                 })
@@ -395,54 +371,10 @@ impl Gpu<'_> {
 
         let descriptors = Descriptors::new(&device, &physical_device_properties, &physical_device_features, frame_in_use_count)?;
 
-        let allocator_create_info = vk_mem::AllocatorCreateInfo {
-            physical_device,
-            device: device.clone(),
-            instance: driver.instance.clone(),
-            flags: vk_mem::AllocatorCreateFlags::EXTERNALLY_SYNCHRONIZED,
-            preferred_large_heap_block_size: 128 * 1024 * 1024,
-            frame_in_use_count,
-            heap_size_limits: None,
-        };
-        let allocator = vk_mem::Allocator::new(&allocator_create_info).map_err(Error::VmaAllocatorCreation)?;
-
-        let mesh_usage = vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::VERTEX_BUFFER;
-        let uniform_usage = vk::BufferUsageFlags::UNIFORM_BUFFER;
-        let pool_defaults = vk_mem::AllocatorPoolCreateInfo {
-            flags: vk_mem::AllocatorPoolCreateFlags::IGNORE_BUFFER_IMAGE_GRANULARITY,
-            frame_in_use_count,
-            ..Default::default()
-        };
-
-        let cpu_buffer_info = vk::BufferCreateInfo::builder()
-            .size(1024)
-            .usage(mesh_usage | uniform_usage)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let cpu_alloc_info = vk_mem::AllocationCreateInfo {
-            required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
-            preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            ..Default::default()
-        };
-        let temp_cpu_buffer_pools = (0..frame_in_use_count)
-            .map(|_| {
-                allocator
-                    .create_pool(&vk_mem::AllocatorPoolCreateInfo {
-                        memory_type_index: allocator
-                            .find_memory_type_index_for_buffer_info(&cpu_buffer_info, &cpu_alloc_info)
-                            .map_err(Error::VmaFindMemoryType)?,
-                        flags: pool_defaults.flags | vk_mem::AllocatorPoolCreateFlags::LINEAR_ALGORITHM,
-                        ..pool_defaults
-                    })
-                    .map_err(Error::VmaPoolCreation)
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-
         let mut texture_indices = Vec::with_capacity(MAX_TEXTURE_COUNT as usize);
         for _ in 0..MAX_TEXTURE_COUNT {
             texture_indices.push(AtomicBool::new(false));
         }
-
-        let resources = Resources::new();
 
         let mut gpu = Gpu {
             driver,
@@ -452,10 +384,7 @@ impl Gpu<'_> {
 
             physical_device,
             device,
-            allocator,
             command_pool,
-
-            temp_cpu_buffer_pools,
 
             graphics_family_index,
             surface_family_index,
@@ -465,7 +394,6 @@ impl Gpu<'_> {
 
             descriptors,
             texture_indices,
-            resources,
             white_texture: None,
 
             frame_locals,
@@ -490,17 +418,6 @@ impl Gpu<'_> {
 
     fn frame_local(&self, frame_index: FrameIndex) -> &FrameLocal {
         &self.frame_locals[self.image_index(frame_index)]
-    }
-
-    pub(crate) fn get_temp_buffer_pool(&self, frame_index: FrameIndex) -> vk_mem::AllocatorPool {
-        self.temp_cpu_buffer_pools[self.image_index(frame_index)].clone()
-    }
-
-    #[profiling::function]
-    pub(crate) fn add_temporary_buffer(&self, frame_index: FrameIndex, buffer: vk::Buffer, allocation: vk_mem::Allocation) {
-        let buffer_allocation = AllocatedBuffer(buffer, allocation);
-        let temp_buffer_sender = &self.frame_local(frame_index).temp_buffers.0;
-        let _ = temp_buffer_sender.send(buffer_allocation);
     }
 
     pub(crate) fn run_command_buffer<T, F: FnOnce(vk::CommandBuffer) -> Result<T, Error>>(
@@ -585,22 +502,6 @@ impl Gpu<'_> {
         }
     }
 
-    #[profiling::function]
-    fn cleanup_temp_buffers(&self, frame_local: &FrameLocal) -> Result<(), Error> {
-        for AllocatedBuffer(buffer, allocation) in frame_local.temp_buffers.1.try_iter() {
-            self.allocator
-                .destroy_buffer(buffer, &allocation)
-                .map_err(Error::VmaBufferDestruction)?;
-        }
-        Ok(())
-    }
-
-    /// See [vk_mem::Allocator::calculate_stats].
-    #[profiling::function]
-    pub fn calculate_vram_stats(&self) -> Result<vk_mem::ffi::VmaStats, Error> {
-        self.allocator.calculate_stats().map_err(Error::VmaCalculateStats)
-    }
-
     /// Wait until the device is idle. Should be called before
     /// swapchain recreation and after the game loop is over.
     #[profiling::function]
@@ -614,8 +515,6 @@ impl Gpu<'_> {
     /// frees the resources that can now be freed up.
     #[profiling::function]
     pub fn wait_frame(&self, canvas: &Canvas) -> Result<FrameIndex, Error> {
-        self.resources.clean_up_unused_memory(self)?;
-
         let (image_index, _) = unsafe {
             profiling::scope!("acquire next image");
             self.swapchain_ext
@@ -635,7 +534,6 @@ impl Gpu<'_> {
         }
 
         if frame_local.in_use.load(Ordering::Relaxed) {
-            self.cleanup_temp_buffers(frame_local)?;
             self.cleanup_temp_command_buffers(frame_local);
             self.cleanup_temp_semaphores(frame_local);
         }
@@ -670,16 +568,7 @@ impl Gpu<'_> {
         ];
         self.descriptors
             .set_uniform_images(&self.device, Pipeline::Default, 1, 1, image_views, index..index + 1);
-        let add_texture_ref = |texture: &Option<Texture>| {
-            if let Some(tex) = texture.as_ref() {
-                self.resources.add_texture_index_ref(tex, index);
-            }
-        };
-        add_texture_ref(base_color);
-        add_texture_ref(metallic_roughness);
-        add_texture_ref(normal);
-        add_texture_ref(occlusion);
-        add_texture_ref(emission);
+        // TODO: Releasing texture indices
         Ok(TextureIndex(index))
     }
 
@@ -840,24 +729,15 @@ impl Gpu<'_> {
 
             for (&(mesh, material), transforms) in meshes {
                 profiling::scope!("mesh");
-                let (transform_buffer, allocation, alloc_info) = {
+                let transform_buffer = {
                     profiling::scope!("transform buffer creation");
                     let buffer_size = (transforms.len() * mem::size_of::<Mat4>()) as vk::DeviceSize;
                     let buffer_create_info = vk::BufferCreateInfo::builder()
                         .size(buffer_size)
                         .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                    let allocation_create_info = vk_mem::AllocationCreateInfo {
-                        flags: vk_mem::AllocationCreateFlags::MAPPED,
-                        pool: Some(self.get_temp_buffer_pool(frame_index)),
-                        ..Default::default()
-                    };
-                    self.allocator
-                        .create_buffer(&buffer_create_info, &allocation_create_info)
-                        .map_err(Error::VmaBufferAllocation)?
+                    todo!()
                 };
-                self.add_temporary_buffer(frame_index, transform_buffer, allocation);
-                buffer_ops::copy_to_allocation(transforms, &self.allocator, &allocation, &alloc_info)?;
 
                 let push_constants = [PushConstantStruct {
                     texture_index: material.texture_index.0,
