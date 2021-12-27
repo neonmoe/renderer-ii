@@ -1,3 +1,4 @@
+use crate::arena::{Arena, ImageAllocation};
 use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
 use crate::{Error, Gpu};
 use ash::extensions::khr;
@@ -27,14 +28,15 @@ pub struct Canvas<'a> {
     /// Held by [Canvas] to ensure that the swapchain and command
     /// buffers are dropped before the device.
     pub gpu: &'a Gpu<'a>,
+    framebuffer_arena: Arena<'a>,
 
     pub extent: vk::Extent2D,
 
     pub(crate) swapchain: vk::SwapchainKHR,
     swapchain_image_views: Vec<vk::ImageView>,
-    color_images: Vec<(vk::Image)>,
+    color_images: Vec<ImageAllocation>,
     color_image_views: Vec<vk::ImageView>,
-    depth_images: Vec<(vk::Image)>,
+    depth_images: Vec<ImageAllocation>,
     depth_image_views: Vec<vk::ImageView>,
     pub(crate) framebuffers: Vec<vk::Framebuffer>,
     pub(crate) final_render_pass: vk::RenderPass,
@@ -80,6 +82,16 @@ impl Drop for Canvas<'_> {
         for &image_view in &self.swapchain_image_views {
             profiling::scope!("destroy swapchain image view");
             unsafe { device.destroy_image_view(image_view, None) };
+        }
+
+        for image_allocation in &self.depth_images {
+            profiling::scope!("destroy depth image");
+            image_allocation.clean_up(&self.framebuffer_arena);
+        }
+
+        for image_allocation in &self.color_images {
+            profiling::scope!("destroy main render target image");
+            image_allocation.clean_up(&self.framebuffer_arena);
         }
 
         unsafe {
@@ -129,6 +141,16 @@ impl Canvas<'_> {
             },
         )?;
 
+        let framebuffer_arena = Arena::new(
+            &gpu.driver.instance,
+            &gpu.device,
+            gpu.physical_device,
+            300_000_000, // FIXME: too small for very big framebuffers?
+            vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            "framebuffer arena",
+        )?;
+
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
             move |image: vk::Image| -> Result<vk::ImageView, Error> {
                 let subresource_range = vk::ImageSubresourceRange {
@@ -163,7 +185,7 @@ impl Canvas<'_> {
                 .samples(SAMPLE_COUNT)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(usage);
-            todo!()
+            framebuffer_arena.create_image(*image_create_info)
         };
 
         // TODO: Add another set of images to render to, to allow for post processing
@@ -176,19 +198,19 @@ impl Canvas<'_> {
 
         let color_images = (0..swapchain_image_views.len())
             .map(|_| create_image(SWAPCHAIN_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT))
-            .collect::<Result<Vec<(vk::Image)>, Error>>()?;
+            .collect::<Result<Vec<_>, Error>>()?;
         let color_image_views = color_images
             .iter()
-            .map(|&(image)| image)
+            .map(|image_allocation| image_allocation.image)
             .map(create_image_view(vk::ImageAspectFlags::COLOR, SWAPCHAIN_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
         let depth_images = (0..swapchain_image_views.len())
             .map(|_| create_image(DEPTH_FORMAT, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT))
-            .collect::<Result<Vec<(vk::Image)>, Error>>()?;
+            .collect::<Result<Vec<_>, Error>>()?;
         let depth_image_views = depth_images
             .iter()
-            .map(|&(image)| image)
+            .map(|image_allocation| image_allocation.image)
             .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -229,6 +251,7 @@ impl Canvas<'_> {
 
         Ok(Canvas {
             gpu,
+            framebuffer_arena,
             extent,
             swapchain,
             swapchain_image_views,

@@ -75,6 +75,22 @@ pub enum Error {
     VulkanSamplerCreation(#[source] vk::Result),
     #[error("could not get fence status")]
     VulkanFenceStatus(#[source] vk::Result),
+    #[error("could not allocate memory (id: {1}, requested size: {2})")]
+    VulkanAllocate(#[source] vk::Result, &'static str, vk::DeviceSize),
+    #[error("no heap with the required flags (id: {0}, flags: {1:?})")]
+    VulkanNoMatchingHeap(&'static str, vk::MemoryPropertyFlags),
+    #[error("could not create buffer")]
+    VulkanBufferCreation(#[source] vk::Result),
+    #[error("could not bind buffer to allocated memory")]
+    VulkanBufferBinding(#[source] vk::Result),
+    #[error("could not create image")]
+    VulkanImageCreation(#[source] vk::Result),
+    #[error("could not bind image to allocated memory")]
+    VulkanImageBinding(#[source] vk::Result),
+    #[error("could not map graphics memory")]
+    VulkanMapMemory(#[source] vk::Result),
+    #[error("could not unmap graphics memory")]
+    VulkanUnmapMemory(#[source] vk::Result),
     #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
     BufferNotEditable,
     #[error("too many textures: failed to reserve a texture index")]
@@ -119,4 +135,11 @@ pub enum Error {
     BadKtx,
     #[error("could not load ktx: {0}")]
     UnsupportedKtxFeature(&'static str),
+    #[error("arena {identifier} ({used}/{total} bytes used) cannot fit {required} bytes")]
+    ArenaOutOfMemory {
+        identifier: &'static str,
+        used: vk::DeviceSize,
+        total: vk::DeviceSize,
+        required: vk::DeviceSize,
+    },
 }

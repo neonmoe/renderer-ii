@@ -15,6 +15,9 @@ mod descriptors;
 
 // public-facing modules:
 
+mod arena;
+pub use arena::Arena;
+
 pub use ash::vk;
 
 mod camera;

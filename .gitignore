@@ -3,3 +3,5 @@
 Cargo.lock
 /.cargo
 /.vscode
+*.dll*
+*.lib*
