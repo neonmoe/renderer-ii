@@ -1,6 +1,6 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
-use crate::{Camera, Canvas, Driver, Error, Scene, Texture};
+use crate::{Camera, Canvas, Driver, Error, Scene};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
@@ -79,7 +79,6 @@ pub struct Gpu<'a> {
 
     pub(crate) descriptors: Descriptors,
     pub(crate) texture_indices: Vec<AtomicBool>,
-    white_texture: Option<Texture>,
 
     frame_locals: Vec<FrameLocal>,
     render_wait_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
@@ -376,40 +375,31 @@ impl Gpu<'_> {
             texture_indices.push(AtomicBool::new(false));
         }
 
-        let mut gpu = Gpu {
-            driver,
+        Ok((
+            Gpu {
+                driver,
 
-            surface_ext,
-            swapchain_ext,
+                surface_ext,
+                swapchain_ext,
 
-            physical_device,
-            device,
-            command_pool,
+                physical_device,
+                device,
+                command_pool,
 
-            graphics_family_index,
-            surface_family_index,
-            graphics_queue,
-            surface_queue,
-            frame_start_fence,
+                graphics_family_index,
+                surface_family_index,
+                graphics_queue,
+                surface_queue,
+                frame_start_fence,
 
-            descriptors,
-            texture_indices,
-            white_texture: None,
+                descriptors,
+                texture_indices,
 
-            frame_locals,
-            render_wait_semaphores: mpsc::channel(),
-        };
-
-        // Create and set the white image to be used as a default texture for materials.
-        let frame_index = FrameIndex { index: 0 };
-        let pixels = &[0xFF, 0xFF, 0xFF, 0xFF];
-        let white_texture = Texture::new(&gpu, frame_index, pixels, None, 1, 1, vk::Format::R8G8B8A8_UNORM)?;
-        let image_views = &[Some(white_texture.image_view); 5];
-        gpu.descriptors
-            .set_uniform_images(&gpu.device, Pipeline::Default, 1, 1, image_views, 0..MAX_TEXTURE_COUNT);
-        gpu.white_texture = Some(white_texture);
-
-        Ok((gpu, physical_devices))
+                frame_locals,
+                render_wait_semaphores: mpsc::channel(),
+            },
+            physical_devices,
+        ))
     }
 
     pub(crate) fn image_index(&self, frame_index: FrameIndex) -> usize {
@@ -544,11 +534,11 @@ impl Gpu<'_> {
     #[profiling::function]
     pub(crate) fn reserve_texture_index(
         &self,
-        base_color: &Option<Texture>,
-        metallic_roughness: &Option<Texture>,
-        normal: &Option<Texture>,
-        occlusion: &Option<Texture>,
-        emission: &Option<Texture>,
+        base_color: Option<vk::ImageView>,
+        metallic_roughness: Option<vk::ImageView>,
+        normal: Option<vk::ImageView>,
+        occlusion: Option<vk::ImageView>,
+        emission: Option<vk::ImageView>,
     ) -> Result<TextureIndex, Error> {
         let index = self
             .texture_indices
@@ -559,13 +549,7 @@ impl Gpu<'_> {
                     .is_ok()
             })
             .ok_or(Error::TextureIndexReserve)? as u32;
-        let image_views = &[
-            base_color.as_ref().map(|tex| tex.image_view),
-            metallic_roughness.as_ref().map(|tex| tex.image_view),
-            normal.as_ref().map(|tex| tex.image_view),
-            occlusion.as_ref().map(|tex| tex.image_view),
-            emission.as_ref().map(|tex| tex.image_view),
-        ];
+        let image_views = &[base_color, metallic_roughness, normal, occlusion, emission];
         self.descriptors
             .set_uniform_images(&self.device, Pipeline::Default, 1, 1, image_views, index..index + 1);
         // TODO: Releasing texture indices
@@ -575,10 +559,8 @@ impl Gpu<'_> {
     #[profiling::function]
     pub(crate) fn release_texture_index(&self, index: u32) {
         self.texture_indices[index as usize].store(false, Ordering::Relaxed);
-        let white_texture = self.white_texture.as_ref().map(|tex| tex.image_view);
-        let image_views = &[white_texture; 5][..];
-        self.descriptors
-            .set_uniform_images(&self.device, Pipeline::Default, 1, 1, image_views, index..index + 1);
+        // FIXME: Use VK_EXT_descriptor_indexing's VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT for mats
+        // (removed the white texture set call from here, so now the shader should complain)
     }
 
     /// Queue up all the rendering commands.

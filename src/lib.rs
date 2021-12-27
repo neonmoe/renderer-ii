@@ -9,7 +9,6 @@ macro_rules! cstr {
 
 // internal modules:
 
-mod buffer;
 mod debug_utils;
 mod descriptors;
 
@@ -51,6 +50,3 @@ pub use pipeline::Pipeline;
 
 mod scene;
 pub use scene::Scene;
-
-mod texture;
-pub use texture::Texture;

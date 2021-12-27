@@ -1,4 +1,4 @@
-use crate::buffer::Buffer;
+use crate::arena::BufferAllocation;
 use crate::{Error, FrameIndex, Gpu, Pipeline};
 use ash::vk;
 use glam::Vec4;
@@ -7,7 +7,7 @@ use std::{mem, ptr};
 #[derive(PartialEq, Eq, Hash)]
 pub struct Mesh {
     /// Contains the vertices and indices.
-    pub(crate) mesh_buffer: Buffer,
+    pub(crate) mesh_buffer: BufferAllocation,
 
     pub pipeline: Pipeline,
     pub(crate) index_count: u32,
@@ -65,7 +65,7 @@ impl Mesh {
         }
 
         Ok(Mesh {
-            mesh_buffer: Buffer::new(gpu, frame_index, &data)?,
+            mesh_buffer: todo!(),
             pipeline,
             index_count: (indices.len() / mem::size_of::<I>()) as u32,
             indices_offset: 0,

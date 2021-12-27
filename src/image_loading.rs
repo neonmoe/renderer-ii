@@ -1,4 +1,5 @@
-use crate::{Error, FrameIndex, Gpu, Texture};
+use crate::arena::ImageAllocation;
+use crate::{Error, FrameIndex, Gpu};
 use ash::vk;
 
 mod ktx;
@@ -92,7 +93,7 @@ fn to_snorm(format: vk::Format) -> vk::Format {
 /// the pixel bytes do not map to a linear rgba array: the data is
 /// compressed. The format reflects this.
 #[profiling::function]
-pub fn load_ktx(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureKind) -> Result<Texture, Error> {
+pub fn load_ktx(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureKind) -> Result<(ImageAllocation, vk::ImageView), Error> {
     let ktx::KtxData {
         width,
         height,
@@ -101,5 +102,21 @@ pub fn load_ktx(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureK
         mip_ranges,
     } = ktx::decode(bytes)?;
     let format = kind.convert_format(format);
-    Texture::new(gpu, frame_index, &pixels, Some(mip_ranges), width, height, format)
+
+    let image = todo!();
+
+    let subresource_range = vk::ImageSubresourceRange::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .base_mip_level(0)
+        .level_count(mip_ranges.len() as u32)
+        .base_array_layer(0)
+        .layer_count(1)
+        .build();
+    let image_view_create_info = vk::ImageViewCreateInfo::builder()
+        .image(image)
+        .view_type(vk::ImageViewType::TYPE_2D)
+        .format(format)
+        .subresource_range(subresource_range);
+
+    todo!()
 }

@@ -1,15 +1,16 @@
 use crate::gpu::TextureIndex;
-use crate::{Error, Gpu, Texture};
+use crate::{Error, Gpu};
+use ash::vk;
 use std::hash::{Hash, Hasher};
 
 pub struct Material {
     pub(crate) texture_index: TextureIndex,
 
-    _base_color: Option<Texture>,
-    _metallic_roughness: Option<Texture>,
-    _normal: Option<Texture>,
-    _occlusion: Option<Texture>,
-    _emissive: Option<Texture>,
+    base_color: Option<vk::ImageView>,
+    metallic_roughness: Option<vk::ImageView>,
+    normal: Option<vk::ImageView>,
+    occlusion: Option<vk::ImageView>,
+    emissive: Option<vk::ImageView>,
 }
 
 impl PartialEq for Material {
@@ -29,20 +30,20 @@ impl Hash for Material {
 impl Material {
     pub fn new(
         gpu: &Gpu,
-        _base_color: Option<Texture>,
-        _metallic_roughness: Option<Texture>,
-        _normal: Option<Texture>,
-        _occlusion: Option<Texture>,
-        _emissive: Option<Texture>,
+        base_color: Option<vk::ImageView>,
+        metallic_roughness: Option<vk::ImageView>,
+        normal: Option<vk::ImageView>,
+        occlusion: Option<vk::ImageView>,
+        emissive: Option<vk::ImageView>,
     ) -> Result<Material, Error> {
-        let texture_index = gpu.reserve_texture_index(&_base_color, &_metallic_roughness, &_normal, &_occlusion, &_emissive)?;
+        let texture_index = gpu.reserve_texture_index(base_color, metallic_roughness, normal, occlusion, emissive)?;
         Ok(Material {
             texture_index,
-            _base_color,
-            _metallic_roughness,
-            _normal,
-            _occlusion,
-            _emissive,
+            base_color,
+            metallic_roughness,
+            normal,
+            occlusion,
+            emissive,
         })
     }
 }

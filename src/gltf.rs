@@ -1,5 +1,7 @@
+use crate::arena::ImageAllocation;
 use crate::image_loading::{self, TextureKind};
-use crate::{Error, FrameIndex, Gpu, Material, Mesh, Pipeline, Texture};
+use crate::{Error, FrameIndex, Gpu, Material, Mesh, Pipeline};
+use ash::vk;
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -279,7 +281,7 @@ fn create_gltf(
                 let texture_kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
                 image_load(gpu, frame_index, &bytes, texture_kind)
             })
-            .collect::<Result<Vec<Texture>, Error>>()?
+            .collect::<Result<Vec<_>, Error>>()?
     };
 
     let materials = {
@@ -287,17 +289,17 @@ fn create_gltf(
         gltf.materials
             .iter()
             .map(|mat| {
-                let mktex = |images: &[Texture], texture_info: &gltf_json::TextureInfo| {
+                let mktex = |images: &[(ImageAllocation, vk::ImageView)], texture_info: &gltf_json::TextureInfo| {
                     let texture = match gltf.textures.get(texture_info.index) {
                         Some(tex) => tex,
                         None => return Some(Err(Error::GltfOob("texture"))),
                     };
                     let image_index = texture.source?;
-                    let texture = match images.get(image_index) {
-                        Some(texture) => texture,
+                    let image_view = match images.get(image_index) {
+                        Some((_, image_view)) => image_view,
                         None => return Some(Err(Error::GltfOob("image"))),
                     };
-                    Some(Ok(texture.clone()))
+                    Some(Ok(*image_view))
                 };
 
                 macro_rules! handle_optional_result {

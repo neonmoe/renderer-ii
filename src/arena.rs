@@ -7,6 +7,7 @@ use std::cell::Cell;
 use std::ptr;
 
 /// A Vulkan buffer allocated from an [Arena].
+#[derive(PartialEq, Eq, Hash)]
 pub struct BufferAllocation {
     pub buffer: vk::Buffer,
     offset: vk::DeviceSize,
