@@ -77,6 +77,14 @@ impl Mesh {
             temp_arena.create_buffer(*buffer_create_info)?
         };
 
+        {
+            profiling::scope!("write staging buffer");
+            if let Err(err) = unsafe { staging_buffer.write(temp_arena, data.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
+                staging_buffer.clean_up(temp_arena);
+                return Err(err);
+            }
+        }
+
         let mesh_buffer = {
             profiling::scope!("allocate gpu buffer");
             let buffer_create_info = vk::BufferCreateInfo::builder()
