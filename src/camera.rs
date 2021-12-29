@@ -1,4 +1,4 @@
-use crate::{Canvas, Error, FrameIndex, Pipeline};
+use crate::{Arena, Canvas, Error, FrameIndex, Pipeline};
 use ash::vk;
 use glam::{Mat4, Quat, Vec3};
 use std::mem;
@@ -37,19 +37,31 @@ impl Camera {
     /// Updates Vulkan buffers with the current state of the
     /// [Camera] and [Canvas].
     #[profiling::function]
-    pub(crate) fn update(&self, canvas: &Canvas, frame_index: FrameIndex) -> Result<(), Error> {
+    pub(crate) fn update(&self, canvas: &Canvas, temp_arenas: &[Arena], frame_index: FrameIndex) -> Result<(), Error> {
         let gpu = &canvas.gpu;
-        let buffer = {
+        let temp_arena = frame_index.get_arena(temp_arenas);
+        let buffer_allocation = {
             profiling::scope!("create uniform buffer");
             let buffer_size = mem::size_of::<GlobalTransforms>() as vk::DeviceSize;
             let buffer_create_info = vk::BufferCreateInfo::builder()
                 .size(buffer_size)
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            todo!()
+            temp_arena.create_buffer(*buffer_create_info)?
         };
+
+        {
+            profiling::scope!("write uniform buffer");
+            let src = &[GlobalTransforms::new(canvas)];
+            if let Err(err) = unsafe { buffer_allocation.write(temp_arena, src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
+                buffer_allocation.clean_up(temp_arena);
+                return Err(err);
+            }
+        }
+
+        gpu.add_temp_buffer(frame_index, buffer_allocation.buffer);
         gpu.descriptors
-            .set_uniform_buffer(gpu, frame_index, Pipeline::Default, 0, 0, buffer);
+            .set_uniform_buffer(gpu, frame_index, Pipeline::Default, 0, 0, buffer_allocation.buffer);
         Ok(())
     }
 }

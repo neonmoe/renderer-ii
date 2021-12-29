@@ -1,5 +1,6 @@
 use crate::arena::ImageAllocation;
-use crate::{Error, FrameIndex, Gpu};
+use crate::{Arena, Error, FrameIndex, Gpu};
+use ash::version::DeviceV1_0;
 use ash::vk;
 
 mod ktx;
@@ -93,7 +94,14 @@ fn to_snorm(format: vk::Format) -> vk::Format {
 /// the pixel bytes do not map to a linear rgba array: the data is
 /// compressed. The format reflects this.
 #[profiling::function]
-pub fn load_ktx(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureKind) -> Result<(ImageAllocation, vk::ImageView), Error> {
+pub fn load_ktx(
+    gpu: &Gpu,
+    arena: &Arena,
+    temp_arenas: &[Arena],
+    frame_index: FrameIndex,
+    bytes: &[u8],
+    kind: TextureKind,
+) -> Result<(ImageAllocation, vk::ImageView), Error> {
     let ktx::KtxData {
         width,
         height,
@@ -102,21 +110,164 @@ pub fn load_ktx(gpu: &Gpu, frame_index: FrameIndex, bytes: &[u8], kind: TextureK
         mip_ranges,
     } = ktx::decode(bytes)?;
     let format = kind.convert_format(format);
+    let extent = *vk::Extent3D::builder().width(width).height(height).depth(1);
 
-    let image = todo!();
+    let temp_arena = frame_index.get_arena(temp_arenas);
+    let staging_buffer = {
+        profiling::scope!("allocate and create staging buffer");
+        let buffer_size = pixels.len() as vk::DeviceSize;
+        let buffer_create_info = vk::BufferCreateInfo::builder()
+            .size(buffer_size)
+            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        temp_arena.create_buffer(*buffer_create_info)?
+    };
 
-    let subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .base_mip_level(0)
-        .level_count(mip_ranges.len() as u32)
-        .base_array_layer(0)
-        .layer_count(1)
-        .build();
-    let image_view_create_info = vk::ImageViewCreateInfo::builder()
-        .image(image)
-        .view_type(vk::ImageViewType::TYPE_2D)
-        .format(format)
-        .subresource_range(subresource_range);
+    {
+        profiling::scope!("write to staging buffer");
+        if let Err(err) = unsafe { staging_buffer.write(temp_arena, pixels.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
+            staging_buffer.clean_up(temp_arena);
+            return Err(err);
+        }
+    }
 
-    todo!()
+    let image_allocation = {
+        profiling::scope!("allocate gpu texture");
+        let image_info = vk::ImageCreateInfo::builder()
+            .image_type(vk::ImageType::TYPE_2D)
+            .extent(extent)
+            .mip_levels(mip_ranges.len() as u32)
+            .array_layers(1)
+            .format(format)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .samples(vk::SampleCountFlags::TYPE_1);
+        arena.create_image(*image_info)?
+    };
+
+    let upload_result = gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |command_buffer| {
+        let mut current_mip_level_extent = extent;
+        for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
+            profiling::scope!("record vkCmdCopyBufferToImage for mip #{}", mip_level);
+            let subresource_range = vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(mip_level as u32)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1)
+                .build();
+            let barrier_from_undefined_to_transfer_dst = vk::ImageMemoryBarrier::builder()
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(image_allocation.image)
+                .subresource_range(subresource_range)
+                .src_access_mask(vk::AccessFlags::empty())
+                .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .build();
+            unsafe {
+                gpu.device.cmd_pipeline_barrier(
+                    command_buffer,
+                    vk::PipelineStageFlags::TOP_OF_PIPE,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[barrier_from_undefined_to_transfer_dst],
+                );
+            }
+            let subresource_layers_dst = vk::ImageSubresourceLayers::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .mip_level(mip_level as u32)
+                .base_array_layer(0)
+                .layer_count(1)
+                .build();
+            // NOTE: Only works for square block sizes. May cause issues down the line.
+            let texel_size = (mip_range.len() as f32).sqrt() as u32;
+            let image_copy_region = vk::BufferImageCopy::builder()
+                .buffer_offset(mip_range.start as vk::DeviceSize)
+                .buffer_row_length(current_mip_level_extent.width.max(texel_size))
+                .buffer_image_height(current_mip_level_extent.height.max(texel_size))
+                .image_subresource(subresource_layers_dst)
+                .image_extent(current_mip_level_extent)
+                .build();
+            unsafe {
+                gpu.device.cmd_copy_buffer_to_image(
+                    command_buffer,
+                    staging_buffer.buffer,
+                    image_allocation.image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[image_copy_region],
+                );
+            }
+            current_mip_level_extent.width = (current_mip_level_extent.width / 2).max(1);
+            current_mip_level_extent.height = (current_mip_level_extent.height / 2).max(1);
+            current_mip_level_extent.depth = (current_mip_level_extent.depth / 2).max(1);
+            let subresource_range = vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(mip_level as u32)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1)
+                .build();
+            let barrier_from_transfer_src_to_shader = vk::ImageMemoryBarrier::builder()
+                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(image_allocation.image)
+                .subresource_range(subresource_range)
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .build();
+            unsafe {
+                gpu.device.cmd_pipeline_barrier(
+                    command_buffer,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::FRAGMENT_SHADER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[barrier_from_transfer_src_to_shader],
+                );
+            }
+        }
+    });
+
+    if let Err(err) = upload_result {
+        staging_buffer.clean_up(temp_arena);
+        image_allocation.clean_up(arena);
+        return Err(err);
+    }
+
+    let image_view = {
+        let subresource_range = vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_mip_level(0)
+            .level_count(mip_ranges.len() as u32)
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
+        let image_view_create_info = vk::ImageViewCreateInfo::builder()
+            .image(image_allocation.image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(format)
+            .subresource_range(subresource_range);
+
+        match unsafe { gpu.device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation) {
+            Ok(image_view) => image_view,
+            Err(err) => {
+                staging_buffer.clean_up(temp_arena);
+                image_allocation.clean_up(arena);
+                return Err(err);
+            }
+        }
+    };
+
+    gpu.add_temp_buffer(frame_index, staging_buffer.buffer);
+
+    Ok((image_allocation, image_view))
 }

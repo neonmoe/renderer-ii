@@ -65,6 +65,10 @@ impl Descriptors {
         let create_descriptor_set_layouts = |sets: &[&[DescriptorSetLayoutParams]]| {
             sets.iter()
                 .map(|bindings| {
+                    let binding_flags = bindings
+                        .iter()
+                        .map(|params| params.binding_flags)
+                        .collect::<Vec<vk::DescriptorBindingFlags>>();
                     let bindings = bindings
                         .iter()
                         .map(|params| {
@@ -81,7 +85,10 @@ impl Descriptors {
                             builder.build()
                         })
                         .collect::<Vec<vk::DescriptorSetLayoutBinding>>();
-                    let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+                    let mut binding_flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&binding_flags);
+                    let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
+                        .push_next(&mut binding_flags)
+                        .bindings(&bindings);
                     unsafe { device.create_descriptor_set_layout(&create_info, None) }.map_err(Error::VulkanDescriptorSetLayoutCreation)
                 })
                 .collect::<Result<Vec<vk::DescriptorSetLayout>, Error>>()

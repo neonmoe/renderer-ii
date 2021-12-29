@@ -1,6 +1,6 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
-use crate::{Camera, Canvas, Driver, Error, Scene};
+use crate::{Arena, Camera, Canvas, Driver, Error, Scene};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
@@ -21,6 +21,10 @@ pub struct FrameIndex {
 impl FrameIndex {
     fn new(index: u32) -> FrameIndex {
         FrameIndex { index }
+    }
+
+    pub fn get_arena<'a>(self, arenas: &'a [Arena]) -> &'a Arena<'a> {
+        &arenas[self.index as usize]
     }
 }
 
@@ -47,6 +51,7 @@ struct FrameLocal {
     frame_end_fence: vk::Fence,
     temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
     temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
+    temp_buffers: (Sender<vk::Buffer>, Receiver<vk::Buffer>),
     // TODO: Add per-frame rendering command pools which get reset as pools intead of just resetting the individual command buffers
     // Creating many buffers (which should be cleaned up after) will be needed for multithreaded draw submission too
 }
@@ -67,8 +72,8 @@ pub struct Gpu<'a> {
     pub(crate) surface_ext: khr::Surface,
     pub(crate) swapchain_ext: khr::Swapchain,
 
-    pub(crate) physical_device: vk::PhysicalDevice,
-    pub(crate) device: Device,
+    pub physical_device: vk::PhysicalDevice,
+    pub device: Device,
     pub(crate) command_pool: vk::CommandPool,
 
     pub(crate) graphics_family_index: u32,
@@ -104,6 +109,7 @@ impl Drop for Gpu<'_> {
 
             self.cleanup_temp_command_buffers(frame_local);
             self.cleanup_temp_semaphores(frame_local);
+            self.cleanup_temp_buffers(frame_local);
 
             unsafe {
                 self.device.destroy_semaphore(frame_local.finished_command_buffers_sp, None);
@@ -293,7 +299,10 @@ impl Gpu<'_> {
             log::debug!("Device extension: VK_EXT_memory_budget");
         }
 
+        let mut physical_device_descriptor_indexing_features =
+            vk::PhysicalDeviceDescriptorIndexingFeatures::builder().descriptor_binding_partially_bound(true);
         let device_create_info = vk::DeviceCreateInfo::builder()
+            .push_next(&mut physical_device_descriptor_indexing_features)
             .queue_create_infos(&queue_create_infos)
             .enabled_features(&physical_device_features)
             .enabled_extension_names(&extensions);
@@ -352,6 +361,7 @@ impl Gpu<'_> {
                     frame_end_fence,
                     temp_command_buffers: mpsc::channel(),
                     temp_semaphores: mpsc::channel(),
+                    temp_buffers: mpsc::channel(),
                 })
             })
             .collect::<Result<Vec<FrameLocal>, Error>>()?;
@@ -402,6 +412,10 @@ impl Gpu<'_> {
         ))
     }
 
+    pub fn temp_arena_count(&self) -> usize {
+        self.frame_locals.len()
+    }
+
     pub(crate) fn image_index(&self, frame_index: FrameIndex) -> usize {
         frame_index.index as usize
     }
@@ -410,12 +424,16 @@ impl Gpu<'_> {
         &self.frame_locals[self.image_index(frame_index)]
     }
 
-    pub(crate) fn run_command_buffer<T, F: FnOnce(vk::CommandBuffer) -> Result<T, Error>>(
+    pub(crate) fn add_temp_buffer(&self, frame_index: FrameIndex, buffer: vk::Buffer) {
+        let _ = self.frame_local(frame_index).temp_buffers.0.send(buffer);
+    }
+
+    pub(crate) fn run_command_buffer<F: FnOnce(vk::CommandBuffer)>(
         &self,
         frame_index: FrameIndex,
         wait_stage: vk::PipelineStageFlags,
         f: F,
-    ) -> Result<(vk::Fence, T), Error> {
+    ) -> Result<(), Error> {
         let command_buffers = {
             profiling::scope!("allocate command buffer");
             let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
@@ -431,18 +449,15 @@ impl Gpu<'_> {
             unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.map_err(Error::VulkanSemaphoreCreation)?
         };
 
-        let signal_fence = {
-            profiling::scope!("create fence");
-            unsafe { self.device.create_fence(&vk::FenceCreateInfo::default(), None) }.map_err(Error::VulkanFenceCreation)?
-        };
-
         {
             profiling::scope!("begin command buffer recording");
             let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { self.device.begin_command_buffer(temp_command_buffer, &command_buffer_begin_info) }
                 .map_err(Error::VulkanBeginCommandBuffer)?;
         }
-        let result = f(temp_command_buffer)?;
+
+        f(temp_command_buffer);
+
         {
             profiling::scope!("end command buffer recording");
             unsafe { self.device.end_command_buffer(temp_command_buffer) }.map_err(Error::VulkanEndCommandBuffer)?;
@@ -458,7 +473,7 @@ impl Gpu<'_> {
                 .build()];
             unsafe {
                 self.device
-                    .queue_submit(self.graphics_queue, &submit_infos, signal_fence)
+                    .queue_submit(self.graphics_queue, &submit_infos, vk::Fence::null())
                     .map_err(Error::VulkanQueueSubmit)
             }?;
         }
@@ -472,7 +487,7 @@ impl Gpu<'_> {
             let render_wait_semaphore_sender = &self.render_wait_semaphores.0;
             let _ = render_wait_semaphore_sender.send(WaitSemaphore(signal_semaphore, wait_stage));
         }
-        Ok((signal_fence, result))
+        Ok(())
     }
 
     #[profiling::function]
@@ -489,6 +504,13 @@ impl Gpu<'_> {
     fn cleanup_temp_semaphores(&self, frame_local: &FrameLocal) {
         for semaphore in frame_local.temp_semaphores.1.try_iter() {
             unsafe { self.device.destroy_semaphore(semaphore, None) };
+        }
+    }
+
+    #[profiling::function]
+    fn cleanup_temp_buffers(&self, frame_local: &FrameLocal) {
+        for buffer in frame_local.temp_buffers.1.try_iter() {
+            unsafe { self.device.destroy_buffer(buffer, None) };
         }
     }
 
@@ -526,11 +548,15 @@ impl Gpu<'_> {
         if frame_local.in_use.load(Ordering::Relaxed) {
             self.cleanup_temp_command_buffers(frame_local);
             self.cleanup_temp_semaphores(frame_local);
+            self.cleanup_temp_buffers(frame_local);
         }
 
         Ok(frame_index)
     }
 
+    // TODO: Re-do the texture index reservation system
+    // Currently it basically requires Rc's to communicate that a texture has been released.
+    // It does not work after the memory management refactor.
     #[profiling::function]
     pub(crate) fn reserve_texture_index(
         &self,
@@ -552,15 +578,12 @@ impl Gpu<'_> {
         let image_views = &[base_color, metallic_roughness, normal, occlusion, emission];
         self.descriptors
             .set_uniform_images(&self.device, Pipeline::Default, 1, 1, image_views, index..index + 1);
-        // TODO: Releasing texture indices
         Ok(TextureIndex(index))
     }
 
     #[profiling::function]
     pub(crate) fn release_texture_index(&self, index: u32) {
         self.texture_indices[index as usize].store(false, Ordering::Relaxed);
-        // FIXME: Use VK_EXT_descriptor_indexing's VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT for mats
-        // (removed the white texture set call from here, so now the shader should complain)
     }
 
     /// Queue up all the rendering commands.
@@ -571,6 +594,7 @@ impl Gpu<'_> {
     #[profiling::function]
     pub fn render_frame(
         &self,
+        temp_arenas: &[Arena],
         frame_index: FrameIndex,
         canvas: &Canvas,
         camera: &Camera,
@@ -579,12 +603,12 @@ impl Gpu<'_> {
     ) -> Result<(), Error> {
         let frame_local = self.frame_local(frame_index);
         frame_local.in_use.store(true, Ordering::Relaxed);
-        camera.update(canvas, frame_index)?;
+        camera.update(canvas, temp_arenas, frame_index)?;
 
         let image_index = self.image_index(frame_index);
         let command_buffer = canvas.command_buffers[image_index];
         let framebuffer = canvas.framebuffers[image_index];
-        self.record_commmand_buffer(frame_index, command_buffer, framebuffer, canvas, scene, debug_value)?;
+        self.record_commmand_buffer(temp_arenas, frame_index, command_buffer, framebuffer, canvas, scene, debug_value)?;
 
         let render_wait_semaphores = self.render_wait_semaphores.1.try_iter().collect::<Vec<WaitSemaphore>>();
         let mut wait_semaphores = Vec::with_capacity(render_wait_semaphores.len());
@@ -632,6 +656,7 @@ impl Gpu<'_> {
     #[profiling::function]
     fn record_commmand_buffer(
         &self,
+        temp_arenas: &[Arena],
         frame_index: FrameIndex,
         command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
@@ -639,6 +664,8 @@ impl Gpu<'_> {
         scene: &Scene,
         debug_value: u32,
     ) -> Result<(), Error> {
+        let temp_arena = frame_index.get_arena(temp_arenas);
+
         unsafe {
             profiling::scope!("reset command buffer");
             self.device
@@ -712,14 +739,24 @@ impl Gpu<'_> {
             for (&(mesh, material), transforms) in meshes {
                 profiling::scope!("mesh");
                 let transform_buffer = {
-                    profiling::scope!("transform buffer creation");
+                    profiling::scope!("create transform buffer");
                     let buffer_size = (transforms.len() * mem::size_of::<Mat4>()) as vk::DeviceSize;
                     let buffer_create_info = vk::BufferCreateInfo::builder()
                         .size(buffer_size)
                         .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                    todo!()
+                    temp_arena.create_buffer(*buffer_create_info)?
                 };
+
+                {
+                    profiling::scope!("write transform buffer");
+                    if let Err(err) = unsafe { transform_buffer.write(temp_arena, transforms.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
+                        transform_buffer.clean_up(temp_arena);
+                        return Err(err);
+                    }
+                }
+
+                self.add_temp_buffer(frame_index, transform_buffer.buffer);
 
                 let push_constants = [PushConstantStruct {
                     texture_index: material.texture_index.0,
@@ -733,7 +770,7 @@ impl Gpu<'_> {
                 }
 
                 let mut vertex_buffers = vec![mesh.buffer(); mesh.vertices_offsets.len() + 1];
-                vertex_buffers[0] = transform_buffer;
+                vertex_buffers[0] = transform_buffer.buffer;
                 let mut vertex_offsets = Vec::with_capacity(mesh.vertices_offsets.len() + 1);
                 vertex_offsets.push(0);
                 vertex_offsets.extend_from_slice(&mesh.vertices_offsets);

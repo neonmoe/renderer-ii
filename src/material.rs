@@ -6,11 +6,11 @@ use std::hash::{Hash, Hasher};
 pub struct Material {
     pub(crate) texture_index: TextureIndex,
 
-    base_color: Option<vk::ImageView>,
-    metallic_roughness: Option<vk::ImageView>,
-    normal: Option<vk::ImageView>,
-    occlusion: Option<vk::ImageView>,
-    emissive: Option<vk::ImageView>,
+    pub base_color: Option<vk::ImageView>,
+    pub metallic_roughness: Option<vk::ImageView>,
+    pub normal: Option<vk::ImageView>,
+    pub occlusion: Option<vk::ImageView>,
+    pub emissive: Option<vk::ImageView>,
 }
 
 impl PartialEq for Material {

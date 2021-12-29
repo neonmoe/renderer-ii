@@ -89,8 +89,8 @@ pub enum Error {
     VulkanImageBinding(#[source] vk::Result),
     #[error("could not map graphics memory")]
     VulkanMapMemory(#[source] vk::Result),
-    #[error("could not unmap graphics memory")]
-    VulkanUnmapMemory(#[source] vk::Result),
+    #[error("could not flush graphics memory")]
+    VulkanFlushMapped(#[source] vk::Result),
     #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
     BufferNotEditable,
     #[error("too many textures: failed to reserve a texture index")]

@@ -1,4 +1,5 @@
-use crate::{Material, Mesh, Pipeline};
+use crate::mesh::Mesh;
+use crate::{Material, Pipeline};
 use glam::Mat4;
 use std::collections::HashMap;
 

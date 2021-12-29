@@ -1,6 +1,8 @@
-use crate::arena::ImageAllocation;
+use crate::arena::{Arena, ImageAllocation};
 use crate::image_loading::{self, TextureKind};
-use crate::{Error, FrameIndex, Gpu, Material, Mesh, Pipeline};
+use crate::mesh::Mesh;
+use crate::{Error, FrameIndex, Gpu, Material, Pipeline};
+use ash::version::DeviceV1_0;
 use ash::vk;
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
@@ -26,20 +28,43 @@ struct Node {
     transform: Mat4,
 }
 
-pub struct Gltf {
+pub struct Gltf<'arena> {
+    arena: &'arena Arena<'arena>,
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
     meshes: Vec<Vec<(Mesh, usize)>>,
     materials: Vec<Material>,
+    images: Vec<(ImageAllocation, vk::ImageView)>,
 }
 
-impl Gltf {
+impl Drop for Gltf<'_> {
+    fn drop(&mut self) {
+        for (image_allocation, image_view) in &self.images {
+            image_allocation.clean_up(self.arena);
+            unsafe { self.arena.device.destroy_image_view(*image_view, None) };
+        }
+        for inner_meshes in &self.meshes {
+            for (mesh, _) in inner_meshes {
+                mesh.mesh_buffer.clean_up(self.arena);
+            }
+        }
+    }
+}
+
+impl Gltf<'_> {
     /// Loads the glTF scene from the contents of a .glb file.
     ///
     /// Any external files referenced in the glTF are searched
     /// relative to `directory`.
     #[profiling::function]
-    pub fn from_glb(gpu: &Gpu, frame_index: FrameIndex, glb: &[u8], resources: &mut GltfResources) -> Result<Gltf, Error> {
+    pub fn from_glb<'a>(
+        gpu: &Gpu,
+        main_arena: &'a Arena,
+        temp_arenas: &[Arena],
+        frame_index: FrameIndex,
+        glb: &[u8],
+        resources: &mut GltfResources,
+    ) -> Result<Gltf<'a>, Error> {
         fn read_u32(bytes: &[u8]) -> u32 {
             debug_assert!(bytes.len() == 4);
             if let [a, b, c, d] = *bytes {
@@ -98,7 +123,7 @@ impl Gltf {
 
         let json = json.ok_or(Error::MissingGlbJson)?;
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
-        create_gltf(gpu, frame_index, gltf, resources, Some(buffer))
+        create_gltf(gpu, main_arena, temp_arenas, frame_index, gltf, resources, Some(buffer))
     }
 
     /// Loads the glTF scene from the contents of a .gltf file.
@@ -106,9 +131,16 @@ impl Gltf {
     /// Any external files referenced in the glTF are searched
     /// relative to `directory`.
     #[profiling::function]
-    pub fn from_gltf(gpu: &Gpu, frame_index: FrameIndex, gltf: &str, resources: &mut GltfResources) -> Result<Gltf, Error> {
+    pub fn from_gltf<'a>(
+        gpu: &Gpu,
+        main_arena: &'a Arena,
+        temp_arenas: &[Arena],
+        frame_index: FrameIndex,
+        gltf: &str,
+        resources: &mut GltfResources,
+    ) -> Result<Gltf<'a>, Error> {
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(gltf).map_err(Error::GltfJsonDeserialization)?;
-        create_gltf(gpu, frame_index, gltf, resources, None)
+        create_gltf(gpu, main_arena, temp_arenas, frame_index, gltf, resources, None)
     }
 
     pub fn mesh_iter(&self) -> MeshIter<'_> {
@@ -117,13 +149,15 @@ impl Gltf {
 }
 
 #[profiling::function]
-fn create_gltf(
+fn create_gltf<'a>(
     gpu: &Gpu,
+    arena: &'a Arena,
+    temp_arenas: &[Arena],
     frame_index: FrameIndex,
     gltf: gltf_json::GltfJson,
     resources: &mut GltfResources,
     bin_buffer: Option<&[u8]>,
-) -> Result<Gltf, Error> {
+) -> Result<Gltf<'a>, Error> {
     if let Some(min_version) = &gltf.asset.min_version {
         let min_version_f32 = str::parse::<f32>(min_version);
         if min_version_f32 != Ok(2.0) {
@@ -162,7 +196,7 @@ fn create_gltf(
                 mesh.primitives
                     .iter()
                     .map(|primitive| {
-                        let mesh = create_primitive(gpu, frame_index, &gltf, &buffers, primitive)?;
+                        let mesh = create_primitive(gpu, arena, temp_arenas, frame_index, &gltf, &buffers, primitive)?;
                         let material_index = primitive.material.ok_or(Error::GltfMisc("material missing"))?;
                         Ok((mesh, material_index))
                     })
@@ -279,7 +313,7 @@ fn create_gltf(
                 };
 
                 let texture_kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
-                image_load(gpu, frame_index, &bytes, texture_kind)
+                image_load(gpu, arena, temp_arenas, frame_index, &bytes, texture_kind)
             })
             .collect::<Result<Vec<_>, Error>>()?
     };
@@ -344,16 +378,20 @@ fn create_gltf(
     }
 
     Ok(Gltf {
+        arena,
         nodes,
         root_nodes,
         materials,
         meshes,
+        images,
     })
 }
 
 #[profiling::function]
 fn create_primitive(
     gpu: &Gpu,
+    arena: &Arena,
+    temp_arenas: &[Arena],
     frame_index: FrameIndex,
     gltf: &gltf_json::GltfJson,
     buffers: &[Rc<Cow<'_, [u8]>>],
@@ -388,6 +426,8 @@ fn create_primitive(
 
     let mesh = Mesh::new::<u16>(
         gpu,
+        arena,
+        temp_arenas,
         frame_index,
         &[pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
         index_buffer,

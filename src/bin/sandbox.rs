@@ -45,19 +45,49 @@ fn fallible_main() -> anyhow::Result<()> {
 
     let driver = neonvk::Driver::new(&window)?;
     let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
+    let temp_arenas = (0..gpu.temp_arena_count())
+        .map(|_| {
+            neonvk::Arena::new(
+                &driver.instance,
+                &gpu.device,
+                gpu.physical_device,
+                300_000_000,
+                neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE,
+                neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE,
+                "frame local arena [gpu/cpu]",
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut canvas = neonvk::Canvas::new(&gpu, None, width, height, false)?;
 
     let loading_frame_index = gpu.wait_frame(&canvas)?;
+    loading_frame_index.get_arena(&temp_arenas).reset();
     let camera = neonvk::Camera::default();
 
+    let assets_arena = neonvk::Arena::new(
+        &driver.instance,
+        &gpu.device,
+        gpu.physical_device,
+        500_000_000,
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        "sandbox asset arena [gpu]",
+    )?;
     let mut resources = neonvk::GltfResources::with_path(find_resources_path());
-    let sponza_model = neonvk::Gltf::from_gltf(&gpu, loading_frame_index, include_str!("sponza/glTF/Sponza.gltf"), &mut resources)?;
+    let sponza_model = neonvk::Gltf::from_gltf(
+        &gpu,
+        &assets_arena,
+        &temp_arenas,
+        loading_frame_index,
+        include_str!("sponza/glTF/Sponza.gltf"),
+        &mut resources,
+    )?;
     // At this point the data has been copied to gpu-visible buffers,
     // hence why it's not held by the Gltfs, and can be dropped here.
     drop(resources);
 
     // Get the first frame out of the way, to upload the meshes.
-    gpu.render_frame(loading_frame_index, &canvas, &camera, &neonvk::Scene::new(), 0)?;
+    gpu.render_frame(&temp_arenas, loading_frame_index, &canvas, &camera, &neonvk::Scene::new(), 0)?;
 
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
@@ -117,7 +147,8 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;
-        match gpu.render_frame(frame_index, &canvas, &camera, &scene, debug_value) {
+        frame_index.get_arena(&temp_arenas).reset();
+        match gpu.render_frame(&temp_arenas, frame_index, &canvas, &camera, &scene, debug_value) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
@@ -138,6 +169,7 @@ fn fallible_main() -> anyhow::Result<()> {
             .sum();
         if let Some(avg_interval) = interval_sum.checked_div(interval_count as u32) {
             // TODO: VRAM stats
+            // NOTE: Remove the dead_code annotation from display_bytes when fixing this
             let _ = window.set_title(&format!(
                 "{} ({:.2} ms frame interval, {} of VRAM in use, {} allocated)",
                 env!("CARGO_PKG_NAME"),
@@ -149,10 +181,16 @@ fn fallible_main() -> anyhow::Result<()> {
     }
 
     gpu.wait_idle()?;
+    drop(temp_arenas);
+    drop(sponza_model);
+    drop(assets_arena);
+    drop(canvas);
+    drop(gpu);
 
     Ok(())
 }
 
+#[allow(dead_code)]
 fn display_bytes(bytes: u64) -> String {
     const KIBI: u64 = 1_024;
     const MEBI: u64 = KIBI * KIBI;

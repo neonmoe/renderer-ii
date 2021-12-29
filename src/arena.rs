@@ -44,7 +44,8 @@ impl BufferAllocation {
             .offset(aligned_offset)
             .size(aligned_size)
             .build()];
-        arena.device.flush_mapped_memory_ranges(&ranges).map_err(Error::VulkanUnmapMemory)?;
+        arena.device.flush_mapped_memory_ranges(&ranges).map_err(Error::VulkanFlushMapped)?;
+        arena.device.unmap_memory(arena.memory);
 
         Ok(())
     }
@@ -53,8 +54,6 @@ impl BufferAllocation {
 /// A Vulkan image allocated from an [Arena].
 pub struct ImageAllocation {
     pub image: vk::Image,
-    offset: vk::DeviceSize,
-    size: vk::DeviceSize,
 }
 
 impl ImageAllocation {
@@ -64,7 +63,7 @@ impl ImageAllocation {
 }
 
 pub struct Arena<'device> {
-    device: &'device Device,
+    pub device: &'device Device,
     memory: vk::DeviceMemory,
     total_size: vk::DeviceSize,
     /// The location where the available memory starts. Gets set to 0
@@ -98,7 +97,7 @@ impl Arena<'_> {
         fallback_flags: vk::MemoryPropertyFlags,
         debug_identifier: &'static str,
     ) -> Result<Arena<'device>, Error> {
-        let memory_type_index = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags)
+        let memory_type_index = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
             .ok_or(Error::VulkanNoMatchingHeap(debug_identifier, fallback_flags))?;
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
@@ -186,10 +185,10 @@ impl Arena<'_> {
 
         self.offset.set(offset + size);
         self.previous_allocation_was_image.set(true);
-        Ok(ImageAllocation { image, offset, size })
+        Ok(ImageAllocation { image })
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset(&self) {
         self.offset.set(0);
         // TODO: Fill arenas with noise on reset in debug mode?
     }
@@ -200,16 +199,21 @@ fn get_memory_type_index(
     physical_device: vk::PhysicalDevice,
     optimal_flags: vk::MemoryPropertyFlags,
     fallback_flags: vk::MemoryPropertyFlags,
+    size: vk::DeviceSize,
 ) -> Option<u32> {
+    // TODO: Use VK_EXT_memory_budget to pick a heap that can fit the size, it's already enabled (if available)
     let memory_properties = unsafe { instance.get_physical_device_memory_properties(physical_device) };
     let types = &memory_properties.memory_types[..memory_properties.memory_type_count as usize];
+    let heaps = &memory_properties.memory_heaps[..memory_properties.memory_heap_count as usize];
     for (i, memory_type) in types.iter().enumerate() {
-        if memory_type.property_flags.contains(optimal_flags) {
+        let heap_index = memory_type.heap_index as usize;
+        if memory_type.property_flags.contains(optimal_flags) && heaps[heap_index].size >= size {
             return Some(i as u32);
         }
     }
     for (i, memory_type) in types.iter().enumerate() {
-        if memory_type.property_flags.contains(fallback_flags) {
+        let heap_index = memory_type.heap_index as usize;
+        if memory_type.property_flags.contains(fallback_flags) && heaps[heap_index].size >= size {
             return Some(i as u32);
         }
     }

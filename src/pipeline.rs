@@ -28,6 +28,7 @@ pub(crate) struct DescriptorSetLayoutParams {
     pub descriptor_type: vk::DescriptorType,
     pub descriptor_count: u32,
     pub stage_flags: vk::ShaderStageFlags,
+    pub binding_flags: vk::DescriptorBindingFlags,
 }
 
 pub(crate) struct PipelineParameters {
@@ -49,6 +50,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[DescriptorSetLa
     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
     descriptor_count: 1,
     stage_flags: vk::ShaderStageFlags::VERTEX,
+    binding_flags: vk::DescriptorBindingFlags::empty(),
 }];
 
 static INSTANCED_TRANSFORM_BINDING_0: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
@@ -148,36 +150,42 @@ pub(crate) static PIPELINE_PARAMETERS: [PipelineParameters; Pipeline::Count as u
                 descriptor_type: vk::DescriptorType::SAMPLER,
                 descriptor_count: 1,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             },
             DescriptorSetLayoutParams {
                 binding: 1,
                 descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                 descriptor_count: MAX_TEXTURE_COUNT,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             },
             DescriptorSetLayoutParams {
                 binding: 2,
                 descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                 descriptor_count: MAX_TEXTURE_COUNT,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             },
             DescriptorSetLayoutParams {
                 binding: 3,
                 descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                 descriptor_count: MAX_TEXTURE_COUNT,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             },
             DescriptorSetLayoutParams {
                 binding: 4,
                 descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                 descriptor_count: MAX_TEXTURE_COUNT,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             },
             DescriptorSetLayoutParams {
                 binding: 5,
                 descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                 descriptor_count: MAX_TEXTURE_COUNT,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             },
         ],
     ],

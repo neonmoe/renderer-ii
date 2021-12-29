@@ -1,14 +1,15 @@
-use crate::{Gltf, Material, Mesh};
+use crate::mesh::Mesh;
+use crate::{Gltf, Material};
 use glam::Mat4;
 
 pub struct MeshIter<'a> {
-    gltf: &'a Gltf,
+    gltf: &'a Gltf<'a>,
     node_queue: Vec<usize>,
     current_sub_iter: Option<InnerMeshIter<'a>>,
 }
 
 impl MeshIter<'_> {
-    pub(crate) fn new(gltf: &Gltf, node_queue: Vec<usize>) -> MeshIter<'_> {
+    pub(crate) fn new<'a>(gltf: &'a Gltf, node_queue: Vec<usize>) -> MeshIter<'a> {
         MeshIter {
             gltf,
             node_queue,
@@ -45,7 +46,7 @@ impl<'a> Iterator for MeshIter<'a> {
 }
 
 struct InnerMeshIter<'a> {
-    gltf: &'a Gltf,
+    gltf: &'a Gltf<'a>,
     mesh_index: usize,
     primitive_index: usize,
     transform: Mat4,

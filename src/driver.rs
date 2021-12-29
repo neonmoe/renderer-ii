@@ -46,7 +46,7 @@ impl Driver {
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))
             .application_version(vk::make_version(0, 1, 0))
-            .api_version(vk::make_version(1, 0, 0));
+            .api_version(vk::API_VERSION_1_2);
 
         let mut layers = Vec::with_capacity(1);
         if is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
