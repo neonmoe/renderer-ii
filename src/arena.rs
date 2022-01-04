@@ -15,7 +15,7 @@ pub struct BufferAllocation {
 }
 
 impl BufferAllocation {
-    pub fn clean_up(&self, arena: &Arena) {
+    pub fn clean_up(&self, arena: &VulkanArena) {
         unsafe { arena.device.destroy_buffer(self.buffer, None) };
     }
 
@@ -24,7 +24,7 @@ impl BufferAllocation {
     /// clamped to the buffer's bounds, so if `offset == 0` and `size
     /// == VK_WHOLE_SIZE`, the entire buffer will be written, reading
     /// from `src`.
-    pub unsafe fn write(&self, arena: &Arena, src: *const u8, offset: vk::DeviceSize, size: vk::DeviceSize) -> Result<(), Error> {
+    pub unsafe fn write(&self, arena: &VulkanArena, src: *const u8, offset: vk::DeviceSize, size: vk::DeviceSize) -> Result<(), Error> {
         let offset = (self.offset + offset).min(self.offset + self.size);
         let aligned_offset = align_down(offset, arena.non_coherent_atom_size);
         let size = size.min(self.size);
@@ -38,7 +38,7 @@ impl BufferAllocation {
         let dst = dst.offset((offset - aligned_offset) as isize);
         ptr::copy_nonoverlapping(src, dst, size as usize);
 
-        // NOTE: This has notable alignment requirements, and they have been taken into account.
+        // NOTE: VkMappedMemoryRanges have notable alignment requirements, and they have been taken into account.
         let ranges = [vk::MappedMemoryRange::builder()
             .memory(arena.memory)
             .offset(aligned_offset)
@@ -57,12 +57,12 @@ pub struct ImageAllocation {
 }
 
 impl ImageAllocation {
-    pub fn clean_up(&self, arena: &Arena) {
+    pub fn clean_up(&self, arena: &VulkanArena) {
         unsafe { arena.device.destroy_image(self.image, None) };
     }
 }
 
-pub struct Arena<'device> {
+pub struct VulkanArena<'device> {
     pub device: &'device Device,
     memory: vk::DeviceMemory,
     total_size: vk::DeviceSize,
@@ -81,13 +81,13 @@ pub struct Arena<'device> {
     debug_identifier: &'static str,
 }
 
-impl Drop for Arena<'_> {
+impl Drop for VulkanArena<'_> {
     fn drop(&mut self) {
         unsafe { self.device.free_memory(self.memory, None) };
     }
 }
 
-impl Arena<'_> {
+impl VulkanArena<'_> {
     pub fn new<'device>(
         instance: &Instance,
         device: &'device Device,
@@ -96,7 +96,7 @@ impl Arena<'_> {
         optimal_flags: vk::MemoryPropertyFlags,
         fallback_flags: vk::MemoryPropertyFlags,
         debug_identifier: &'static str,
-    ) -> Result<Arena<'device>, Error> {
+    ) -> Result<VulkanArena<'device>, Error> {
         let memory_type_index = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
             .ok_or(Error::VulkanNoMatchingHeap(debug_identifier, fallback_flags))?;
         let alloc_info = vk::MemoryAllocateInfo::builder()
@@ -109,7 +109,7 @@ impl Arena<'_> {
         let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;
         let non_coherent_atom_size = physical_device_properties.limits.non_coherent_atom_size;
 
-        Ok(Arena {
+        Ok(VulkanArena {
             device,
             memory,
             total_size: size,

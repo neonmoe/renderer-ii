@@ -1,4 +1,4 @@
-use crate::arena::{Arena, BufferAllocation};
+use crate::arena::{BufferAllocation, VulkanArena};
 use crate::{Error, FrameIndex, Gpu, Pipeline};
 use ash::version::DeviceV1_0;
 use ash::vk;
@@ -27,8 +27,8 @@ impl Mesh {
     // TODO: Meshes that refer to existing buffers, instead of owning them themselves
     pub fn new<I: IndexType>(
         gpu: &Gpu,
-        arena: &Arena,
-        temp_arenas: &[Arena],
+        arena: &VulkanArena,
+        temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
         vertices: &[&[u8]],
         indices: &[u8],

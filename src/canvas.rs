@@ -1,4 +1,4 @@
-use crate::arena::{Arena, ImageAllocation};
+use crate::arena::{ImageAllocation, VulkanArena};
 use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
 use crate::{Error, Gpu};
 use ash::extensions::khr;
@@ -28,7 +28,7 @@ pub struct Canvas<'a> {
     /// Held by [Canvas] to ensure that the swapchain and command
     /// buffers are dropped before the device.
     pub gpu: &'a Gpu<'a>,
-    framebuffer_arena: Arena<'a>,
+    framebuffer_arena: VulkanArena<'a>,
 
     pub extent: vk::Extent2D,
 
@@ -141,7 +141,7 @@ impl Canvas<'_> {
             },
         )?;
 
-        let framebuffer_arena = Arena::new(
+        let framebuffer_arena = VulkanArena::new(
             &gpu.driver.instance,
             &gpu.device,
             gpu.physical_device,

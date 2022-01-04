@@ -1,5 +1,5 @@
 use crate::arena::ImageAllocation;
-use crate::{Arena, Error, FrameIndex, Gpu};
+use crate::{Error, FrameIndex, Gpu, VulkanArena};
 use ash::version::DeviceV1_0;
 use ash::vk;
 
@@ -96,8 +96,8 @@ fn to_snorm(format: vk::Format) -> vk::Format {
 #[profiling::function]
 pub fn load_ktx(
     gpu: &Gpu,
-    arena: &Arena,
-    temp_arenas: &[Arena],
+    arena: &VulkanArena,
+    temp_arenas: &[VulkanArena],
     frame_index: FrameIndex,
     bytes: &[u8],
     kind: TextureKind,

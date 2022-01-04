@@ -1,6 +1,6 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
-use crate::{Arena, Camera, Canvas, Driver, Error, Scene};
+use crate::{Camera, Canvas, Driver, Error, Scene, VulkanArena};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
@@ -23,7 +23,7 @@ impl FrameIndex {
         FrameIndex { index }
     }
 
-    pub fn get_arena<'a>(self, arenas: &'a [Arena]) -> &'a Arena<'a> {
+    pub fn get_arena<'a>(self, arenas: &'a [VulkanArena]) -> &'a VulkanArena<'a> {
         &arenas[self.index as usize]
     }
 }
@@ -594,7 +594,7 @@ impl Gpu<'_> {
     #[profiling::function]
     pub fn render_frame(
         &self,
-        temp_arenas: &[Arena],
+        temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
         canvas: &Canvas,
         camera: &Camera,
@@ -656,7 +656,7 @@ impl Gpu<'_> {
     #[profiling::function]
     fn record_commmand_buffer(
         &self,
-        temp_arenas: &[Arena],
+        temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
         command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,

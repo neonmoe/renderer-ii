@@ -47,7 +47,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
     let temp_arenas = (0..gpu.temp_arena_count())
         .map(|_| {
-            neonvk::Arena::new(
+            neonvk::VulkanArena::new(
                 &driver.instance,
                 &gpu.device,
                 gpu.physical_device,
@@ -64,7 +64,7 @@ fn fallible_main() -> anyhow::Result<()> {
     loading_frame_index.get_arena(&temp_arenas).reset();
     let camera = neonvk::Camera::default();
 
-    let assets_arena = neonvk::Arena::new(
+    let assets_arena = neonvk::VulkanArena::new(
         &driver.instance,
         &gpu.device,
         gpu.physical_device,

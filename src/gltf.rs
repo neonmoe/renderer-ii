@@ -1,4 +1,4 @@
-use crate::arena::{Arena, ImageAllocation};
+use crate::arena::{ImageAllocation, VulkanArena};
 use crate::image_loading::{self, TextureKind};
 use crate::mesh::Mesh;
 use crate::{Error, FrameIndex, Gpu, Material, Pipeline};
@@ -29,7 +29,7 @@ struct Node {
 }
 
 pub struct Gltf<'arena> {
-    arena: &'arena Arena<'arena>,
+    arena: &'arena VulkanArena<'arena>,
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
     meshes: Vec<Vec<(Mesh, usize)>>,
@@ -59,8 +59,8 @@ impl Gltf<'_> {
     #[profiling::function]
     pub fn from_glb<'a>(
         gpu: &Gpu,
-        main_arena: &'a Arena,
-        temp_arenas: &[Arena],
+        main_arena: &'a VulkanArena,
+        temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
         glb: &[u8],
         resources: &mut GltfResources,
@@ -133,8 +133,8 @@ impl Gltf<'_> {
     #[profiling::function]
     pub fn from_gltf<'a>(
         gpu: &Gpu,
-        main_arena: &'a Arena,
-        temp_arenas: &[Arena],
+        main_arena: &'a VulkanArena,
+        temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
         gltf: &str,
         resources: &mut GltfResources,
@@ -151,8 +151,8 @@ impl Gltf<'_> {
 #[profiling::function]
 fn create_gltf<'a>(
     gpu: &Gpu,
-    arena: &'a Arena,
-    temp_arenas: &[Arena],
+    arena: &'a VulkanArena,
+    temp_arenas: &[VulkanArena],
     frame_index: FrameIndex,
     gltf: gltf_json::GltfJson,
     resources: &mut GltfResources,
@@ -390,8 +390,8 @@ fn create_gltf<'a>(
 #[profiling::function]
 fn create_primitive(
     gpu: &Gpu,
-    arena: &Arena,
-    temp_arenas: &[Arena],
+    arena: &VulkanArena,
+    temp_arenas: &[VulkanArena],
     frame_index: FrameIndex,
     gltf: &gltf_json::GltfJson,
     buffers: &[Rc<Cow<'_, [u8]>>],

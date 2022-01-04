@@ -16,7 +16,7 @@ mod mesh;
 // public-facing modules:
 
 mod arena;
-pub use arena::Arena;
+pub use arena::VulkanArena;
 
 pub use ash::vk;
 

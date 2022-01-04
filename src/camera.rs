@@ -1,4 +1,4 @@
-use crate::{Arena, Canvas, Error, FrameIndex, Pipeline};
+use crate::{Canvas, Error, FrameIndex, Pipeline, VulkanArena};
 use ash::vk;
 use glam::{Mat4, Quat, Vec3};
 use std::mem;
@@ -37,7 +37,7 @@ impl Camera {
     /// Updates Vulkan buffers with the current state of the
     /// [Camera] and [Canvas].
     #[profiling::function]
-    pub(crate) fn update(&self, canvas: &Canvas, temp_arenas: &[Arena], frame_index: FrameIndex) -> Result<(), Error> {
+    pub(crate) fn update(&self, canvas: &Canvas, temp_arenas: &[VulkanArena], frame_index: FrameIndex) -> Result<(), Error> {
         let gpu = &canvas.gpu;
         let temp_arena = frame_index.get_arena(temp_arenas);
         let buffer_allocation = {
