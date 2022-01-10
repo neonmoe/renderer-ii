@@ -94,14 +94,14 @@ fn to_snorm(format: vk::Format) -> vk::Format {
 /// the pixel bytes do not map to a linear rgba array: the data is
 /// compressed. The format reflects this.
 #[profiling::function]
-pub fn load_ktx(
+pub fn load_ktx<'a>(
     gpu: &Gpu,
-    arena: &VulkanArena,
+    arena: &'a VulkanArena,
     temp_arenas: &[VulkanArena],
     frame_index: FrameIndex,
     bytes: &[u8],
     kind: TextureKind,
-) -> Result<(ImageAllocation, vk::ImageView), Error> {
+) -> Result<(&'a ImageAllocation, vk::ImageView), Error> {
     let ktx::KtxData {
         width,
         height,
@@ -120,16 +120,11 @@ pub fn load_ktx(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        temp_arena.create_buffer(*buffer_create_info)?
+        temp_arena.create_buffer(*buffer_create_info, |staging_buffer| {
+            profiling::scope!("write to staging buffer");
+            unsafe { staging_buffer.write(pixels.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }
+        })?
     };
-
-    {
-        profiling::scope!("write to staging buffer");
-        if let Err(err) = unsafe { staging_buffer.write(temp_arena, pixels.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
-            staging_buffer.clean_up(temp_arena);
-            return Err(err);
-        }
-    }
 
     let image_allocation = {
         profiling::scope!("allocate gpu texture");
@@ -147,7 +142,7 @@ pub fn load_ktx(
         arena.create_image(*image_info)?
     };
 
-    let upload_result = gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |command_buffer| {
+    gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |command_buffer| {
         let mut current_mip_level_extent = extent;
         for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
             profiling::scope!("record vkCmdCopyBufferToImage for mip #{}", mip_level);
@@ -235,13 +230,7 @@ pub fn load_ktx(
                 );
             }
         }
-    });
-
-    if let Err(err) = upload_result {
-        staging_buffer.clean_up(temp_arena);
-        image_allocation.clean_up(arena);
-        return Err(err);
-    }
+    })?;
 
     let image_view = {
         let subresource_range = vk::ImageSubresourceRange::builder()
@@ -257,14 +246,7 @@ pub fn load_ktx(
             .format(format)
             .subresource_range(subresource_range);
 
-        match unsafe { gpu.device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation) {
-            Ok(image_view) => image_view,
-            Err(err) => {
-                staging_buffer.clean_up(temp_arena);
-                image_allocation.clean_up(arena);
-                return Err(err);
-            }
-        }
+        unsafe { gpu.device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation)?
     };
 
     gpu.add_temp_buffer(frame_index, staging_buffer.buffer);

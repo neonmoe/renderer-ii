@@ -9,7 +9,7 @@ pub struct MeshIter<'a> {
 }
 
 impl MeshIter<'_> {
-    pub(crate) fn new<'a>(gltf: &'a Gltf, node_queue: Vec<usize>) -> MeshIter<'a> {
+    pub(crate) fn new<'a>(gltf: &'a Gltf<'a>, node_queue: Vec<usize>) -> MeshIter<'a> {
         MeshIter {
             gltf,
             node_queue,
@@ -19,7 +19,7 @@ impl MeshIter<'_> {
 }
 
 impl<'a> Iterator for MeshIter<'a> {
-    type Item = (&'a Mesh, &'a Material, Mat4);
+    type Item = (&'a Mesh<'a>, &'a Material, Mat4);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.current_sub_iter.as_mut().and_then(Iterator::next) {
@@ -53,7 +53,7 @@ struct InnerMeshIter<'a> {
 }
 
 impl<'a> Iterator for InnerMeshIter<'a> {
-    type Item = (&'a Mesh, &'a Material, Mat4);
+    type Item = (&'a Mesh<'a>, &'a Material, Mat4);
 
     fn next(&mut self) -> Option<Self::Item> {
         let meshes = self.gltf.meshes.get(self.mesh_index)?;

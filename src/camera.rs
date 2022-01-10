@@ -47,17 +47,12 @@ impl Camera {
                 .size(buffer_size)
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            temp_arena.create_buffer(*buffer_create_info)?
+            temp_arena.create_buffer(*buffer_create_info, |buffer| {
+                profiling::scope!("write uniform buffer");
+                let src = &[GlobalTransforms::new(canvas)];
+                unsafe { buffer.write(src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }
+            })?
         };
-
-        {
-            profiling::scope!("write uniform buffer");
-            let src = &[GlobalTransforms::new(canvas)];
-            if let Err(err) = unsafe { buffer_allocation.write(temp_arena, src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
-                buffer_allocation.clean_up(temp_arena);
-                return Err(err);
-            }
-        }
 
         gpu.add_temp_buffer(frame_index, buffer_allocation.buffer);
         gpu.descriptors

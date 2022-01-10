@@ -45,7 +45,7 @@ fn fallible_main() -> anyhow::Result<()> {
 
     let driver = neonvk::Driver::new(&window)?;
     let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
-    let temp_arenas = (0..gpu.temp_arena_count())
+    let mut temp_arenas = (0..gpu.temp_arena_count())
         .map(|_| {
             neonvk::VulkanArena::new(
                 &driver.instance,
@@ -58,10 +58,19 @@ fn fallible_main() -> anyhow::Result<()> {
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut canvas = neonvk::Canvas::new(&gpu, None, width, height, false)?;
+    let mut framebuffer_arena = neonvk::VulkanArena::new(
+        &gpu.driver.instance,
+        &gpu.device,
+        gpu.physical_device,
+        300_000_000, // FIXME: too small for very big framebuffers?
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL | neonvk::vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        "framebuffer arena",
+    )?;
+    let mut canvas = neonvk::Canvas::new(&gpu, None, &framebuffer_arena, width, height, false)?;
 
     let loading_frame_index = gpu.wait_frame(&canvas)?;
-    loading_frame_index.get_arena(&temp_arenas).reset();
+    loading_frame_index.get_arena_mut(&mut temp_arenas).reset();
     let camera = neonvk::Camera::default();
 
     let assets_arena = neonvk::VulkanArena::new(
@@ -137,7 +146,8 @@ fn fallible_main() -> anyhow::Result<()> {
         if size_changed {
             gpu.wait_idle()?;
             let (width, height) = window.vulkan_drawable_size();
-            canvas = neonvk::Canvas::new(&gpu, Some(&canvas), width, height, immediate_present)?;
+            framebuffer_arena.reset();
+            canvas = neonvk::Canvas::new(&gpu, Some(&canvas), &framebuffer_arena, width, height, immediate_present)?;
             size_changed = false;
         }
 
@@ -147,7 +157,7 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;
-        frame_index.get_arena(&temp_arenas).reset();
+        frame_index.get_arena_mut(&mut temp_arenas).reset();
         match gpu.render_frame(&temp_arenas, frame_index, &canvas, &camera, &scene, debug_value) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
@@ -185,6 +195,7 @@ fn fallible_main() -> anyhow::Result<()> {
     drop(sponza_model);
     drop(assets_arena);
     drop(canvas);
+    drop(framebuffer_arena);
     drop(gpu);
 
     Ok(())

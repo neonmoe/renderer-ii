@@ -26,6 +26,10 @@ impl FrameIndex {
     pub fn get_arena<'a>(self, arenas: &'a [VulkanArena]) -> &'a VulkanArena<'a> {
         &arenas[self.index as usize]
     }
+
+    pub fn get_arena_mut<'a, 'b>(self, arenas: &'a mut [VulkanArena<'b>]) -> &'a mut VulkanArena<'b> {
+        &mut arenas[self.index as usize]
+    }
 }
 
 /// A unique id for every distinct GPU.
@@ -109,7 +113,6 @@ impl Drop for Gpu<'_> {
 
             self.cleanup_temp_command_buffers(frame_local);
             self.cleanup_temp_semaphores(frame_local);
-            self.cleanup_temp_buffers(frame_local);
 
             unsafe {
                 self.device.destroy_semaphore(frame_local.finished_command_buffers_sp, None);
@@ -507,13 +510,6 @@ impl Gpu<'_> {
         }
     }
 
-    #[profiling::function]
-    fn cleanup_temp_buffers(&self, frame_local: &FrameLocal) {
-        for buffer in frame_local.temp_buffers.1.try_iter() {
-            unsafe { self.device.destroy_buffer(buffer, None) };
-        }
-    }
-
     /// Wait until the device is idle. Should be called before
     /// swapchain recreation and after the game loop is over.
     #[profiling::function]
@@ -548,7 +544,6 @@ impl Gpu<'_> {
         if frame_local.in_use.load(Ordering::Relaxed) {
             self.cleanup_temp_command_buffers(frame_local);
             self.cleanup_temp_semaphores(frame_local);
-            self.cleanup_temp_buffers(frame_local);
         }
 
         Ok(frame_index)
@@ -745,16 +740,11 @@ impl Gpu<'_> {
                         .size(buffer_size)
                         .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                    temp_arena.create_buffer(*buffer_create_info)?
+                    temp_arena.create_buffer(*buffer_create_info, |transform_buffer| {
+                        profiling::scope!("write transform buffer");
+                        unsafe { transform_buffer.write(transforms.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }
+                    })?
                 };
-
-                {
-                    profiling::scope!("write transform buffer");
-                    if let Err(err) = unsafe { transform_buffer.write(temp_arena, transforms.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
-                        transform_buffer.clean_up(temp_arena);
-                        return Err(err);
-                    }
-                }
 
                 self.add_temp_buffer(frame_index, transform_buffer.buffer);
 

@@ -6,9 +6,9 @@ use glam::Vec4;
 use std::{mem, ptr};
 
 #[derive(PartialEq, Eq, Hash)]
-pub struct Mesh {
+pub struct Mesh<'a> {
     /// Contains the vertices and indices.
-    pub(crate) mesh_buffer: BufferAllocation,
+    pub(crate) mesh_buffer: &'a BufferAllocation,
 
     pub pipeline: Pipeline,
     pub(crate) index_count: u32,
@@ -17,7 +17,7 @@ pub struct Mesh {
     pub(crate) vertices_offsets: Vec<vk::DeviceSize>,
 }
 
-impl Mesh {
+impl Mesh<'_> {
     /// Creates a new mesh. Ensure that the vertices match the
     /// pipeline.
     ///
@@ -25,15 +25,15 @@ impl Mesh {
     /// attribute, containing the values for that attribute tightly
     /// packed.
     // TODO: Meshes that refer to existing buffers, instead of owning them themselves
-    pub fn new<I: IndexType>(
+    pub fn new<'a, I: IndexType>(
         gpu: &Gpu,
-        arena: &VulkanArena,
+        arena: &'a VulkanArena,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
         vertices: &[&[u8]],
         indices: &[u8],
         pipeline: Pipeline,
-    ) -> Result<Mesh, Error> {
+    ) -> Result<Mesh<'a>, Error> {
         profiling::scope!("new_mesh");
 
         // The destination memory is aligned to 16 bytes (size of
@@ -74,16 +74,12 @@ impl Mesh {
                 .size(total_size as vk::DeviceSize)
                 .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            temp_arena.create_buffer(*buffer_create_info)?
+            temp_arena.create_buffer(*buffer_create_info, |staging_buffer| {
+                profiling::scope!("write staging buffer");
+                unsafe { staging_buffer.write(data.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
+                Ok(())
+            })?
         };
-
-        {
-            profiling::scope!("write staging buffer");
-            if let Err(err) = unsafe { staging_buffer.write(temp_arena, data.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
-                staging_buffer.clean_up(temp_arena);
-                return Err(err);
-            }
-        }
 
         let mesh_buffer = {
             profiling::scope!("allocate gpu buffer");
@@ -97,28 +93,16 @@ impl Mesh {
                         | vk::BufferUsageFlags::UNIFORM_BUFFER,
                 )
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            match arena.create_buffer(*buffer_create_info) {
-                Ok(buffer_allocation) => buffer_allocation,
-                Err(err) => {
-                    staging_buffer.clean_up(temp_arena);
-                    return Err(err);
-                }
-            }
+            arena.create_buffer(*buffer_create_info, |_| Ok(()))?
         };
 
-        let upload_result = gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::VERTEX_INPUT, |command_buffer| {
+        gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::VERTEX_INPUT, |command_buffer| {
             profiling::scope!("vkCmdCopyBuffer");
             let src = staging_buffer.buffer;
             let dst = mesh_buffer.buffer;
             let copy_regions = [vk::BufferCopy::builder().size(total_size as vk::DeviceSize).build()];
             unsafe { gpu.device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
-        });
-
-        if let Err(err) = upload_result {
-            staging_buffer.clean_up(temp_arena);
-            mesh_buffer.clean_up(arena);
-            return Err(err);
-        }
+        })?;
 
         gpu.add_temp_buffer(frame_index, staging_buffer.buffer);
 

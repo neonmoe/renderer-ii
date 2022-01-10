@@ -32,21 +32,15 @@ pub struct Gltf<'arena> {
     arena: &'arena VulkanArena<'arena>,
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
-    meshes: Vec<Vec<(Mesh, usize)>>,
+    meshes: Vec<Vec<(Mesh<'arena>, usize)>>,
     materials: Vec<Material>,
-    images: Vec<(ImageAllocation, vk::ImageView)>,
+    images: Vec<(&'arena ImageAllocation, vk::ImageView)>,
 }
 
 impl Drop for Gltf<'_> {
     fn drop(&mut self) {
-        for (image_allocation, image_view) in &self.images {
-            image_allocation.clean_up(self.arena);
+        for (_, image_view) in &self.images {
             unsafe { self.arena.device.destroy_image_view(*image_view, None) };
-        }
-        for inner_meshes in &self.meshes {
-            for (mesh, _) in inner_meshes {
-                mesh.mesh_buffer.clean_up(self.arena);
-            }
         }
     }
 }
@@ -323,7 +317,7 @@ fn create_gltf<'a>(
         gltf.materials
             .iter()
             .map(|mat| {
-                let mktex = |images: &[(ImageAllocation, vk::ImageView)], texture_info: &gltf_json::TextureInfo| {
+                let mktex = |images: &[(&ImageAllocation, vk::ImageView)], texture_info: &gltf_json::TextureInfo| {
                     let texture = match gltf.textures.get(texture_info.index) {
                         Some(tex) => tex,
                         None => return Some(Err(Error::GltfOob("texture"))),
@@ -388,15 +382,15 @@ fn create_gltf<'a>(
 }
 
 #[profiling::function]
-fn create_primitive(
+fn create_primitive<'a>(
     gpu: &Gpu,
-    arena: &VulkanArena,
+    arena: &'a VulkanArena,
     temp_arenas: &[VulkanArena],
     frame_index: FrameIndex,
     gltf: &gltf_json::GltfJson,
     buffers: &[Rc<Cow<'_, [u8]>>],
     primitive: &gltf_json::Primitive,
-) -> Result<Mesh, Error> {
+) -> Result<Mesh<'a>, Error> {
     let index_accessor = primitive.indices.ok_or(Error::GltfMisc("missing indices"))?;
     let index_buffer = get_slice_from_accessor(gltf, buffers, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
 

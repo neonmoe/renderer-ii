@@ -1,4 +1,4 @@
-use crate::arena::{ImageAllocation, VulkanArena};
+use crate::arena::VulkanArena;
 use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
 use crate::{Error, Gpu};
 use ash::extensions::khr;
@@ -20,23 +20,19 @@ struct SwapchainSettings {
     immediate_present: bool,
 }
 
-/// The shorter-lived half of the rendering pair, along with [Gpu].
-///
-/// This struct has the concrete rendering objects, like the render
-/// passes, framebuffers, command buffers and so on.
+// FIXME: Replace Canvas, it isn't currently a safe wrapper
+// Reason: it doesn't hold a borrow to the arena that holds Images it
+// relies on.
 pub struct Canvas<'a> {
     /// Held by [Canvas] to ensure that the swapchain and command
     /// buffers are dropped before the device.
     pub gpu: &'a Gpu<'a>,
-    framebuffer_arena: VulkanArena<'a>,
 
     pub extent: vk::Extent2D,
 
     pub(crate) swapchain: vk::SwapchainKHR,
     swapchain_image_views: Vec<vk::ImageView>,
-    color_images: Vec<ImageAllocation>,
     color_image_views: Vec<vk::ImageView>,
-    depth_images: Vec<ImageAllocation>,
     depth_image_views: Vec<vk::ImageView>,
     pub(crate) framebuffers: Vec<vk::Framebuffer>,
     pub(crate) final_render_pass: vk::RenderPass,
@@ -84,16 +80,6 @@ impl Drop for Canvas<'_> {
             unsafe { device.destroy_image_view(image_view, None) };
         }
 
-        for image_allocation in &self.depth_images {
-            profiling::scope!("destroy depth image");
-            image_allocation.clean_up(&self.framebuffer_arena);
-        }
-
-        for image_allocation in &self.color_images {
-            profiling::scope!("destroy main render target image");
-            image_allocation.clean_up(&self.framebuffer_arena);
-        }
-
         unsafe {
             profiling::scope!("destroy swapchain");
             self.gpu.swapchain_ext.destroy_swapchain(self.swapchain, None)
@@ -117,6 +103,7 @@ impl Canvas<'_> {
     pub fn new<'a>(
         gpu: &'a Gpu,
         old_canvas: Option<&Canvas>,
+        framebuffer_arena: &VulkanArena,
         fallback_width: u32,
         fallback_height: u32,
         immediate_present: bool,
@@ -139,16 +126,6 @@ impl Canvas<'_> {
                 },
                 immediate_present,
             },
-        )?;
-
-        let framebuffer_arena = VulkanArena::new(
-            &gpu.driver.instance,
-            &gpu.device,
-            gpu.physical_device,
-            300_000_000, // FIXME: too small for very big framebuffers?
-            vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            "framebuffer arena",
         )?;
 
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
@@ -251,13 +228,10 @@ impl Canvas<'_> {
 
         Ok(Canvas {
             gpu,
-            framebuffer_arena,
             extent,
             swapchain,
             swapchain_image_views,
-            color_images,
             color_image_views,
-            depth_images,
             depth_image_views,
             framebuffers,
             final_render_pass,

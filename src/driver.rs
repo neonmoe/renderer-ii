@@ -74,10 +74,11 @@ impl Driver {
             .enabled_extension_names(&extensions);
 
         let enabled_validation_features = [
-            vk::ValidationFeatureEnableEXT::BEST_PRACTICES,
-            vk::ValidationFeatureEnableEXT::GPU_ASSISTED,
-            vk::ValidationFeatureEnableEXT::GPU_ASSISTED_RESERVE_BINDING_SLOT,
-            vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION,
+            // FIXME: Fix best practices warnings
+            //vk::ValidationFeatureEnableEXT::BEST_PRACTICES,
+            //vk::ValidationFeatureEnableEXT::GPU_ASSISTED,
+            //vk::ValidationFeatureEnableEXT::GPU_ASSISTED_RESERVE_BINDING_SLOT,
+            //vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION,
         ];
         let mut validation_features = vk::ValidationFeaturesEXT::builder().enabled_validation_features(&enabled_validation_features);
 
