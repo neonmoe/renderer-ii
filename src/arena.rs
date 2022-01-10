@@ -32,6 +32,7 @@ pub use simple_wrappers::ImageAllocation;
 pub struct VulkanArena<'device> {
     pub device: &'device Device,
     memory: vk::DeviceMemory,
+    flags: vk::MemoryPropertyFlags,
     total_size: vk::DeviceSize,
     /// The location where the available memory starts. Gets set to 0
     /// when the arena is reset, bumped when allocating.
@@ -68,7 +69,7 @@ impl VulkanArena<'_> {
         fallback_flags: vk::MemoryPropertyFlags,
         debug_identifier: &'static str,
     ) -> Result<VulkanArena<'device>, Error> {
-        let memory_type_index = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
+        let (memory_type_index, flags) = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
             .ok_or(Error::VulkanNoMatchingHeap(debug_identifier, fallback_flags))?;
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
@@ -80,9 +81,10 @@ impl VulkanArena<'_> {
         let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;
         let non_coherent_atom_size = physical_device_properties.limits.non_coherent_atom_size;
 
-        Ok(VulkanArena {
+        let arena = VulkanArena {
             device,
             memory,
+            flags,
             total_size: size,
             offset: Cell::new(0),
             non_coherent_atom_size,
@@ -91,7 +93,14 @@ impl VulkanArena<'_> {
             debug_identifier,
             buffers: Arena::new(),
             images: Arena::new(),
-        })
+        };
+
+        #[cfg(feature = "vulkan-validation")]
+        if flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE) {
+            arena.fill_uninitialized_memory(arena.total_size);
+        }
+
+        Ok(arena)
     }
 
     pub fn create_buffer<F: FnOnce(&mut WritableBufferAllocation<'_>) -> Result<(), Error>>(
@@ -132,7 +141,7 @@ impl VulkanArena<'_> {
         self.offset.set(offset + size);
         self.previous_allocation_was_image.set(false);
         let mut writable = WritableBufferAllocation {
-            device: &self.device,
+            device: self.device,
             memory: self.memory,
             memory_size: self.total_size,
             non_coherent_atom_size: self.non_coherent_atom_size,
@@ -174,7 +183,6 @@ impl VulkanArena<'_> {
     }
 
     pub fn reset(&mut self) {
-        self.offset.set(0);
         for allocation in self.buffers.iter_mut() {
             unsafe { self.device.destroy_buffer(allocation.buffer, None) };
         }
@@ -183,8 +191,32 @@ impl VulkanArena<'_> {
             unsafe { self.device.destroy_image(allocation.image, None) };
         }
         self.images = Arena::new();
-        // TODO: Fill arenas with noise on reset in debug mode?
+        if self.flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE) {
+            self.fill_uninitialized_memory(self.offset.get());
+        }
+        self.offset.set(0);
     }
+
+    #[cfg(feature = "vulkan-validation")]
+    fn fill_uninitialized_memory(&self, up_to: vk::DeviceSize) {
+        if let Ok(dst) = unsafe { self.device.map_memory(self.memory, 0, self.total_size, vk::MemoryMapFlags::empty()) } {
+            let uninitialized_pattern: u64 = 0xF000DEADF000DEAD;
+            for i in 0..up_to as isize / std::mem::size_of::<u64>() as isize {
+                unsafe { std::ptr::write((dst as *mut u64).offset(i), uninitialized_pattern) };
+            }
+
+            let ranges = [vk::MappedMemoryRange::builder()
+                .memory(self.memory)
+                .offset(0)
+                .size(self.total_size)
+                .build()];
+            let _ = unsafe { self.device.flush_mapped_memory_ranges(&ranges) };
+            unsafe { self.device.unmap_memory(self.memory) };
+        }
+    }
+
+    #[cfg(not(feature = "vulkan-validation"))]
+    fn fill_uninitialized_memory(&self, _: vk::DeviceSize) {}
 }
 
 fn get_memory_type_index(
@@ -193,7 +225,7 @@ fn get_memory_type_index(
     optimal_flags: vk::MemoryPropertyFlags,
     fallback_flags: vk::MemoryPropertyFlags,
     size: vk::DeviceSize,
-) -> Option<u32> {
+) -> Option<(u32, vk::MemoryPropertyFlags)> {
     // TODO: Use VK_EXT_memory_budget to pick a heap that can fit the size, it's already enabled (if available)
     let memory_properties = unsafe { instance.get_physical_device_memory_properties(physical_device) };
     let types = &memory_properties.memory_types[..memory_properties.memory_type_count as usize];
@@ -201,13 +233,13 @@ fn get_memory_type_index(
     for (i, memory_type) in types.iter().enumerate() {
         let heap_index = memory_type.heap_index as usize;
         if memory_type.property_flags.contains(optimal_flags) && heaps[heap_index].size >= size {
-            return Some(i as u32);
+            return Some((i as u32, optimal_flags));
         }
     }
     for (i, memory_type) in types.iter().enumerate() {
         let heap_index = memory_type.heap_index as usize;
         if memory_type.property_flags.contains(fallback_flags) && heaps[heap_index].size >= size {
-            return Some(i as u32);
+            return Some((i as u32, optimal_flags));
         }
     }
     None
