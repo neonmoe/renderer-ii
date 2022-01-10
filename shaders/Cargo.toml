@@ -11,3 +11,6 @@ proc-macro2 = { version = "^1.0.0" }
 
 [lib]
 proc-macro = true
+
+[features]
+generate-debug-info = []

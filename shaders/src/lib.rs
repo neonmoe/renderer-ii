@@ -43,6 +43,9 @@ fn compile_shader(shader_path: &str) -> Shader {
     let mut compiler = Compiler::new().unwrap();
     let mut options = CompileOptions::new().unwrap();
     options.set_optimization_level(OptimizationLevel::Performance);
+    if cfg!(feature = "generate-debug-info") {
+        options.set_generate_debug_info();
+    }
     options.set_target_env(TargetEnv::Vulkan, EnvVersion::Vulkan1_0 as u32);
     options.set_target_spirv(SpirvVersion::V1_0);
     options.set_source_language(SourceLanguage::GLSL);

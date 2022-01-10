@@ -49,7 +49,7 @@ impl Driver {
             .api_version(vk::API_VERSION_1_2);
 
         let mut layers = Vec::with_capacity(1);
-        if is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
+        if cfg!(feature = "vulkan-validation") && is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
             layers.push(cstr!("VK_LAYER_KHRONOS_validation").as_ptr());
         }
 
@@ -61,17 +61,32 @@ impl Driver {
         let debug_utils_available = is_extension_supported(&entry, "VK_EXT_debug_utils");
         if debug_utils_available {
             extensions.push(cstr!("VK_EXT_debug_utils").as_ptr());
-            log::debug!("Instance extension: VK_EXT_debug_utils");
+            log::debug!("Instance extension (optional): VK_EXT_debug_utils");
         }
         if is_extension_supported(&entry, "VK_KHR_get_physical_device_properties2") {
             extensions.push(cstr!("VK_KHR_get_physical_device_properties2").as_ptr());
-            log::debug!("Instance extension: VK_KHR_get_physical_device_properties2");
+            log::debug!("Instance extension (optional): VK_KHR_get_physical_device_properties2");
         }
 
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
             .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions);
+
+        let enabled_validation_features = [
+            vk::ValidationFeatureEnableEXT::BEST_PRACTICES,
+            vk::ValidationFeatureEnableEXT::GPU_ASSISTED,
+            vk::ValidationFeatureEnableEXT::GPU_ASSISTED_RESERVE_BINDING_SLOT,
+            vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION,
+        ];
+        let mut validation_features = vk::ValidationFeaturesEXT::builder().enabled_validation_features(&enabled_validation_features);
+
+        let create_info = if cfg!(feature = "vulkan-validation") {
+            create_info.push_next(&mut validation_features)
+        } else {
+            create_info
+        };
+
         let instance = unsafe { entry.create_instance(&create_info, None) }?;
         let surface = unsafe { ash_window::create_surface(&entry, &instance, window, None) }.map_err(Error::VulkanSurfaceCreation)?;
 

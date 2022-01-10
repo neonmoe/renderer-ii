@@ -296,7 +296,7 @@ impl Gpu<'_> {
         log::debug!("Device extension: VK_KHR_swapchain");
         if is_extension_supported(&driver.instance, physical_device, "VK_EXT_memory_budget") {
             extensions.push(cstr!("VK_EXT_memory_budget").as_ptr());
-            log::debug!("Device extension: VK_EXT_memory_budget");
+            log::debug!("Device extension (optional): VK_EXT_memory_budget");
         }
 
         let mut physical_device_descriptor_indexing_features =
