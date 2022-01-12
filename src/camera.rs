@@ -1,4 +1,4 @@
-use crate::{Canvas, Error, FrameIndex, Pipeline, VulkanArena};
+use crate::{Error, FrameIndex, Gpu, Pipeline, RenderPass, VulkanArena};
 use ash::vk;
 use glam::{Mat4, Quat, Vec3};
 use std::mem;
@@ -10,9 +10,9 @@ struct GlobalTransforms {
 }
 
 impl GlobalTransforms {
-    fn new(canvas: &Canvas) -> GlobalTransforms {
+    fn new(render_pass: &RenderPass) -> GlobalTransforms {
         let fov = 74f32.to_radians();
-        let aspect_ratio = canvas.extent.width as f32 / canvas.extent.height as f32;
+        let aspect_ratio = render_pass.extent.width as f32 / render_pass.extent.height as f32;
         // Lower values seem to cause Z-fighting in the sponza scene.
         // Might be better to use two projection matrixes for e.g. 0.1->5, 5->inf.
         let near = 0.5;
@@ -35,10 +35,15 @@ pub struct Camera {}
 
 impl Camera {
     /// Updates Vulkan buffers with the current state of the
-    /// [Camera] and [Canvas].
+    /// [Camera] and [RenderPass].
     #[profiling::function]
-    pub(crate) fn update(&self, canvas: &Canvas, temp_arenas: &[VulkanArena], frame_index: FrameIndex) -> Result<(), Error> {
-        let gpu = &canvas.gpu;
+    pub(crate) fn update(
+        &self,
+        gpu: &Gpu,
+        render_pass: &RenderPass,
+        temp_arenas: &[VulkanArena],
+        frame_index: FrameIndex,
+    ) -> Result<(), Error> {
         let temp_arena = frame_index.get_arena(temp_arenas);
         let buffer_allocation = {
             profiling::scope!("create uniform buffer");
@@ -49,7 +54,7 @@ impl Camera {
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
             temp_arena.create_buffer(*buffer_create_info, |buffer| {
                 profiling::scope!("write uniform buffer");
-                let src = &[GlobalTransforms::new(canvas)];
+                let src = &[GlobalTransforms::new(render_pass)];
                 unsafe { buffer.write(src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }
             })?
         };

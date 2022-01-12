@@ -6,8 +6,8 @@ use ash::Device;
 use std::mem;
 use std::ops::Range;
 
-pub(crate) struct Descriptors {
-    pub(crate) pipeline_layouts: Vec<vk::PipelineLayout>,
+pub struct Descriptors {
+    pub pipeline_layouts: Vec<vk::PipelineLayout>,
     descriptor_set_layouts_per_pipeline: Vec<Vec<vk::DescriptorSetLayout>>,
     descriptor_pool: vk::DescriptorPool,
     descriptor_sets: Vec<Vec<Vec<vk::DescriptorSet>>>,

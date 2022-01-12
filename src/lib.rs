@@ -23,9 +23,6 @@ pub use ash::vk;
 mod camera;
 pub use camera::Camera;
 
-mod canvas;
-pub use canvas::Canvas;
-
 mod driver;
 pub use driver::Driver;
 
@@ -46,5 +43,11 @@ pub use material::Material;
 mod pipeline;
 pub use pipeline::Pipeline;
 
+mod render_pass;
+pub use render_pass::RenderPass;
+
 mod scene;
 pub use scene::Scene;
+
+mod swapchain;
+pub use swapchain::{Swapchain, SwapchainSettings};

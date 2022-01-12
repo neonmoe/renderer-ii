@@ -1,132 +1,67 @@
-use crate::arena::VulkanArena;
 use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
-use crate::{Error, Gpu};
-use ash::extensions::khr;
+use crate::{Error, Swapchain, VulkanArena};
 use ash::version::DeviceV1_0;
-use ash::{vk, Device};
+use ash::vk;
+use ash::Device;
 
-pub const SWAPCHAIN_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
-
-// According to vulkan.gpuinfo.org, this is the most supported depth
-// attachment format by a large margin at 99.94%. If the accuracy is
-// not enough, D32_SFLOAT comes in second at 87.78%, and if stencil is
-// needed, D24_UNORM_S8_UINT is supported by 71.16%.
 const DEPTH_FORMAT: vk::Format = vk::Format::D16_UNORM;
-
 const SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::TYPE_8;
 
-struct SwapchainSettings {
-    extent: vk::Extent2D,
-    immediate_present: bool,
-}
-
-// FIXME: Replace Canvas, it isn't currently a safe wrapper
-// Reason: it doesn't hold a borrow to the arena that holds Images it
-// relies on.
-pub struct Canvas<'a> {
-    /// Held by [Canvas] to ensure that the swapchain and command
-    /// buffers are dropped before the device.
-    pub gpu: &'a Gpu<'a>,
-
+/// Render pass, pipelines, and framebuffers.
+///
+/// Contains the vkPipelines, vkFramebuffers and vkImages related to a
+/// specific render pass. Needs to be changed after refreshing the
+/// swapchain and/or device. Changing shaders would require just
+/// recreating the RenderPass, the swapchain can be retained.
+pub struct RenderPass<'a> {
     pub extent: vk::Extent2D,
+    pub framebuffers: Vec<vk::Framebuffer>,
+    pub final_render_pass: vk::RenderPass,
+    pub pipelines: Vec<vk::Pipeline>,
 
-    pub(crate) swapchain: vk::SwapchainKHR,
-    swapchain_image_views: Vec<vk::ImageView>,
+    device: &'a Device,
     color_image_views: Vec<vk::ImageView>,
     depth_image_views: Vec<vk::ImageView>,
-    pub(crate) framebuffers: Vec<vk::Framebuffer>,
-    pub(crate) final_render_pass: vk::RenderPass,
-    pub(crate) pipelines: Vec<vk::Pipeline>,
-    pub(crate) command_buffers: Vec<vk::CommandBuffer>,
+
+    #[allow(dead_code)]
+    /// Owns the swapchain image views used in the render pass.
+    swapchain: &'a Swapchain<'a>,
+    #[allow(dead_code)]
+    /// Owns the backing memory for the images used in the
+    /// framebuffers and image views.
+    framebuffer_arena: &'a VulkanArena<'a>,
 }
 
-impl Drop for Canvas<'_> {
-    #[profiling::function]
+impl Drop for RenderPass<'_> {
     fn drop(&mut self) {
-        let device = &self.gpu.device;
-
+        for &framebuffer in &self.framebuffers {
+            profiling::scope!("destroy framebuffer");
+            unsafe { self.device.destroy_framebuffer(framebuffer, None) };
+        }
         for &pipeline in &self.pipelines {
             profiling::scope!("destroy pipeline");
-            unsafe { device.destroy_pipeline(pipeline, None) };
+            unsafe { self.device.destroy_pipeline(pipeline, None) };
         }
-
+        for &image_view in self.color_image_views.iter().chain(self.depth_image_views.iter()) {
+            profiling::scope!("destroy render target image view");
+            unsafe { self.device.destroy_image_view(image_view, None) };
+        }
         {
             profiling::scope!("destroy render pass");
-            unsafe { device.destroy_render_pass(self.final_render_pass, None) };
+            unsafe { self.device.destroy_render_pass(self.final_render_pass, None) };
         }
-
-        {
-            profiling::scope!("free command buffers");
-            unsafe { device.free_command_buffers(self.gpu.command_pool, &self.command_buffers) };
-        }
-
-        for &framebuffer in &self.framebuffers {
-            profiling::scope!("destroy framebuffers");
-            unsafe { device.destroy_framebuffer(framebuffer, None) };
-        }
-
-        for &image_view in &self.depth_image_views {
-            profiling::scope!("destroy depth image view");
-            unsafe { device.destroy_image_view(image_view, None) };
-        }
-
-        for &image_view in &self.color_image_views {
-            profiling::scope!("destroy main render target image view");
-            unsafe { device.destroy_image_view(image_view, None) };
-        }
-
-        for &image_view in &self.swapchain_image_views {
-            profiling::scope!("destroy swapchain image view");
-            unsafe { device.destroy_image_view(image_view, None) };
-        }
-
-        unsafe {
-            profiling::scope!("destroy swapchain");
-            self.gpu.swapchain_ext.destroy_swapchain(self.swapchain, None)
-        };
     }
 }
 
-impl Canvas<'_> {
-    /// Creates a new Canvas. Should be recreated when the window size
-    /// changes.
-    ///
-    /// The fallback width and height parameters are used when Vulkan
-    /// can't get the window size, e.g. when creating a new window in
-    /// Wayland (when the window size is specified by the size of the
-    /// initial framebuffer).
-    ///
-    /// If `immediate_present` is true, the immediate present mode is
-    /// used. Otherwise, FIFO. FIFO only releases frames after they've
-    /// been displayed on screen, so it caps the fps to the screen's
-    /// refresh rate.
+impl RenderPass<'_> {
     pub fn new<'a>(
-        gpu: &'a Gpu,
-        old_canvas: Option<&Canvas>,
-        framebuffer_arena: &VulkanArena,
-        fallback_width: u32,
-        fallback_height: u32,
-        immediate_present: bool,
-    ) -> Result<Canvas<'a>, Error> {
-        profiling::scope!("new_canvas");
-        let device = &gpu.device;
-        let swapchain_ext = &gpu.swapchain_ext;
-        let queue_family_indices = [gpu.graphics_family_index, gpu.surface_family_index];
-        let (swapchain, swapchain_format, extent, frame_count) = create_swapchain(
-            &gpu.surface_ext,
-            swapchain_ext,
-            gpu.driver.surface,
-            old_canvas.map(|r| r.swapchain),
-            gpu.physical_device,
-            &queue_family_indices,
-            &SwapchainSettings {
-                extent: vk::Extent2D {
-                    width: fallback_width,
-                    height: fallback_height,
-                },
-                immediate_present,
-            },
-        )?;
+        device: &'a Device,
+        framebuffer_arena: &'a VulkanArena,
+        swapchain: &'a Swapchain,
+        pipeline_layouts: &[vk::PipelineLayout],
+        extent: vk::Extent2D,
+    ) -> Result<RenderPass<'a>, Error> {
+        profiling::scope!("new_renderpass");
 
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
             move |image: vk::Image| -> Result<vk::ImageView, Error> {
@@ -165,24 +100,17 @@ impl Canvas<'_> {
             framebuffer_arena.create_image(*image_create_info)
         };
 
-        // TODO: Add another set of images to render to, to allow for post processing
-        // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
-        let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
-        let swapchain_image_views = swapchain_images
-            .into_iter()
-            .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain_format))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let color_images = (0..swapchain_image_views.len())
-            .map(|_| create_image(SWAPCHAIN_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT))
+        let color_images = (0..swapchain.swapchain_image_views.len())
+            .map(|_| create_image(swapchain.format, vk::ImageUsageFlags::COLOR_ATTACHMENT))
             .collect::<Result<Vec<_>, Error>>()?;
         let color_image_views = color_images
             .iter()
             .map(|image_allocation| image_allocation.image)
-            .map(create_image_view(vk::ImageAspectFlags::COLOR, SWAPCHAIN_FORMAT))
+            .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain.format))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let depth_images = (0..swapchain_image_views.len())
+        // TODO: Select depth format based on capabilities
+        let depth_images = (0..swapchain.swapchain_image_views.len())
             .map(|_| create_image(DEPTH_FORMAT, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT))
             .collect::<Result<Vec<_>, Error>>()?;
         let depth_image_views = depth_images
@@ -191,29 +119,13 @@ impl Canvas<'_> {
             .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let final_render_pass = create_render_pass(device)?;
-        let pipelines = create_pipelines(
-            device,
-            final_render_pass,
-            extent,
-            &gpu.descriptors.pipeline_layouts,
-            &PIPELINE_PARAMETERS,
-        )?;
-
-        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(gpu.command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(frame_count);
-        let command_buffers = unsafe {
-            device
-                .allocate_command_buffers(&command_buffer_allocate_info)
-                .map_err(Error::VulkanCommandBuffersAllocation)
-        }?;
+        let final_render_pass = create_render_pass(device, swapchain.format)?;
+        let pipelines = create_pipelines(device, final_render_pass, extent, pipeline_layouts, &PIPELINE_PARAMETERS)?;
 
         let framebuffers = color_image_views
             .iter()
             .zip(depth_image_views.iter())
-            .zip(swapchain_image_views.iter())
+            .zip(swapchain.swapchain_image_views.iter())
             .map(|((&color_image_view, &depth_image_view), &swapchain_image_view)| {
                 let attachments = [color_image_view, depth_image_view, swapchain_image_view];
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
@@ -226,117 +138,24 @@ impl Canvas<'_> {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(Canvas {
-            gpu,
+        Ok(RenderPass {
             extent,
-            swapchain,
-            swapchain_image_views,
-            color_image_views,
-            depth_image_views,
             framebuffers,
             final_render_pass,
             pipelines,
-            command_buffers,
+            device,
+            swapchain,
+            framebuffer_arena,
+            color_image_views,
+            depth_image_views,
         })
     }
 }
 
 #[profiling::function]
-fn create_swapchain(
-    surface_ext: &khr::Surface,
-    swapchain_ext: &khr::Swapchain,
-    surface: vk::SurfaceKHR,
-    old_swapchain: Option<vk::SwapchainKHR>,
-    physical_device: vk::PhysicalDevice,
-    queue_family_indices: &[u32],
-    settings: &SwapchainSettings,
-) -> Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D, u32), Error> {
-    // NOTE: The following combinations should be presented as a config option:
-    // - FIFO + 2 (traditional double-buffered vsync)
-    //   - no tearing, good latency, bad for perf when running under refresh rate
-    // - FIFO + 3 (like double-buffering, but longer queue)
-    //   - no tearing, bad latency, no perf issues when running under refresh rate
-    // - MAILBOX + 3 (render-constantly, discard frames when waiting for vsync)
-    //   - no tearing, great latency, optimal choice when available
-    // - IMMEDIATE + 2 (render-constantly, ignore vsync (probably causes tearing))
-    //   - possible tearing, best latency
-    // With the non-available ones grayed out, of course.
-    let present_mode = if settings.immediate_present {
-        vk::PresentModeKHR::IMMEDIATE
-    } else {
-        vk::PresentModeKHR::FIFO
-    };
-    let min_image_count = 3;
-
-    let (image_format, image_color_space) = {
-        let surface_formats = unsafe {
-            surface_ext
-                .get_physical_device_surface_formats(physical_device, surface)
-                .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
-        }?;
-        let color_space = if let Some(format) = surface_formats
-            .iter()
-            .find(|format| format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
-        {
-            format.color_space
-        } else {
-            surface_formats[0].color_space
-        };
-        (SWAPCHAIN_FORMAT, color_space)
-    };
-
-    let get_image_extent = || -> Result<vk::Extent2D, Error> {
-        let surface_capabilities = unsafe {
-            surface_ext
-                .get_physical_device_surface_capabilities(physical_device, surface)
-                .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
-        }?;
-        let unset_extent = vk::Extent2D {
-            width: u32::MAX,
-            height: u32::MAX,
-        };
-        let image_extent = if surface_capabilities.current_extent != unset_extent {
-            surface_capabilities.current_extent
-        } else {
-            settings.extent
-        };
-        Ok(image_extent)
-    };
-
-    let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
-        .surface(surface)
-        .min_image_count(min_image_count)
-        .image_format(image_format)
-        .image_color_space(image_color_space)
-        .image_array_layers(1)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-        .pre_transform(vk::SurfaceTransformFlagsKHR::IDENTITY)
-        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-        .present_mode(present_mode)
-        .clipped(true)
-        .image_extent(get_image_extent()?);
-    if queue_family_indices
-        .windows(2)
-        .any(|indices| if let [a, b] = *indices { a != b } else { unreachable!() })
-    {
-        swapchain_create_info = swapchain_create_info
-            .image_sharing_mode(vk::SharingMode::CONCURRENT)
-            .queue_family_indices(queue_family_indices);
-    } else {
-        swapchain_create_info = swapchain_create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
-    }
-    if let Some(old_swapchain) = old_swapchain {
-        swapchain_create_info = swapchain_create_info.old_swapchain(old_swapchain);
-    }
-    let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }.map_err(Error::VulkanSwapchainCreation)?;
-
-    Ok((swapchain, image_format, swapchain_create_info.image_extent, min_image_count))
-}
-
-#[profiling::function]
-fn create_render_pass(device: &Device) -> Result<vk::RenderPass, Error> {
+fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderPass, Error> {
     let color_attachment = vk::AttachmentDescription::builder()
-        .format(SWAPCHAIN_FORMAT)
+        .format(format)
         .samples(SAMPLE_COUNT)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::DONT_CARE)
@@ -354,7 +173,7 @@ fn create_render_pass(device: &Device) -> Result<vk::RenderPass, Error> {
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     let resolve_attachment = vk::AttachmentDescription::builder()
-        .format(SWAPCHAIN_FORMAT)
+        .format(format)
         .samples(vk::SampleCountFlags::TYPE_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)

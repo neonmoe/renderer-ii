@@ -1,6 +1,6 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
-use crate::{Camera, Canvas, Driver, Error, Scene, VulkanArena};
+use crate::{Camera, Driver, Error, RenderPass, Scene, Swapchain, VulkanArena};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
@@ -53,40 +53,32 @@ struct FrameLocal {
     in_use: AtomicBool,
     finished_command_buffers_sp: vk::Semaphore,
     frame_end_fence: vk::Fence,
-    temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
+    temp_command_pool: vk::CommandPool,
     temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
     temp_buffers: (Sender<vk::Buffer>, Receiver<vk::Buffer>),
-    // TODO: Add per-frame rendering command pools which get reset as pools intead of just resetting the individual command buffers
-    // Creating many buffers (which should be cleaned up after) will be needed for multithreaded draw submission too
 }
 
 #[derive(PartialEq, Eq, Hash)]
 pub(crate) struct TextureIndex(u32);
 
-/// The main half of the rendering pair, along with [Canvas].
-///
-/// Each instance of [Gpu] contains a handle to a single physical
-/// device in Vulkan terms, i.e. a GPU, and everything else is built
-/// off of that.
+/// Relic from the old Driver/Gpu/Canvas trio, being refactored out
+/// now.
 pub struct Gpu<'a> {
     /// Held by [Gpu] to ensure that the devices are dropped before
     /// the instance.
     pub driver: &'a Driver,
 
-    pub(crate) surface_ext: khr::Surface,
-    pub(crate) swapchain_ext: khr::Swapchain,
+    swapchain_ext: khr::Swapchain,
 
     pub physical_device: vk::PhysicalDevice,
     pub device: Device,
-    pub(crate) command_pool: vk::CommandPool,
+    pub swapchain_queue_families: Vec<u32>,
 
-    pub(crate) graphics_family_index: u32,
-    pub(crate) surface_family_index: u32,
     pub(crate) graphics_queue: vk::Queue,
     surface_queue: vk::Queue,
     frame_start_fence: vk::Fence,
 
-    pub(crate) descriptors: Descriptors,
+    pub descriptors: Descriptors,
     pub(crate) texture_indices: Vec<AtomicBool>,
 
     frame_locals: Vec<FrameLocal>,
@@ -111,18 +103,14 @@ impl Drop for Gpu<'_> {
         for frame_local in &self.frame_locals {
             profiling::scope!("destroy frame locals");
 
-            self.cleanup_temp_command_buffers(frame_local);
+            let _ = self.cleanup_temp_command_pool(frame_local);
             self.cleanup_temp_semaphores(frame_local);
 
             unsafe {
+                self.device.destroy_command_pool(frame_local.temp_command_pool, None);
                 self.device.destroy_semaphore(frame_local.finished_command_buffers_sp, None);
                 self.device.destroy_fence(frame_local.frame_end_fence, None);
             }
-        }
-
-        {
-            profiling::scope!("destroy command pools");
-            unsafe { self.device.destroy_command_pool(self.command_pool, None) };
         }
 
         {
@@ -344,6 +332,12 @@ impl Gpu<'_> {
             }
         }
 
+        let swapchain_queue_families = if graphics_family_index == surface_family_index {
+            vec![graphics_family_index]
+        } else {
+            vec![graphics_family_index, surface_family_index]
+        };
+
         let frame_in_use_count = 3;
         let frame_locals = (0..frame_in_use_count)
             .map(|_| {
@@ -358,11 +352,18 @@ impl Gpu<'_> {
                         .create_fence(&fence_create_info, None)
                         .map_err(Error::VulkanSemaphoreCreation)
                 }?;
+
+                let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+                    .queue_family_index(graphics_family_index)
+                    .flags(vk::CommandPoolCreateFlags::TRANSIENT);
+                let temp_command_pool =
+                    unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
+
                 Ok(FrameLocal {
                     in_use: AtomicBool::new(false),
                     finished_command_buffers_sp,
                     frame_end_fence,
-                    temp_command_buffers: mpsc::channel(),
+                    temp_command_pool,
                     temp_semaphores: mpsc::channel(),
                     temp_buffers: mpsc::channel(),
                 })
@@ -375,12 +376,6 @@ impl Gpu<'_> {
                 .map_err(Error::VulkanSemaphoreCreation)
         }?;
 
-        let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .queue_family_index(graphics_family_index)
-            .flags(vk::CommandPoolCreateFlags::TRANSIENT | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-        let command_pool =
-            unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
-
         let descriptors = Descriptors::new(&device, &physical_device_properties, &physical_device_features, frame_in_use_count)?;
 
         let mut texture_indices = Vec::with_capacity(MAX_TEXTURE_COUNT as usize);
@@ -392,15 +387,12 @@ impl Gpu<'_> {
             Gpu {
                 driver,
 
-                surface_ext,
                 swapchain_ext,
 
                 physical_device,
                 device,
-                command_pool,
+                swapchain_queue_families,
 
-                graphics_family_index,
-                surface_family_index,
                 graphics_queue,
                 surface_queue,
                 frame_start_fence,
@@ -440,7 +432,7 @@ impl Gpu<'_> {
         let command_buffers = {
             profiling::scope!("allocate command buffer");
             let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-                .command_pool(self.command_pool)
+                .command_pool(self.frame_local(frame_index).temp_command_pool)
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
             unsafe { self.device.allocate_command_buffers(&command_buffer_allocate_info) }.map_err(Error::VulkanCommandBuffersAllocation)?
@@ -483,8 +475,6 @@ impl Gpu<'_> {
 
         {
             profiling::scope!("queue for gc");
-            let temp_cmdbuf_sender = &self.frame_local(frame_index).temp_command_buffers.0;
-            let _ = temp_cmdbuf_sender.send(temp_command_buffer);
             let temp_semaphore_sender = &self.frame_local(frame_index).temp_semaphores.0;
             let _ = temp_semaphore_sender.send(signal_semaphore);
             let render_wait_semaphore_sender = &self.render_wait_semaphores.0;
@@ -494,13 +484,9 @@ impl Gpu<'_> {
     }
 
     #[profiling::function]
-    fn cleanup_temp_command_buffers(&self, frame_local: &FrameLocal) {
-        for command_buffer in frame_local.temp_command_buffers.1.try_iter() {
-            let cmdbufs = [command_buffer];
-            unsafe {
-                self.device.free_command_buffers(self.command_pool, &cmdbufs);
-            }
-        }
+    fn cleanup_temp_command_pool(&self, frame_local: &FrameLocal) -> Result<(), Error> {
+        let flags = vk::CommandPoolResetFlags::empty();
+        unsafe { self.device.reset_command_pool(frame_local.temp_command_pool, flags) }.map_err(Error::VulkanResetCommandPool)
     }
 
     #[profiling::function]
@@ -522,11 +508,11 @@ impl Gpu<'_> {
     /// After ensuring that the next frame can be rendered, this also
     /// frees the resources that can now be freed up.
     #[profiling::function]
-    pub fn wait_frame(&self, canvas: &Canvas) -> Result<FrameIndex, Error> {
+    pub fn wait_frame(&self, swapchain: &Swapchain) -> Result<FrameIndex, Error> {
         let (image_index, _) = unsafe {
             profiling::scope!("acquire next image");
             self.swapchain_ext
-                .acquire_next_image(canvas.swapchain, u64::MAX, vk::Semaphore::null(), self.frame_start_fence)
+                .acquire_next_image(swapchain.swapchain, u64::MAX, vk::Semaphore::null(), self.frame_start_fence)
                 .map_err(Error::VulkanAcquireImage)
         }?;
         let frame_index = FrameIndex::new(image_index);
@@ -542,7 +528,7 @@ impl Gpu<'_> {
         }
 
         if frame_local.in_use.load(Ordering::Relaxed) {
-            self.cleanup_temp_command_buffers(frame_local);
+            self.cleanup_temp_command_pool(frame_local)?;
             self.cleanup_temp_semaphores(frame_local);
         }
 
@@ -591,19 +577,19 @@ impl Gpu<'_> {
         &self,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
-        canvas: &Canvas,
+        swapchain: &Swapchain,
+        render_pass: &RenderPass,
         camera: &Camera,
         scene: &Scene,
         debug_value: u32,
     ) -> Result<(), Error> {
         let frame_local = self.frame_local(frame_index);
         frame_local.in_use.store(true, Ordering::Relaxed);
-        camera.update(canvas, temp_arenas, frame_index)?;
+        camera.update(self, render_pass, temp_arenas, frame_index)?;
 
         let image_index = self.image_index(frame_index);
-        let command_buffer = canvas.command_buffers[image_index];
-        let framebuffer = canvas.framebuffers[image_index];
-        self.record_commmand_buffer(temp_arenas, frame_index, command_buffer, framebuffer, canvas, scene, debug_value)?;
+        let framebuffer = render_pass.framebuffers[image_index];
+        let command_buffer = self.record_command_buffer(temp_arenas, frame_index, framebuffer, render_pass, scene, debug_value)?;
 
         let render_wait_semaphores = self.render_wait_semaphores.1.try_iter().collect::<Vec<WaitSemaphore>>();
         let mut wait_semaphores = Vec::with_capacity(render_wait_semaphores.len());
@@ -628,7 +614,7 @@ impl Gpu<'_> {
                 .map_err(Error::VulkanQueueSubmit)
         }?;
 
-        let swapchains = [canvas.swapchain];
+        let swapchains = [swapchain.swapchain];
         let image_indices = [image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&signal_semaphores)
@@ -640,33 +626,34 @@ impl Gpu<'_> {
         };
 
         match present_result {
-            Err(err @ vk::Result::ERROR_OUT_OF_DATE_KHR) => return Err(Error::VulkanSwapchainOutOfDate(err)),
-            Err(err) => return Err(Error::VulkanQueuePresent(err)),
-            _ => {}
+            // TODO: Handle suboptimal surface after queue_present
+            Ok(_suboptimal_surface) => Ok(()),
+            Err(err @ vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(Error::VulkanSwapchainOutOfDate(err)),
+            Err(err) => Err(Error::VulkanQueuePresent(err)),
         }
-
-        Ok(())
     }
 
     #[profiling::function]
-    fn record_commmand_buffer(
+    fn record_command_buffer(
         &self,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
-        command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
-        canvas: &Canvas,
+        render_pass: &RenderPass,
         scene: &Scene,
         debug_value: u32,
-    ) -> Result<(), Error> {
-        let temp_arena = frame_index.get_arena(temp_arenas);
+    ) -> Result<vk::CommandBuffer, Error> {
+        let command_buffers = {
+            profiling::scope!("allocate command buffer");
+            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+                .command_pool(self.frame_local(frame_index).temp_command_pool)
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_buffer_count(1);
+            unsafe { self.device.allocate_command_buffers(&command_buffer_allocate_info) }.map_err(Error::VulkanCommandBuffersAllocation)?
+        };
+        let command_buffer = command_buffers[0];
 
-        unsafe {
-            profiling::scope!("reset command buffer");
-            self.device
-                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
-                .map_err(Error::VulkanResetCommandBuffer)?;
-        }
+        let temp_arena = frame_index.get_arena(temp_arenas);
 
         let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {
@@ -676,12 +663,12 @@ impl Gpu<'_> {
                 .map_err(Error::VulkanBeginCommandBuffer)?;
         }
 
-        let render_area = vk::Rect2D::builder().extent(canvas.extent).build();
+        let render_area = vk::Rect2D::builder().extent(render_pass.extent).build();
         let mut depth_clear_value = vk::ClearValue::default();
         depth_clear_value.depth_stencil.depth = 0.0;
         let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
-            .render_pass(canvas.final_render_pass)
+            .render_pass(render_pass.final_render_pass)
             .framebuffer(framebuffer)
             .render_area(render_area)
             .clear_values(&clear_colors);
@@ -714,7 +701,7 @@ impl Gpu<'_> {
 
             unsafe {
                 self.device
-                    .cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, canvas.pipelines[pipeline_idx])
+                    .cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, render_pass.pipelines[pipeline_idx])
             };
             let layout = self.descriptors.pipeline_layouts[pipeline_idx];
             let descriptor_sets = self.descriptors.descriptor_sets(self, frame_index, pipeline_idx);
@@ -789,7 +776,7 @@ impl Gpu<'_> {
                 .map_err(Error::VulkanEndCommandBuffer)?;
         }
 
-        Ok(())
+        Ok(command_buffer)
     }
 }
 

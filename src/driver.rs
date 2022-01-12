@@ -51,6 +51,7 @@ impl Driver {
         let mut layers = Vec::with_capacity(1);
         if cfg!(feature = "vulkan-validation") && is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
             layers.push(cstr!("VK_LAYER_KHRONOS_validation").as_ptr());
+            log::debug!("Instance layer (optional): VK_LAYER_KHRONOS_validation");
         }
 
         let mut extensions = ash_window::enumerate_required_extensions(window)

@@ -67,9 +67,30 @@ fn fallible_main() -> anyhow::Result<()> {
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         "framebuffer arena",
     )?;
-    let mut canvas = neonvk::Canvas::new(&gpu, None, &framebuffer_arena, width, height, false)?;
 
-    let loading_frame_index = gpu.wait_frame(&canvas)?;
+    let initial_extent = neonvk::vk::Extent2D::builder().width(width).height(height).build();
+    let mut swapchain = neonvk::Swapchain::new(
+        &driver.entry,
+        &driver.instance,
+        &gpu.device,
+        gpu.physical_device,
+        driver.surface,
+        neonvk::SwapchainSettings {
+            old_swapchain: None,
+            queue_family_indices: &gpu.swapchain_queue_families,
+            extent: initial_extent,
+            immediate_present: false,
+        },
+    )?;
+    let mut render_pass = neonvk::RenderPass::new(
+        &gpu.device,
+        &framebuffer_arena,
+        &swapchain,
+        &gpu.descriptors.pipeline_layouts,
+        initial_extent,
+    )?;
+
+    let loading_frame_index = gpu.wait_frame(&swapchain)?;
     loading_frame_index.get_arena_mut(&mut temp_arenas).reset();
     let camera = neonvk::Camera::default();
 
@@ -96,7 +117,15 @@ fn fallible_main() -> anyhow::Result<()> {
     drop(resources);
 
     // Get the first frame out of the way, to upload the meshes.
-    gpu.render_frame(&temp_arenas, loading_frame_index, &canvas, &camera, &neonvk::Scene::new(), 0)?;
+    gpu.render_frame(
+        &temp_arenas,
+        loading_frame_index,
+        &swapchain,
+        &render_pass,
+        &camera,
+        &neonvk::Scene::new(),
+        0,
+    )?;
 
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
@@ -146,8 +175,30 @@ fn fallible_main() -> anyhow::Result<()> {
         if size_changed {
             gpu.wait_idle()?;
             let (width, height) = window.vulkan_drawable_size();
+            let extent = neonvk::vk::Extent2D { width, height };
+            drop(render_pass);
+            drop(swapchain);
+            swapchain = neonvk::Swapchain::new(
+                &driver.entry,
+                &driver.instance,
+                &gpu.device,
+                gpu.physical_device,
+                driver.surface,
+                neonvk::SwapchainSettings {
+                    old_swapchain: None,
+                    queue_family_indices: &gpu.swapchain_queue_families,
+                    extent,
+                    immediate_present,
+                },
+            )?;
             framebuffer_arena.reset();
-            canvas = neonvk::Canvas::new(&gpu, Some(&canvas), &framebuffer_arena, width, height, immediate_present)?;
+            render_pass = neonvk::RenderPass::new(
+                &gpu.device,
+                &framebuffer_arena,
+                &swapchain,
+                &gpu.descriptors.pipeline_layouts,
+                extent,
+            )?;
             size_changed = false;
         }
 
@@ -156,9 +207,9 @@ fn fallible_main() -> anyhow::Result<()> {
             scene.queue(mesh, material, transform);
         }
 
-        let frame_index = gpu.wait_frame(&canvas)?;
+        let frame_index = gpu.wait_frame(&swapchain)?;
         frame_index.get_arena_mut(&mut temp_arenas).reset();
-        match gpu.render_frame(&temp_arenas, frame_index, &canvas, &camera, &scene, debug_value) {
+        match gpu.render_frame(&temp_arenas, frame_index, &swapchain, &render_pass, &camera, &scene, debug_value) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
@@ -194,8 +245,9 @@ fn fallible_main() -> anyhow::Result<()> {
     drop(temp_arenas);
     drop(sponza_model);
     drop(assets_arena);
-    drop(canvas);
+    drop(render_pass);
     drop(framebuffer_arena);
+    drop(swapchain);
     drop(gpu);
 
     Ok(())

@@ -39,10 +39,10 @@ pub enum Error {
     VulkanFramebufferCreation(#[source] vk::Result),
     #[error("could not create the command pool")]
     VulkanCommandPoolCreation(#[source] vk::Result),
+    #[error("could not reset the command pool")]
+    VulkanResetCommandPool(#[source] vk::Result),
     #[error("could not allocate the command buffers")]
     VulkanCommandBuffersAllocation(#[source] vk::Result),
-    #[error("could not reset the command buffer")]
-    VulkanResetCommandBuffer(#[source] vk::Result),
     #[error("could not begin command buffer recording")]
     VulkanBeginCommandBuffer(#[source] vk::Result),
     #[error("failed to record command buffer")]
