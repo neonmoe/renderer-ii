@@ -1,4 +1,4 @@
-use crate::arena::ImageAllocation;
+use crate::arena::{ImageAllocation, ImageView};
 use crate::{Error, FrameIndex, Gpu, VulkanArena};
 use ash::version::DeviceV1_0;
 use ash::vk;
@@ -95,13 +95,13 @@ fn to_snorm(format: vk::Format) -> vk::Format {
 /// compressed. The format reflects this.
 #[profiling::function]
 pub fn load_ktx<'a>(
-    gpu: &Gpu,
+    gpu: &'a Gpu,
     arena: &'a VulkanArena,
     temp_arenas: &[VulkanArena],
     frame_index: FrameIndex,
     bytes: &[u8],
     kind: TextureKind,
-) -> Result<(&'a ImageAllocation, vk::ImageView), Error> {
+) -> Result<(&'a ImageAllocation, &'a ImageView), Error> {
     let ktx::KtxData {
         width,
         height,
@@ -246,7 +246,7 @@ pub fn load_ktx<'a>(
             .format(format)
             .subresource_range(subresource_range);
 
-        unsafe { gpu.device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation)?
+        arena.create_image_view(&image_view_create_info)?
     };
 
     gpu.add_temp_buffer(frame_index, staging_buffer.buffer);

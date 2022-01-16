@@ -27,6 +27,10 @@ pub struct Swapchain<'a> {
     /// triple-buffering.
     pub queued_images: usize,
 
+    // TODO: Make simple new-drop wrappers for the Vulkan objects used
+    // in Swapchain and RenderPass, then remove their Drop
+    // impls. Seems that the lifetime issues are caused by the manual
+    // Drop impl.
     pub swapchain: vk::SwapchainKHR,
     pub swapchain_image_views: Vec<vk::ImageView>,
 

@@ -3,7 +3,7 @@ use crate::{Material, Pipeline};
 use glam::Mat4;
 use std::collections::HashMap;
 
-type MeshMap<'a> = HashMap<(&'a Mesh<'a>, &'a Material), Vec<Mat4>>;
+type MeshMap<'a> = HashMap<(&'a Mesh<'a>, &'a Material<'a>), Vec<Mat4>>;
 type PipelineMap<'a> = HashMap<Pipeline, MeshMap<'a>>;
 
 /// A container for the meshes rendered during a particular frame, and

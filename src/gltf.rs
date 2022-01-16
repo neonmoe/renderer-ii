@@ -1,9 +1,7 @@
-use crate::arena::{ImageAllocation, VulkanArena};
+use crate::arena::{ImageAllocation, ImageView, VulkanArena};
 use crate::image_loading::{self, TextureKind};
 use crate::mesh::Mesh;
 use crate::{Error, FrameIndex, Gpu, Material, Pipeline};
-use ash::version::DeviceV1_0;
-use ash::vk;
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -29,20 +27,10 @@ struct Node {
 }
 
 pub struct Gltf<'arena> {
-    arena: &'arena VulkanArena<'arena>,
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
     meshes: Vec<Vec<(Mesh<'arena>, usize)>>,
-    materials: Vec<Material>,
-    images: Vec<(&'arena ImageAllocation, vk::ImageView)>,
-}
-
-impl Drop for Gltf<'_> {
-    fn drop(&mut self) {
-        for (_, image_view) in &self.images {
-            unsafe { self.arena.device.destroy_image_view(*image_view, None) };
-        }
-    }
+    materials: Vec<Material<'arena>>,
 }
 
 impl Gltf<'_> {
@@ -52,7 +40,7 @@ impl Gltf<'_> {
     /// relative to `directory`.
     #[profiling::function]
     pub fn from_glb<'a>(
-        gpu: &Gpu,
+        gpu: &'a Gpu,
         main_arena: &'a VulkanArena,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
@@ -126,7 +114,7 @@ impl Gltf<'_> {
     /// relative to `directory`.
     #[profiling::function]
     pub fn from_gltf<'a>(
-        gpu: &Gpu,
+        gpu: &'a Gpu,
         main_arena: &'a VulkanArena,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
@@ -144,7 +132,7 @@ impl Gltf<'_> {
 
 #[profiling::function]
 fn create_gltf<'a>(
-    gpu: &Gpu,
+    gpu: &'a Gpu,
     arena: &'a VulkanArena,
     temp_arenas: &[VulkanArena],
     frame_index: FrameIndex,
@@ -317,7 +305,9 @@ fn create_gltf<'a>(
         gltf.materials
             .iter()
             .map(|mat| {
-                let mktex = |images: &[(&ImageAllocation, vk::ImageView)], texture_info: &gltf_json::TextureInfo| {
+                let mktex = |images: &[(&'a ImageAllocation, &'a ImageView)],
+                             texture_info: &gltf_json::TextureInfo|
+                 -> Option<Result<&'a ImageView, Error>> {
                     let texture = match gltf.textures.get(texture_info.index) {
                         Some(tex) => tex,
                         None => return Some(Err(Error::GltfOob("texture"))),
@@ -327,7 +317,7 @@ fn create_gltf<'a>(
                         Some((_, image_view)) => image_view,
                         None => return Some(Err(Error::GltfOob("image"))),
                     };
-                    Some(Ok(*image_view))
+                    Some(Ok(image_view))
                 };
 
                 macro_rules! handle_optional_result {
@@ -372,12 +362,10 @@ fn create_gltf<'a>(
     }
 
     Ok(Gltf {
-        arena,
         nodes,
         root_nodes,
         materials,
         meshes,
-        images,
     })
 }
 

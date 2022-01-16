@@ -10,7 +10,7 @@ mod buffer;
 mod simple_wrappers;
 
 pub use buffer::{BufferAllocation, WritableBufferAllocation};
-pub use simple_wrappers::ImageAllocation;
+pub use simple_wrappers::{ImageAllocation, ImageView};
 
 /// An arena of Vulkan resources.
 ///
@@ -50,6 +50,7 @@ pub struct VulkanArena<'device> {
     // Vulkan resource holders:
     buffers: Arena<BufferAllocation>,
     images: Arena<ImageAllocation>,
+    image_views: Arena<ImageView>,
 }
 
 impl Drop for VulkanArena<'_> {
@@ -93,6 +94,7 @@ impl VulkanArena<'_> {
             debug_identifier,
             buffers: Arena::new(),
             images: Arena::new(),
+            image_views: Arena::new(),
         };
 
         #[cfg(feature = "vulkan-validation")]
@@ -182,6 +184,14 @@ impl VulkanArena<'_> {
         Ok(self.images.alloc(ImageAllocation { image }))
     }
 
+    /// Creates an image view that lives as long as the Arena (or
+    /// until [Arena::reset], if it is ever called), meant for
+    /// creating image views from images allocated by this Arena.
+    pub fn create_image_view(&self, create_info: &vk::ImageViewCreateInfo) -> Result<&ImageView, Error> {
+        let image_view = unsafe { self.device.create_image_view(create_info, None) }.map_err(Error::VulkanImageViewCreation)?;
+        Ok(self.image_views.alloc(ImageView { image_view }))
+    }
+
     pub fn reset(&mut self) {
         for allocation in self.buffers.iter_mut() {
             unsafe { self.device.destroy_buffer(allocation.buffer, None) };
@@ -191,6 +201,10 @@ impl VulkanArena<'_> {
             unsafe { self.device.destroy_image(allocation.image, None) };
         }
         self.images = Arena::new();
+        for image_view in self.image_views.iter_mut() {
+            unsafe { self.device.destroy_image_view(image_view.image_view, None) };
+        }
+        self.image_views = Arena::new();
         if self.flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE) {
             self.fill_uninitialized_memory(self.offset.get());
         }

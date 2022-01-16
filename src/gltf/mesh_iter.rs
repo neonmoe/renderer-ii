@@ -19,7 +19,7 @@ impl MeshIter<'_> {
 }
 
 impl<'a> Iterator for MeshIter<'a> {
-    type Item = (&'a Mesh<'a>, &'a Material, Mat4);
+    type Item = (&'a Mesh<'a>, &'a Material<'a>, Mat4);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.current_sub_iter.as_mut().and_then(Iterator::next) {
@@ -53,7 +53,7 @@ struct InnerMeshIter<'a> {
 }
 
 impl<'a> Iterator for InnerMeshIter<'a> {
-    type Item = (&'a Mesh<'a>, &'a Material, Mat4);
+    type Item = (&'a Mesh<'a>, &'a Material<'a>, Mat4);
 
     fn next(&mut self) -> Option<Self::Item> {
         let meshes = self.gltf.meshes.get(self.mesh_index)?;
