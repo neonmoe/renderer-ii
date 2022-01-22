@@ -1,4 +1,6 @@
+use crate::arena::ImageAllocation;
 use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
+use crate::vulkan_raii::{VkFramebuffer, VkImageView, VkPipelines, VkRenderPass};
 use crate::{Error, Swapchain, VulkanArena};
 use ash::version::DeviceV1_0;
 use ash::vk;
@@ -15,13 +17,17 @@ const SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::TYPE_8;
 /// recreating the RenderPass, the swapchain can be retained.
 pub struct RenderPass<'a> {
     pub extent: vk::Extent2D,
-    pub framebuffers: Vec<vk::Framebuffer>,
-    pub final_render_pass: vk::RenderPass,
-    pub pipelines: Vec<vk::Pipeline>,
 
-    device: &'a Device,
-    color_image_views: Vec<vk::ImageView>,
-    depth_image_views: Vec<vk::ImageView>,
+    // NOTE: Load-bearing field order ahead. Pipeline relies on
+    // RenderPass which relies on the Framebuffers which rely on the
+    // ImageViews.
+    pub pipelines: VkPipelines<'a>,
+    pub final_render_pass: VkRenderPass<'a>,
+    pub framebuffers: Vec<VkFramebuffer<'a>>,
+    #[allow(dead_code)]
+    color_image_views: Vec<VkImageView<'a>>,
+    #[allow(dead_code)]
+    depth_image_views: Vec<VkImageView<'a>>,
 
     #[allow(dead_code)]
     /// Owns the swapchain image views used in the render pass.
@@ -30,27 +36,6 @@ pub struct RenderPass<'a> {
     /// Owns the backing memory for the images used in the
     /// framebuffers and image views.
     framebuffer_arena: &'a VulkanArena<'a>,
-}
-
-impl Drop for RenderPass<'_> {
-    fn drop(&mut self) {
-        for &framebuffer in &self.framebuffers {
-            profiling::scope!("destroy framebuffer");
-            unsafe { self.device.destroy_framebuffer(framebuffer, None) };
-        }
-        for &pipeline in &self.pipelines {
-            profiling::scope!("destroy pipeline");
-            unsafe { self.device.destroy_pipeline(pipeline, None) };
-        }
-        for &image_view in self.color_image_views.iter().chain(self.depth_image_views.iter()) {
-            profiling::scope!("destroy render target image view");
-            unsafe { self.device.destroy_image_view(image_view, None) };
-        }
-        {
-            profiling::scope!("destroy render pass");
-            unsafe { self.device.destroy_render_pass(self.final_render_pass, None) };
-        }
-    }
 }
 
 impl RenderPass<'_> {
@@ -64,7 +49,7 @@ impl RenderPass<'_> {
         profiling::scope!("new_renderpass");
 
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
-            move |image: vk::Image| -> Result<vk::ImageView, Error> {
+            move |image: &&'a ImageAllocation| -> Result<VkImageView, Error> {
                 let subresource_range = vk::ImageSubresourceRange {
                     aspect_mask,
                     base_mip_level: 0,
@@ -73,13 +58,13 @@ impl RenderPass<'_> {
                     layer_count: 1,
                 };
                 let image_view_create_info = vk::ImageViewCreateInfo {
-                    image,
+                    image: image.image,
                     view_type: vk::ImageViewType::TYPE_2D,
                     format,
                     subresource_range,
                     ..Default::default()
                 };
-                unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanSwapchainImageViewCreation)
+                unsafe { VkImageView::new(device, Some(image), &image_view_create_info) }
             }
         };
 
@@ -105,7 +90,6 @@ impl RenderPass<'_> {
             .collect::<Result<Vec<_>, Error>>()?;
         let color_image_views = color_images
             .iter()
-            .map(|image_allocation| image_allocation.image)
             .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain.format))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -115,26 +99,25 @@ impl RenderPass<'_> {
             .collect::<Result<Vec<_>, Error>>()?;
         let depth_image_views = depth_images
             .iter()
-            .map(|image_allocation| image_allocation.image)
             .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
         let final_render_pass = create_render_pass(device, swapchain.format)?;
-        let pipelines = create_pipelines(device, final_render_pass, extent, pipeline_layouts, &PIPELINE_PARAMETERS)?;
+        let pipelines = create_pipelines(device, *final_render_pass, extent, pipeline_layouts, &PIPELINE_PARAMETERS)?;
 
         let framebuffers = color_image_views
             .iter()
             .zip(depth_image_views.iter())
             .zip(swapchain.swapchain_image_views.iter())
-            .map(|((&color_image_view, &depth_image_view), &swapchain_image_view)| {
-                let attachments = [color_image_view, depth_image_view, swapchain_image_view];
+            .map(|((color_image_view, depth_image_view), swapchain_image_view)| {
+                let attachments = [**color_image_view, **depth_image_view, **swapchain_image_view];
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
-                    .render_pass(final_render_pass)
+                    .render_pass(*final_render_pass)
                     .attachments(&attachments)
                     .width(extent.width)
                     .height(extent.height)
                     .layers(1);
-                unsafe { device.create_framebuffer(&framebuffer_create_info, None) }.map_err(Error::VulkanFramebufferCreation)
+                unsafe { VkFramebuffer::new(device, &framebuffer_create_info) }
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -143,7 +126,6 @@ impl RenderPass<'_> {
             framebuffers,
             final_render_pass,
             pipelines,
-            device,
             swapchain,
             framebuffer_arena,
             color_image_views,
@@ -153,7 +135,7 @@ impl RenderPass<'_> {
 }
 
 #[profiling::function]
-fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderPass, Error> {
+fn create_render_pass<'a>(device: &'a Device, format: vk::Format) -> Result<VkRenderPass<'a>, Error> {
     let color_attachment = vk::AttachmentDescription::builder()
         .format(format)
         .samples(SAMPLE_COUNT)
@@ -202,17 +184,17 @@ fn create_render_pass(device: &Device, format: vk::Format) -> Result<vk::RenderP
     let subpasses = [subpass.build()];
 
     let render_pass_create_info = vk::RenderPassCreateInfo::builder().attachments(&attachments).subpasses(&subpasses);
-    unsafe { device.create_render_pass(&render_pass_create_info, None) }.map_err(Error::VulkanRenderPassCreation)
+    unsafe { VkRenderPass::new(device, &render_pass_create_info) }
 }
 
 #[profiling::function]
-fn create_pipelines(
-    device: &Device,
+fn create_pipelines<'a>(
+    device: &'a Device,
     render_pass: vk::RenderPass,
     extent: vk::Extent2D,
     pipeline_layouts: &[vk::PipelineLayout],
     pipelines_params: &[PipelineParameters],
-) -> Result<Vec<vk::Pipeline>, Error> {
+) -> Result<VkPipelines<'a>, Error> {
     let mut all_shader_modules = Vec::with_capacity(pipelines_params.len() * 2);
     let mut create_shader_module = |spirv: &'static [u32]| -> Result<vk::ShaderModule, Error> {
         let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
@@ -307,11 +289,7 @@ fn create_pipelines(
                     .build()
             })
             .collect::<Vec<vk::GraphicsPipelineCreateInfo>>();
-        unsafe {
-            device
-                .create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_infos, None)
-                .map_err(|(_, err)| Error::VulkanGraphicsPipelineCreation(err))
-        }?
+        unsafe { VkPipelines::new(device, &pipeline_create_infos) }?
     };
 
     for shader_module in all_shader_modules {

@@ -512,7 +512,7 @@ impl Gpu<'_> {
         let (image_index, _) = unsafe {
             profiling::scope!("acquire next image");
             self.swapchain_ext
-                .acquire_next_image(swapchain.swapchain, u64::MAX, vk::Semaphore::null(), self.frame_start_fence)
+                .acquire_next_image(*swapchain.swapchain, u64::MAX, vk::Semaphore::null(), self.frame_start_fence)
                 .map_err(Error::VulkanAcquireImage)
         }?;
         let frame_index = FrameIndex::new(image_index);
@@ -588,8 +588,8 @@ impl Gpu<'_> {
         camera.update(self, render_pass, temp_arenas, frame_index)?;
 
         let image_index = self.image_index(frame_index);
-        let framebuffer = render_pass.framebuffers[image_index];
-        let command_buffer = self.record_command_buffer(temp_arenas, frame_index, framebuffer, render_pass, scene, debug_value)?;
+        let framebuffer = &render_pass.framebuffers[image_index];
+        let command_buffer = self.record_command_buffer(temp_arenas, frame_index, **framebuffer, render_pass, scene, debug_value)?;
 
         let render_wait_semaphores = self.render_wait_semaphores.1.try_iter().collect::<Vec<WaitSemaphore>>();
         let mut wait_semaphores = Vec::with_capacity(render_wait_semaphores.len());
@@ -614,7 +614,7 @@ impl Gpu<'_> {
                 .map_err(Error::VulkanQueueSubmit)
         }?;
 
-        let swapchains = [swapchain.swapchain];
+        let swapchains = [*swapchain.swapchain];
         let image_indices = [image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&signal_semaphores)
@@ -668,7 +668,7 @@ impl Gpu<'_> {
         depth_clear_value.depth_stencil.depth = 0.0;
         let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
-            .render_pass(render_pass.final_render_pass)
+            .render_pass(*render_pass.final_render_pass)
             .framebuffer(framebuffer)
             .render_area(render_area)
             .clear_values(&clear_colors);

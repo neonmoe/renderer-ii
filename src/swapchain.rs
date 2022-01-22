@@ -1,6 +1,6 @@
+use crate::vulkan_raii::{VkImageView, VkSwapchain};
 use crate::Error;
 use ash::extensions::khr;
-use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::{Device, Entry, Instance};
 
@@ -27,28 +27,10 @@ pub struct Swapchain<'a> {
     /// triple-buffering.
     pub queued_images: usize,
 
-    // TODO: Make simple new-drop wrappers for the Vulkan objects used
-    // in Swapchain and RenderPass, then remove their Drop
-    // impls. Seems that the lifetime issues are caused by the manual
-    // Drop impl.
-    pub swapchain: vk::SwapchainKHR,
-    pub swapchain_image_views: Vec<vk::ImageView>,
-
-    device: &'a Device,
-    swapchain_ext: khr::Swapchain,
-}
-
-impl Drop for Swapchain<'_> {
-    fn drop(&mut self) {
-        for &image_view in &self.swapchain_image_views {
-            profiling::scope!("destroy swapchain image view");
-            unsafe { self.device.destroy_image_view(image_view, None) };
-        }
-        {
-            profiling::scope!("destroy swapchain");
-            unsafe { self.swapchain_ext.destroy_swapchain(self.swapchain, None) };
-        }
-    }
+    // NOTE: Load-bearing field order ahead. The image views should be
+    // dropped before the swapchain is destroyed.
+    pub swapchain_image_views: Vec<VkImageView<'a>>,
+    pub swapchain: VkSwapchain<'a>,
 }
 
 impl Swapchain<'_> {
@@ -65,7 +47,6 @@ impl Swapchain<'_> {
         profiling::scope!("new_swapchain");
 
         let surface_ext = khr::Surface::new(entry, instance);
-        let swapchain_ext = khr::Swapchain::new(instance, device);
 
         // NOTE: The following combinations should be presented as a config option:
         // - FIFO + 2 (traditional double-buffered vsync)
@@ -153,13 +134,14 @@ impl Swapchain<'_> {
             swapchain_create_info = swapchain_create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
         }
         if let Some(old_swapchain) = settings.old_swapchain {
-            swapchain_create_info = swapchain_create_info.old_swapchain(old_swapchain.swapchain);
+            swapchain_create_info = swapchain_create_info.old_swapchain(*old_swapchain.swapchain);
         }
-        let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }.map_err(Error::VulkanSwapchainCreation)?;
+        let swapchain = unsafe { VkSwapchain::new(instance, device, &swapchain_create_info) }?;
 
         // TODO: Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
-        let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
+        let swapchain_ext = khr::Swapchain::new(instance, device);
+        let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(*swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
         let queued_images = swapchain_images.len();
         let swapchain_image_views = swapchain_images
             .into_iter()
@@ -178,7 +160,7 @@ impl Swapchain<'_> {
                     subresource_range,
                     ..Default::default()
                 };
-                unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanSwapchainImageViewCreation)
+                unsafe { VkImageView::new(device, None, &image_view_create_info) }
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -188,8 +170,6 @@ impl Swapchain<'_> {
             queued_images,
             swapchain,
             swapchain_image_views,
-            device,
-            swapchain_ext,
         })
     }
 }

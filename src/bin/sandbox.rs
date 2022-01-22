@@ -177,7 +177,6 @@ fn fallible_main() -> anyhow::Result<()> {
             let (width, height) = window.vulkan_drawable_size();
             let extent = neonvk::vk::Extent2D { width, height };
             drop(render_pass);
-            drop(swapchain);
             swapchain = neonvk::Swapchain::new(
                 &driver.entry,
                 &driver.instance,
