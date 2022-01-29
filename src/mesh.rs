@@ -79,10 +79,7 @@ impl Mesh {
 
         {
             profiling::scope!("write staging buffer");
-            if let Err(err) = unsafe { staging_buffer.write(temp_arena, data.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
-                staging_buffer.clean_up(temp_arena);
-                return Err(err);
-            }
+            unsafe { staging_buffer.write(data.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
         }
 
         let mesh_buffer = {
@@ -97,28 +94,16 @@ impl Mesh {
                         | vk::BufferUsageFlags::UNIFORM_BUFFER,
                 )
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            match arena.create_buffer(*buffer_create_info) {
-                Ok(buffer_allocation) => buffer_allocation,
-                Err(err) => {
-                    staging_buffer.clean_up(temp_arena);
-                    return Err(err);
-                }
-            }
+            arena.create_buffer(*buffer_create_info)?
         };
 
-        let upload_result = gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::VERTEX_INPUT, |command_buffer| {
+        gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::VERTEX_INPUT, |command_buffer| {
             profiling::scope!("vkCmdCopyBuffer");
-            let src = staging_buffer.buffer;
-            let dst = mesh_buffer.buffer;
+            let src = staging_buffer.buffer.inner;
+            let dst = mesh_buffer.buffer.inner;
             let copy_regions = [vk::BufferCopy::builder().size(total_size as vk::DeviceSize).build()];
             unsafe { gpu.device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
-        });
-
-        if let Err(err) = upload_result {
-            staging_buffer.clean_up(temp_arena);
-            mesh_buffer.clean_up(arena);
-            return Err(err);
-        }
+        })?;
 
         gpu.add_temp_buffer(frame_index, staging_buffer.buffer);
 
@@ -133,7 +118,7 @@ impl Mesh {
     }
 
     pub(crate) fn buffer(&self) -> vk::Buffer {
-        self.mesh_buffer.buffer
+        self.mesh_buffer.buffer.inner
     }
 }
 

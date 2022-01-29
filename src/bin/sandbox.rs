@@ -3,6 +3,7 @@ use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use logger::Logger;
@@ -43,8 +44,9 @@ fn fallible_main() -> anyhow::Result<()> {
         .build()?;
     let (width, height) = window.vulkan_drawable_size();
 
-    let driver = neonvk::Driver::new(&window)?;
+    let driver = Rc::new(neonvk::Driver::new(&window)?);
     let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
+    let gpu = Rc::new(gpu);
     let temp_arenas = (0..gpu.temp_arena_count())
         .map(|_| {
             neonvk::VulkanArena::new(
@@ -61,7 +63,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut canvas = neonvk::Canvas::new(&gpu, None, width, height, false)?;
 
     let loading_frame_index = gpu.wait_frame(&canvas)?;
-    loading_frame_index.get_arena(&temp_arenas).reset();
+    loading_frame_index.get_arena(&temp_arenas).reset().unwrap();
     let camera = neonvk::Camera::default();
 
     let assets_arena = neonvk::VulkanArena::new(
@@ -147,7 +149,7 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;
-        frame_index.get_arena(&temp_arenas).reset();
+        frame_index.get_arena(&temp_arenas).reset().unwrap();
         match gpu.render_frame(&temp_arenas, frame_index, &canvas, &camera, &scene, debug_value) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}

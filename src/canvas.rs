@@ -1,9 +1,11 @@
-use crate::arena::{ImageAllocation, VulkanArena};
+use crate::arena::VulkanArena;
 use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
+use crate::vulkan_raii::{Image, ImageView};
 use crate::{Error, Gpu};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
 use ash::{vk, Device};
+use std::rc::Rc;
 
 pub const SWAPCHAIN_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
 
@@ -24,27 +26,31 @@ struct SwapchainSettings {
 ///
 /// This struct has the concrete rendering objects, like the render
 /// passes, framebuffers, command buffers and so on.
-pub struct Canvas<'a> {
+pub struct Canvas {
     /// Held by [Canvas] to ensure that the swapchain and command
     /// buffers are dropped before the device.
-    pub gpu: &'a Gpu<'a>,
-    framebuffer_arena: VulkanArena<'a>,
+    pub gpu: Rc<Gpu>,
+    #[allow(dead_code)]
+    framebuffer_arena: VulkanArena,
 
     pub extent: vk::Extent2D,
 
     pub(crate) swapchain: vk::SwapchainKHR,
-    swapchain_image_views: Vec<vk::ImageView>,
-    color_images: Vec<ImageAllocation>,
-    color_image_views: Vec<vk::ImageView>,
-    depth_images: Vec<ImageAllocation>,
-    depth_image_views: Vec<vk::ImageView>,
+    // TODO: Add refcounted wrappers for the rest of these
+    // (so that the imageviews can be owned by them)
+    #[allow(dead_code)]
+    swapchain_image_views: Vec<ImageView>,
+    #[allow(dead_code)]
+    color_image_views: Vec<ImageView>,
+    #[allow(dead_code)]
+    depth_image_views: Vec<ImageView>,
     pub(crate) framebuffers: Vec<vk::Framebuffer>,
     pub(crate) final_render_pass: vk::RenderPass,
     pub(crate) pipelines: Vec<vk::Pipeline>,
     pub(crate) command_buffers: Vec<vk::CommandBuffer>,
 }
 
-impl Drop for Canvas<'_> {
+impl Drop for Canvas {
     #[profiling::function]
     fn drop(&mut self) {
         let device = &self.gpu.device;
@@ -69,31 +75,6 @@ impl Drop for Canvas<'_> {
             unsafe { device.destroy_framebuffer(framebuffer, None) };
         }
 
-        for &image_view in &self.depth_image_views {
-            profiling::scope!("destroy depth image view");
-            unsafe { device.destroy_image_view(image_view, None) };
-        }
-
-        for &image_view in &self.color_image_views {
-            profiling::scope!("destroy main render target image view");
-            unsafe { device.destroy_image_view(image_view, None) };
-        }
-
-        for &image_view in &self.swapchain_image_views {
-            profiling::scope!("destroy swapchain image view");
-            unsafe { device.destroy_image_view(image_view, None) };
-        }
-
-        for image_allocation in &self.depth_images {
-            profiling::scope!("destroy depth image");
-            image_allocation.clean_up(&self.framebuffer_arena);
-        }
-
-        for image_allocation in &self.color_images {
-            profiling::scope!("destroy main render target image");
-            image_allocation.clean_up(&self.framebuffer_arena);
-        }
-
         unsafe {
             profiling::scope!("destroy swapchain");
             self.gpu.swapchain_ext.destroy_swapchain(self.swapchain, None)
@@ -101,7 +82,7 @@ impl Drop for Canvas<'_> {
     }
 }
 
-impl Canvas<'_> {
+impl Canvas {
     /// Creates a new Canvas. Should be recreated when the window size
     /// changes.
     ///
@@ -114,13 +95,13 @@ impl Canvas<'_> {
     /// used. Otherwise, FIFO. FIFO only releases frames after they've
     /// been displayed on screen, so it caps the fps to the screen's
     /// refresh rate.
-    pub fn new<'a>(
-        gpu: &'a Gpu,
+    pub fn new(
+        gpu: &Rc<Gpu>,
         old_canvas: Option<&Canvas>,
         fallback_width: u32,
         fallback_height: u32,
         immediate_present: bool,
-    ) -> Result<Canvas<'a>, Error> {
+    ) -> Result<Canvas, Error> {
         profiling::scope!("new_canvas");
         let device = &gpu.device;
         let swapchain_ext = &gpu.swapchain_ext;
@@ -152,7 +133,7 @@ impl Canvas<'_> {
         )?;
 
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
-            move |image: vk::Image| -> Result<vk::ImageView, Error> {
+            move |image: Rc<Image>| -> Result<ImageView, Error> {
                 let subresource_range = vk::ImageSubresourceRange {
                     aspect_mask,
                     base_mip_level: 0,
@@ -161,13 +142,19 @@ impl Canvas<'_> {
                     layer_count: 1,
                 };
                 let image_view_create_info = vk::ImageViewCreateInfo {
-                    image,
+                    image: image.inner,
                     view_type: vk::ImageViewType::TYPE_2D,
                     format,
                     subresource_range,
                     ..Default::default()
                 };
-                unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanSwapchainImageViewCreation)
+                let image_view =
+                    unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanSwapchainImageViewCreation)?;
+                Ok(ImageView {
+                    inner: image_view,
+                    device: device.clone(),
+                    parent_image: image,
+                })
             }
         };
 
@@ -185,7 +172,7 @@ impl Canvas<'_> {
                 .samples(SAMPLE_COUNT)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(usage);
-            framebuffer_arena.create_image(*image_create_info)
+            Ok(Rc::new(framebuffer_arena.create_image(*image_create_info)?))
         };
 
         // TODO: Add another set of images to render to, to allow for post processing
@@ -193,6 +180,13 @@ impl Canvas<'_> {
         let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
         let swapchain_image_views = swapchain_images
             .into_iter()
+            .map(|image| {
+                Rc::new(Image {
+                    inner: image,
+                    device: device.clone(),
+                    memory: None,
+                })
+            })
             .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain_format))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -200,8 +194,7 @@ impl Canvas<'_> {
             .map(|_| create_image(SWAPCHAIN_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT))
             .collect::<Result<Vec<_>, Error>>()?;
         let color_image_views = color_images
-            .iter()
-            .map(|image_allocation| image_allocation.image)
+            .into_iter()
             .map(create_image_view(vk::ImageAspectFlags::COLOR, SWAPCHAIN_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -209,8 +202,7 @@ impl Canvas<'_> {
             .map(|_| create_image(DEPTH_FORMAT, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT))
             .collect::<Result<Vec<_>, Error>>()?;
         let depth_image_views = depth_images
-            .iter()
-            .map(|image_allocation| image_allocation.image)
+            .into_iter()
             .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -237,8 +229,8 @@ impl Canvas<'_> {
             .iter()
             .zip(depth_image_views.iter())
             .zip(swapchain_image_views.iter())
-            .map(|((&color_image_view, &depth_image_view), &swapchain_image_view)| {
-                let attachments = [color_image_view, depth_image_view, swapchain_image_view];
+            .map(|((color_image_view, depth_image_view), swapchain_image_view)| {
+                let attachments = [color_image_view.inner, depth_image_view.inner, swapchain_image_view.inner];
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(final_render_pass)
                     .attachments(&attachments)
@@ -250,14 +242,12 @@ impl Canvas<'_> {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Canvas {
-            gpu,
+            gpu: gpu.clone(),
             framebuffer_arena,
             extent,
             swapchain,
             swapchain_image_views,
-            color_images,
             color_image_views,
-            depth_images,
             depth_image_views,
             framebuffers,
             final_render_pass,

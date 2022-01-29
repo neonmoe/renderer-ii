@@ -142,4 +142,6 @@ pub enum Error {
         total: vk::DeviceSize,
         required: vk::DeviceSize,
     },
+    #[error("tried to reset arena while some resources allocated from it are still in use")]
+    ArenaNotResettable,
 }

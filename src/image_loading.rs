@@ -1,7 +1,8 @@
-use crate::arena::ImageAllocation;
+use crate::vulkan_raii::ImageView;
 use crate::{Error, FrameIndex, Gpu, VulkanArena};
 use ash::version::DeviceV1_0;
 use ash::vk;
+use std::rc::Rc;
 
 mod ktx;
 
@@ -101,7 +102,7 @@ pub fn load_ktx(
     frame_index: FrameIndex,
     bytes: &[u8],
     kind: TextureKind,
-) -> Result<(ImageAllocation, vk::ImageView), Error> {
+) -> Result<ImageView, Error> {
     let ktx::KtxData {
         width,
         height,
@@ -125,10 +126,7 @@ pub fn load_ktx(
 
     {
         profiling::scope!("write to staging buffer");
-        if let Err(err) = unsafe { staging_buffer.write(temp_arena, pixels.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
-            staging_buffer.clean_up(temp_arena);
-            return Err(err);
-        }
+        unsafe { staging_buffer.write(pixels.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
     }
 
     let image_allocation = {
@@ -147,7 +145,7 @@ pub fn load_ktx(
         arena.create_image(*image_info)?
     };
 
-    let upload_result = gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |command_buffer| {
+    gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |command_buffer| {
         let mut current_mip_level_extent = extent;
         for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
             profiling::scope!("record vkCmdCopyBufferToImage for mip #{}", mip_level);
@@ -163,7 +161,7 @@ pub fn load_ktx(
                 .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .image(image_allocation.image)
+                .image(image_allocation.inner)
                 .subresource_range(subresource_range)
                 .src_access_mask(vk::AccessFlags::empty())
                 .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
@@ -197,8 +195,8 @@ pub fn load_ktx(
             unsafe {
                 gpu.device.cmd_copy_buffer_to_image(
                     command_buffer,
-                    staging_buffer.buffer,
-                    image_allocation.image,
+                    staging_buffer.buffer.inner,
+                    image_allocation.inner,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &[image_copy_region],
                 );
@@ -218,7 +216,7 @@ pub fn load_ktx(
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .image(image_allocation.image)
+                .image(image_allocation.inner)
                 .subresource_range(subresource_range)
                 .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ)
@@ -235,13 +233,7 @@ pub fn load_ktx(
                 );
             }
         }
-    });
-
-    if let Err(err) = upload_result {
-        staging_buffer.clean_up(temp_arena);
-        image_allocation.clean_up(arena);
-        return Err(err);
-    }
+    })?;
 
     let image_view = {
         let subresource_range = vk::ImageSubresourceRange::builder()
@@ -252,22 +244,20 @@ pub fn load_ktx(
             .layer_count(1)
             .build();
         let image_view_create_info = vk::ImageViewCreateInfo::builder()
-            .image(image_allocation.image)
+            .image(image_allocation.inner)
             .view_type(vk::ImageViewType::TYPE_2D)
             .format(format)
             .subresource_range(subresource_range);
 
-        match unsafe { gpu.device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation) {
-            Ok(image_view) => image_view,
-            Err(err) => {
-                staging_buffer.clean_up(temp_arena);
-                image_allocation.clean_up(arena);
-                return Err(err);
-            }
+        let image_view = unsafe { gpu.device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation)?;
+        ImageView {
+            inner: image_view,
+            device: gpu.device.clone(),
+            parent_image: Rc::new(image_allocation),
         }
     };
 
     gpu.add_temp_buffer(frame_index, staging_buffer.buffer);
 
-    Ok((image_allocation, image_view))
+    Ok(image_view)
 }

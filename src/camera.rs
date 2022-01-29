@@ -53,15 +53,12 @@ impl Camera {
         {
             profiling::scope!("write uniform buffer");
             let src = &[GlobalTransforms::new(canvas)];
-            if let Err(err) = unsafe { buffer_allocation.write(temp_arena, src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
-                buffer_allocation.clean_up(temp_arena);
-                return Err(err);
-            }
+            unsafe { buffer_allocation.write(src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
         }
 
-        gpu.add_temp_buffer(frame_index, buffer_allocation.buffer);
         gpu.descriptors
-            .set_uniform_buffer(gpu, frame_index, Pipeline::Default, 0, 0, buffer_allocation.buffer);
+            .set_uniform_buffer(gpu, frame_index, Pipeline::Default, 0, 0, buffer_allocation.buffer.inner);
+        gpu.add_temp_buffer(frame_index, buffer_allocation.buffer);
         Ok(())
     }
 }

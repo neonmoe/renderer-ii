@@ -1,5 +1,7 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
+use crate::vulkan_raii::Buffer;
+use crate::vulkan_raii::ImageView;
 use crate::{Camera, Canvas, Driver, Error, Scene, VulkanArena};
 use ash::extensions::{ext, khr};
 use ash::version::{DeviceV1_0, InstanceV1_0};
@@ -8,6 +10,7 @@ use ash::{vk, Device, Instance};
 use glam::Mat4;
 use std::ffi::CStr;
 use std::mem;
+use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -23,7 +26,7 @@ impl FrameIndex {
         FrameIndex { index }
     }
 
-    pub fn get_arena<'a>(self, arenas: &'a [VulkanArena]) -> &'a VulkanArena<'a> {
+    pub fn get_arena(self, arenas: &[VulkanArena]) -> &VulkanArena {
         &arenas[self.index as usize]
     }
 }
@@ -51,7 +54,7 @@ struct FrameLocal {
     frame_end_fence: vk::Fence,
     temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
     temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
-    temp_buffers: (Sender<vk::Buffer>, Receiver<vk::Buffer>),
+    temp_buffers: (Sender<Buffer>, Receiver<Buffer>),
     // TODO: Add per-frame rendering command pools which get reset as pools intead of just resetting the individual command buffers
     // Creating many buffers (which should be cleaned up after) will be needed for multithreaded draw submission too
 }
@@ -64,16 +67,16 @@ pub(crate) struct TextureIndex(u32);
 /// Each instance of [Gpu] contains a handle to a single physical
 /// device in Vulkan terms, i.e. a GPU, and everything else is built
 /// off of that.
-pub struct Gpu<'a> {
+pub struct Gpu {
     /// Held by [Gpu] to ensure that the devices are dropped before
     /// the instance.
-    pub driver: &'a Driver,
+    pub driver: Rc<Driver>,
 
     pub(crate) surface_ext: khr::Surface,
     pub(crate) swapchain_ext: khr::Swapchain,
 
     pub physical_device: vk::PhysicalDevice,
-    pub device: Device,
+    pub device: Rc<Device>,
     pub(crate) command_pool: vk::CommandPool,
 
     pub(crate) graphics_family_index: u32,
@@ -89,7 +92,7 @@ pub struct Gpu<'a> {
     render_wait_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
 }
 
-impl Drop for Gpu<'_> {
+impl Drop for Gpu {
     #[profiling::function]
     fn drop(&mut self) {
         let _ = self.wait_idle();
@@ -129,7 +132,7 @@ impl Drop for Gpu<'_> {
     }
 }
 
-impl Gpu<'_> {
+impl Gpu {
     /// Creates a new instance of [Gpu], optionally the specified
     /// one. Only one should exist at a time.
     ///
@@ -140,7 +143,7 @@ impl Gpu<'_> {
     /// The inner tuples consist of: whether the gpu is the one picked
     /// in this function call, the display name, and the id passed to
     /// a new [Gpu] when recreating it with a new physical device.
-    pub fn new(driver: &Driver, preferred_physical_device: Option<[u8; 16]>) -> Result<(Gpu<'_>, Vec<GpuInfo>), Error> {
+    pub fn new(driver: &Rc<Driver>, preferred_physical_device: Option<[u8; 16]>) -> Result<(Gpu, Vec<GpuInfo>), Error> {
         profiling::scope!("new_gpu");
         let surface_ext = khr::Surface::new(&driver.entry, &driver.instance);
         let queue_family_supports_surface = |pd: vk::PhysicalDevice, index: u32| {
@@ -387,13 +390,13 @@ impl Gpu<'_> {
 
         Ok((
             Gpu {
-                driver,
+                driver: driver.clone(),
 
                 surface_ext,
                 swapchain_ext,
 
                 physical_device,
-                device,
+                device: Rc::new(device),
                 command_pool,
 
                 graphics_family_index,
@@ -424,7 +427,7 @@ impl Gpu<'_> {
         &self.frame_locals[self.image_index(frame_index)]
     }
 
-    pub(crate) fn add_temp_buffer(&self, frame_index: FrameIndex, buffer: vk::Buffer) {
+    pub(crate) fn add_temp_buffer(&self, frame_index: FrameIndex, buffer: Buffer) {
         let _ = self.frame_local(frame_index).temp_buffers.0.send(buffer);
     }
 
@@ -510,7 +513,7 @@ impl Gpu<'_> {
     #[profiling::function]
     fn cleanup_temp_buffers(&self, frame_local: &FrameLocal) {
         for buffer in frame_local.temp_buffers.1.try_iter() {
-            unsafe { self.device.destroy_buffer(buffer, None) };
+            drop(buffer);
         }
     }
 
@@ -560,11 +563,11 @@ impl Gpu<'_> {
     #[profiling::function]
     pub(crate) fn reserve_texture_index(
         &self,
-        base_color: Option<vk::ImageView>,
-        metallic_roughness: Option<vk::ImageView>,
-        normal: Option<vk::ImageView>,
-        occlusion: Option<vk::ImageView>,
-        emission: Option<vk::ImageView>,
+        base_color: Option<Rc<ImageView>>,
+        metallic_roughness: Option<Rc<ImageView>>,
+        normal: Option<Rc<ImageView>>,
+        occlusion: Option<Rc<ImageView>>,
+        emission: Option<Rc<ImageView>>,
     ) -> Result<TextureIndex, Error> {
         let index = self
             .texture_indices
@@ -750,13 +753,8 @@ impl Gpu<'_> {
 
                 {
                     profiling::scope!("write transform buffer");
-                    if let Err(err) = unsafe { transform_buffer.write(temp_arena, transforms.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) } {
-                        transform_buffer.clean_up(temp_arena);
-                        return Err(err);
-                    }
+                    unsafe { transform_buffer.write(transforms.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
                 }
-
-                self.add_temp_buffer(frame_index, transform_buffer.buffer);
 
                 let push_constants = [PushConstantStruct {
                     texture_index: material.texture_index.0,
@@ -770,10 +768,12 @@ impl Gpu<'_> {
                 }
 
                 let mut vertex_buffers = vec![mesh.buffer(); mesh.vertices_offsets.len() + 1];
-                vertex_buffers[0] = transform_buffer.buffer;
+                vertex_buffers[0] = transform_buffer.buffer.inner;
                 let mut vertex_offsets = Vec::with_capacity(mesh.vertices_offsets.len() + 1);
                 vertex_offsets.push(0);
                 vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
+
+                self.add_temp_buffer(frame_index, transform_buffer.buffer);
 
                 unsafe {
                     profiling::scope!("draw");

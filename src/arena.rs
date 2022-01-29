@@ -1,70 +1,63 @@
 //! An arena allocator for managing GPU memory.
 use crate::error::Error;
+use crate::vulkan_raii::{Buffer, DeviceMemory, Image};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk;
 use ash::{Device, Instance};
 use std::cell::Cell;
 use std::ptr;
+use std::rc::Rc;
 
 /// A Vulkan buffer allocated from an [Arena].
 #[derive(PartialEq, Eq, Hash)]
 pub struct BufferAllocation {
-    pub buffer: vk::Buffer,
+    pub buffer: Buffer,
     offset: vk::DeviceSize,
     size: vk::DeviceSize,
+    non_coherent_atom_size: vk::DeviceSize,
+    backing_memory_size: vk::DeviceSize,
 }
 
 impl BufferAllocation {
-    pub fn clean_up(&self, arena: &VulkanArena) {
-        unsafe { arena.device.destroy_buffer(self.buffer, None) };
-    }
-
     /// Write `size` bytes from `src` into the buffer, `offset` bytes
     /// after the start of the buffer. Both `offset` and `size` are
     /// clamped to the buffer's bounds, so if `offset == 0` and `size
     /// == VK_WHOLE_SIZE`, the entire buffer will be written, reading
     /// from `src`.
-    pub unsafe fn write(&self, arena: &VulkanArena, src: *const u8, offset: vk::DeviceSize, size: vk::DeviceSize) -> Result<(), Error> {
+    pub unsafe fn write(&self, src: *const u8, offset: vk::DeviceSize, size: vk::DeviceSize) -> Result<(), Error> {
         let offset = (self.offset + offset).min(self.offset + self.size);
-        let aligned_offset = align_down(offset, arena.non_coherent_atom_size);
+        let aligned_offset = align_down(offset, self.non_coherent_atom_size);
         let size = size.min(self.size);
-        let aligned_size = align_up(size, arena.non_coherent_atom_size).min(arena.total_size - aligned_offset);
+        let aligned_size = align_up(size, self.non_coherent_atom_size).min(self.backing_memory_size - aligned_offset);
 
         // NOTE: The mapped range is aligned to satisfy vkMappedMemoryRange requirements later.
-        let dst = arena
+        let dst = self
+            .buffer
             .device
-            .map_memory(arena.memory, aligned_offset, aligned_size, vk::MemoryMapFlags::empty())
+            .map_memory(self.buffer.memory.inner, aligned_offset, aligned_size, vk::MemoryMapFlags::empty())
             .map_err(Error::VulkanMapMemory)? as *mut u8;
         let dst = dst.offset((offset - aligned_offset) as isize);
         ptr::copy_nonoverlapping(src, dst, size as usize);
 
         // NOTE: VkMappedMemoryRanges have notable alignment requirements, and they have been taken into account.
         let ranges = [vk::MappedMemoryRange::builder()
-            .memory(arena.memory)
+            .memory(self.buffer.memory.inner)
             .offset(aligned_offset)
             .size(aligned_size)
             .build()];
-        arena.device.flush_mapped_memory_ranges(&ranges).map_err(Error::VulkanFlushMapped)?;
-        arena.device.unmap_memory(arena.memory);
+        self.buffer
+            .device
+            .flush_mapped_memory_ranges(&ranges)
+            .map_err(Error::VulkanFlushMapped)?;
+        self.buffer.device.unmap_memory(self.buffer.memory.inner);
 
         Ok(())
     }
 }
 
-/// A Vulkan image allocated from an [Arena].
-pub struct ImageAllocation {
-    pub image: vk::Image,
-}
-
-impl ImageAllocation {
-    pub fn clean_up(&self, arena: &VulkanArena) {
-        unsafe { arena.device.destroy_image(self.image, None) };
-    }
-}
-
-pub struct VulkanArena<'device> {
-    pub device: &'device Device,
-    memory: vk::DeviceMemory,
+pub struct VulkanArena {
+    pub device: Rc<Device>,
+    memory: Rc<DeviceMemory>,
     total_size: vk::DeviceSize,
     /// The location where the available memory starts. Gets set to 0
     /// when the arena is reset, bumped when allocating.
@@ -81,22 +74,16 @@ pub struct VulkanArena<'device> {
     debug_identifier: &'static str,
 }
 
-impl Drop for VulkanArena<'_> {
-    fn drop(&mut self) {
-        unsafe { self.device.free_memory(self.memory, None) };
-    }
-}
-
-impl VulkanArena<'_> {
-    pub fn new<'device>(
+impl VulkanArena {
+    pub fn new(
         instance: &Instance,
-        device: &'device Device,
+        device: &Rc<Device>,
         physical_device: vk::PhysicalDevice,
         size: vk::DeviceSize,
         optimal_flags: vk::MemoryPropertyFlags,
         fallback_flags: vk::MemoryPropertyFlags,
         debug_identifier: &'static str,
-    ) -> Result<VulkanArena<'device>, Error> {
+    ) -> Result<VulkanArena, Error> {
         let memory_type_index = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
             .ok_or(Error::VulkanNoMatchingHeap(debug_identifier, fallback_flags))?;
         let alloc_info = vk::MemoryAllocateInfo::builder()
@@ -110,8 +97,11 @@ impl VulkanArena<'_> {
         let non_coherent_atom_size = physical_device_properties.limits.non_coherent_atom_size;
 
         Ok(VulkanArena {
-            device,
-            memory,
+            device: device.clone(),
+            memory: Rc::new(DeviceMemory {
+                inner: memory,
+                device: device.clone(),
+            }),
             total_size: size,
             offset: Cell::new(0),
             non_coherent_atom_size,
@@ -144,7 +134,7 @@ impl VulkanArena<'_> {
             });
         }
 
-        match unsafe { self.device.bind_buffer_memory(buffer, self.memory, offset) }.map_err(Error::VulkanBufferBinding) {
+        match unsafe { self.device.bind_buffer_memory(buffer, self.memory.inner, offset) }.map_err(Error::VulkanBufferBinding) {
             Ok(_) => {}
             Err(err) => {
                 unsafe { self.device.destroy_buffer(buffer, None) };
@@ -154,10 +144,20 @@ impl VulkanArena<'_> {
 
         self.offset.set(offset + size);
         self.previous_allocation_was_image.set(false);
-        Ok(BufferAllocation { buffer, offset, size })
+        Ok(BufferAllocation {
+            buffer: Buffer {
+                inner: buffer,
+                device: self.device.clone(),
+                memory: self.memory.clone(),
+            },
+            offset,
+            size,
+            non_coherent_atom_size: self.non_coherent_atom_size,
+            backing_memory_size: self.total_size,
+        })
     }
 
-    pub fn create_image(&self, image_create_info: vk::ImageCreateInfo) -> Result<ImageAllocation, Error> {
+    pub fn create_image(&self, image_create_info: vk::ImageCreateInfo) -> Result<Image, Error> {
         let image = unsafe { self.device.create_image(&image_create_info, None) }.map_err(Error::VulkanImageCreation)?;
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
         let alignment = image_memory_requirements.alignment.max(self.buffer_image_granularity);
@@ -175,7 +175,7 @@ impl VulkanArena<'_> {
             });
         }
 
-        match unsafe { self.device.bind_image_memory(image, self.memory, offset) }.map_err(Error::VulkanImageBinding) {
+        match unsafe { self.device.bind_image_memory(image, self.memory.inner, offset) }.map_err(Error::VulkanImageBinding) {
             Ok(_) => {}
             Err(err) => {
                 unsafe { self.device.destroy_image(image, None) };
@@ -185,12 +185,24 @@ impl VulkanArena<'_> {
 
         self.offset.set(offset + size);
         self.previous_allocation_was_image.set(true);
-        Ok(ImageAllocation { image })
+        Ok(Image {
+            inner: image,
+            device: self.device.clone(),
+            memory: Some(self.memory.clone()),
+        })
     }
 
-    pub fn reset(&self) {
-        self.offset.set(0);
-        // TODO: Fill arenas with noise on reset in debug mode?
+    /// Attempts to reset the arena, marking all graphics memory owned
+    /// by it as usable again. If some of the memory allocated from
+    /// this arena is still in use, Err is returned and the arena is
+    /// not reset.
+    pub fn reset(&self) -> Result<(), Error> {
+        if Rc::strong_count(&self.memory) > 1 {
+            Err(Error::ArenaNotResettable)
+        } else {
+            self.offset.set(0);
+            Ok(())
+        }
     }
 }
 

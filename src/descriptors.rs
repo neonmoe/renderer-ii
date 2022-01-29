@@ -1,10 +1,12 @@
 use crate::pipeline::{DescriptorSetLayoutParams, Pipeline, PushConstantStruct, PIPELINE_PARAMETERS};
+use crate::vulkan_raii::ImageView;
 use crate::{Error, FrameIndex, Gpu};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::Device;
 use std::mem;
 use std::ops::Range;
+use std::rc::Rc;
 
 pub(crate) struct Descriptors {
     pub(crate) pipeline_layouts: Vec<vk::PipelineLayout>,
@@ -204,7 +206,7 @@ impl Descriptors {
         pipeline: Pipeline,
         set: u32,
         first_binding: u32,
-        image_views: &[Option<vk::ImageView>],
+        image_views: &[Option<Rc<ImageView>>],
         range: Range<u32>,
     ) {
         // NOTE: Technically, this could be overwriting textures still
@@ -218,7 +220,7 @@ impl Descriptors {
             for (i, image_view) in image_views.iter().filter_map(Option::as_ref).enumerate() {
                 let descriptor_image_info = vk::DescriptorImageInfo::builder()
                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image_view(*image_view)
+                    .image_view(image_view.inner)
                     .build();
                 let descriptor_image_infos = vec![descriptor_image_info; range.len()];
                 let binding = first_binding + i as u32;

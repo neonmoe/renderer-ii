@@ -12,6 +12,7 @@ macro_rules! cstr {
 mod debug_utils;
 mod descriptors;
 mod mesh;
+mod vulkan_raii;
 
 // public-facing modules:
 

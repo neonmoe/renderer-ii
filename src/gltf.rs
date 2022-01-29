@@ -1,9 +1,8 @@
-use crate::arena::{ImageAllocation, VulkanArena};
+use crate::arena::VulkanArena;
 use crate::image_loading::{self, TextureKind};
 use crate::mesh::Mesh;
+use crate::vulkan_raii::ImageView;
 use crate::{Error, FrameIndex, Gpu, Material, Pipeline};
-use ash::version::DeviceV1_0;
-use ash::vk;
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -28,43 +27,27 @@ struct Node {
     transform: Mat4,
 }
 
-pub struct Gltf<'arena> {
-    arena: &'arena VulkanArena<'arena>,
+pub struct Gltf {
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
     meshes: Vec<Vec<(Mesh, usize)>>,
     materials: Vec<Material>,
-    images: Vec<(ImageAllocation, vk::ImageView)>,
 }
 
-impl Drop for Gltf<'_> {
-    fn drop(&mut self) {
-        for (image_allocation, image_view) in &self.images {
-            image_allocation.clean_up(self.arena);
-            unsafe { self.arena.device.destroy_image_view(*image_view, None) };
-        }
-        for inner_meshes in &self.meshes {
-            for (mesh, _) in inner_meshes {
-                mesh.mesh_buffer.clean_up(self.arena);
-            }
-        }
-    }
-}
-
-impl Gltf<'_> {
+impl Gltf {
     /// Loads the glTF scene from the contents of a .glb file.
     ///
     /// Any external files referenced in the glTF are searched
     /// relative to `directory`.
     #[profiling::function]
-    pub fn from_glb<'a>(
+    pub fn from_glb(
         gpu: &Gpu,
-        main_arena: &'a VulkanArena,
+        main_arena: &VulkanArena,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
         glb: &[u8],
         resources: &mut GltfResources,
-    ) -> Result<Gltf<'a>, Error> {
+    ) -> Result<Gltf, Error> {
         fn read_u32(bytes: &[u8]) -> u32 {
             debug_assert!(bytes.len() == 4);
             if let [a, b, c, d] = *bytes {
@@ -131,14 +114,14 @@ impl Gltf<'_> {
     /// Any external files referenced in the glTF are searched
     /// relative to `directory`.
     #[profiling::function]
-    pub fn from_gltf<'a>(
+    pub fn from_gltf(
         gpu: &Gpu,
-        main_arena: &'a VulkanArena,
+        main_arena: &VulkanArena,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
         gltf: &str,
         resources: &mut GltfResources,
-    ) -> Result<Gltf<'a>, Error> {
+    ) -> Result<Gltf, Error> {
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(gltf).map_err(Error::GltfJsonDeserialization)?;
         create_gltf(gpu, main_arena, temp_arenas, frame_index, gltf, resources, None)
     }
@@ -149,15 +132,15 @@ impl Gltf<'_> {
 }
 
 #[profiling::function]
-fn create_gltf<'a>(
+fn create_gltf(
     gpu: &Gpu,
-    arena: &'a VulkanArena,
+    arena: &VulkanArena,
     temp_arenas: &[VulkanArena],
     frame_index: FrameIndex,
     gltf: gltf_json::GltfJson,
     resources: &mut GltfResources,
     bin_buffer: Option<&[u8]>,
-) -> Result<Gltf<'a>, Error> {
+) -> Result<Gltf, Error> {
     if let Some(min_version) = &gltf.asset.min_version {
         let min_version_f32 = str::parse::<f32>(min_version);
         if min_version_f32 != Ok(2.0) {
@@ -313,7 +296,7 @@ fn create_gltf<'a>(
                 };
 
                 let texture_kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
-                image_load(gpu, arena, temp_arenas, frame_index, &bytes, texture_kind)
+                Ok(Rc::new(image_load(gpu, arena, temp_arenas, frame_index, &bytes, texture_kind)?))
             })
             .collect::<Result<Vec<_>, Error>>()?
     };
@@ -323,17 +306,17 @@ fn create_gltf<'a>(
         gltf.materials
             .iter()
             .map(|mat| {
-                let mktex = |images: &[(ImageAllocation, vk::ImageView)], texture_info: &gltf_json::TextureInfo| {
+                let mktex = |images: &[Rc<ImageView>], texture_info: &gltf_json::TextureInfo| {
                     let texture = match gltf.textures.get(texture_info.index) {
                         Some(tex) => tex,
                         None => return Some(Err(Error::GltfOob("texture"))),
                     };
                     let image_index = texture.source?;
                     let image_view = match images.get(image_index) {
-                        Some((_, image_view)) => image_view,
+                        Some(image_view) => image_view,
                         None => return Some(Err(Error::GltfOob("image"))),
                     };
-                    Some(Ok(*image_view))
+                    Some(Ok(image_view.clone()))
                 };
 
                 macro_rules! handle_optional_result {
@@ -378,12 +361,10 @@ fn create_gltf<'a>(
     }
 
     Ok(Gltf {
-        arena,
         nodes,
         root_nodes,
         materials,
         meshes,
-        images,
     })
 }
 
