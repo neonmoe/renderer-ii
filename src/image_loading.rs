@@ -253,7 +253,7 @@ pub fn load_ktx(
         ImageView {
             inner: image_view,
             device: gpu.device.clone(),
-            parent_image: Rc::new(image_allocation),
+            image: Rc::new(image_allocation.into()),
         }
     };
 

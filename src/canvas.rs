@@ -1,6 +1,6 @@
 use crate::arena::VulkanArena;
 use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
-use crate::vulkan_raii::{Image, ImageView};
+use crate::vulkan_raii::{AnyImage, Framebuffer, ImageView, Pipeline, RenderPass, Swapchain};
 use crate::{Error, Gpu};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
@@ -30,55 +30,21 @@ pub struct Canvas {
     /// Held by [Canvas] to ensure that the swapchain and command
     /// buffers are dropped before the device.
     pub gpu: Rc<Gpu>,
-    #[allow(dead_code)]
-    framebuffer_arena: VulkanArena,
 
     pub extent: vk::Extent2D,
 
-    pub(crate) swapchain: vk::SwapchainKHR,
-    // TODO: Add refcounted wrappers for the rest of these
-    // (so that the imageviews can be owned by them)
-    #[allow(dead_code)]
-    swapchain_image_views: Vec<ImageView>,
-    #[allow(dead_code)]
-    color_image_views: Vec<ImageView>,
-    #[allow(dead_code)]
-    depth_image_views: Vec<ImageView>,
-    pub(crate) framebuffers: Vec<vk::Framebuffer>,
-    pub(crate) final_render_pass: vk::RenderPass,
-    pub(crate) pipelines: Vec<vk::Pipeline>,
+    pub(crate) swapchain: Rc<Swapchain>,
+    pub(crate) framebuffers: Vec<Framebuffer>,
+    pub(crate) final_render_pass: Rc<RenderPass>,
+    pub(crate) pipelines: Vec<Pipeline>,
     pub(crate) command_buffers: Vec<vk::CommandBuffer>,
 }
 
 impl Drop for Canvas {
     #[profiling::function]
     fn drop(&mut self) {
-        let device = &self.gpu.device;
-
-        for &pipeline in &self.pipelines {
-            profiling::scope!("destroy pipeline");
-            unsafe { device.destroy_pipeline(pipeline, None) };
-        }
-
-        {
-            profiling::scope!("destroy render pass");
-            unsafe { device.destroy_render_pass(self.final_render_pass, None) };
-        }
-
-        {
-            profiling::scope!("free command buffers");
-            unsafe { device.free_command_buffers(self.gpu.command_pool, &self.command_buffers) };
-        }
-
-        for &framebuffer in &self.framebuffers {
-            profiling::scope!("destroy framebuffers");
-            unsafe { device.destroy_framebuffer(framebuffer, None) };
-        }
-
-        unsafe {
-            profiling::scope!("destroy swapchain");
-            self.gpu.swapchain_ext.destroy_swapchain(self.swapchain, None)
-        };
+        profiling::scope!("free command buffers");
+        unsafe { self.gpu.device.free_command_buffers(self.gpu.command_pool, &self.command_buffers) };
     }
 }
 
@@ -104,13 +70,13 @@ impl Canvas {
     ) -> Result<Canvas, Error> {
         profiling::scope!("new_canvas");
         let device = &gpu.device;
-        let swapchain_ext = &gpu.swapchain_ext;
+        let swapchain_ext = khr::Swapchain::new(&gpu.driver.instance, &*gpu.device);
         let queue_family_indices = [gpu.graphics_family_index, gpu.surface_family_index];
         let (swapchain, swapchain_format, extent, frame_count) = create_swapchain(
             &gpu.surface_ext,
-            swapchain_ext,
+            &swapchain_ext,
             gpu.driver.surface,
-            old_canvas.map(|r| r.swapchain),
+            old_canvas.map(|r| r.swapchain.inner),
             gpu.physical_device,
             &queue_family_indices,
             &SwapchainSettings {
@@ -122,6 +88,10 @@ impl Canvas {
             },
         )?;
 
+        // TODO: Split Canvas into Swapchain+RenderPass, share fb-arena between resizes?
+        // Alternatively, recreate arena, but size it exactly, and
+        // make sure to free the previous one in advance (to not
+        // require double the memory between resizes).
         let framebuffer_arena = VulkanArena::new(
             &gpu.driver.instance,
             &gpu.device,
@@ -133,7 +103,7 @@ impl Canvas {
         )?;
 
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
-            move |image: Rc<Image>| -> Result<ImageView, Error> {
+            move |image: AnyImage| -> Result<ImageView, Error> {
                 let subresource_range = vk::ImageSubresourceRange {
                     aspect_mask,
                     base_mip_level: 0,
@@ -142,7 +112,7 @@ impl Canvas {
                     layer_count: 1,
                 };
                 let image_view_create_info = vk::ImageViewCreateInfo {
-                    image: image.inner,
+                    image: image.inner(),
                     view_type: vk::ImageViewType::TYPE_2D,
                     format,
                     subresource_range,
@@ -153,7 +123,7 @@ impl Canvas {
                 Ok(ImageView {
                     inner: image_view,
                     device: device.clone(),
-                    parent_image: image,
+                    image: Rc::new(image),
                 })
             }
         };
@@ -172,21 +142,19 @@ impl Canvas {
                 .samples(SAMPLE_COUNT)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(usage);
-            Ok(Rc::new(framebuffer_arena.create_image(*image_create_info)?))
+            framebuffer_arena.create_image(*image_create_info)
         };
 
         // TODO: Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
         let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
+        let swapchain = Rc::new(Swapchain {
+            inner: swapchain,
+            device: Rc::new(swapchain_ext),
+        });
         let swapchain_image_views = swapchain_images
             .into_iter()
-            .map(|image| {
-                Rc::new(Image {
-                    inner: image,
-                    device: device.clone(),
-                    memory: None,
-                })
-            })
+            .map(|image| AnyImage::Swapchain(image, swapchain.clone()))
             .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain_format))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -195,6 +163,7 @@ impl Canvas {
             .collect::<Result<Vec<_>, Error>>()?;
         let color_image_views = color_images
             .into_iter()
+            .map(AnyImage::from)
             .map(create_image_view(vk::ImageAspectFlags::COLOR, SWAPCHAIN_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -203,6 +172,7 @@ impl Canvas {
             .collect::<Result<Vec<_>, Error>>()?;
         let depth_image_views = depth_images
             .into_iter()
+            .map(AnyImage::from)
             .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -214,6 +184,18 @@ impl Canvas {
             &gpu.descriptors.pipeline_layouts,
             &PIPELINE_PARAMETERS,
         )?;
+        let final_render_pass = Rc::new(RenderPass {
+            inner: final_render_pass,
+            device: device.clone(),
+        });
+        let pipelines = pipelines
+            .into_iter()
+            .map(|pipeline| Pipeline {
+                inner: pipeline,
+                device: device.clone(),
+                render_pass: final_render_pass.clone(),
+            })
+            .collect::<Vec<_>>();
 
         let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(gpu.command_pool)
@@ -226,29 +208,32 @@ impl Canvas {
         }?;
 
         let framebuffers = color_image_views
-            .iter()
-            .zip(depth_image_views.iter())
-            .zip(swapchain_image_views.iter())
+            .into_iter()
+            .zip(depth_image_views.into_iter())
+            .zip(swapchain_image_views.into_iter())
             .map(|((color_image_view, depth_image_view), swapchain_image_view)| {
                 let attachments = [color_image_view.inner, depth_image_view.inner, swapchain_image_view.inner];
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
-                    .render_pass(final_render_pass)
+                    .render_pass(final_render_pass.inner)
                     .attachments(&attachments)
                     .width(extent.width)
                     .height(extent.height)
                     .layers(1);
-                unsafe { device.create_framebuffer(&framebuffer_create_info, None) }.map_err(Error::VulkanFramebufferCreation)
+                let framebuffer =
+                    unsafe { device.create_framebuffer(&framebuffer_create_info, None) }.map_err(Error::VulkanFramebufferCreation)?;
+                Ok(Framebuffer {
+                    inner: framebuffer,
+                    device: device.clone(),
+                    render_pass: final_render_pass.clone(),
+                    attachments: vec![color_image_view, depth_image_view, swapchain_image_view],
+                })
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<Framebuffer>, Error>>()?;
 
         Ok(Canvas {
             gpu: gpu.clone(),
-            framebuffer_arena,
             extent,
             swapchain,
-            swapchain_image_views,
-            color_image_views,
-            depth_image_views,
             framebuffers,
             final_render_pass,
             pipelines,

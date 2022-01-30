@@ -188,7 +188,7 @@ impl VulkanArena {
         Ok(Image {
             inner: image,
             device: self.device.clone(),
-            memory: Some(self.memory.clone()),
+            memory: self.memory.clone(),
         })
     }
 

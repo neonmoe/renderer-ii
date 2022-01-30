@@ -73,7 +73,6 @@ pub struct Gpu {
     pub driver: Rc<Driver>,
 
     pub(crate) surface_ext: khr::Surface,
-    pub(crate) swapchain_ext: khr::Swapchain,
 
     pub physical_device: vk::PhysicalDevice,
     pub device: Rc<Device>,
@@ -315,7 +314,6 @@ impl Gpu {
                 .create_device(physical_device, &device_create_info, None)
                 .map_err(Error::VulkanDeviceCreation)
         }?;
-        let swapchain_ext = khr::Swapchain::new(&driver.instance, &device);
 
         let graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
         let surface_queue;
@@ -393,7 +391,6 @@ impl Gpu {
                 driver: driver.clone(),
 
                 surface_ext,
-                swapchain_ext,
 
                 physical_device,
                 device: Rc::new(device),
@@ -532,8 +529,10 @@ impl Gpu {
     pub fn wait_frame(&self, canvas: &Canvas) -> Result<FrameIndex, Error> {
         let (image_index, _) = unsafe {
             profiling::scope!("acquire next image");
-            self.swapchain_ext
-                .acquire_next_image(canvas.swapchain, u64::MAX, vk::Semaphore::null(), self.frame_start_fence)
+            canvas
+                .swapchain
+                .device
+                .acquire_next_image(canvas.swapchain.inner, u64::MAX, vk::Semaphore::null(), self.frame_start_fence)
                 .map_err(Error::VulkanAcquireImage)
         }?;
         let frame_index = FrameIndex::new(image_index);
@@ -610,8 +609,16 @@ impl Gpu {
 
         let image_index = self.image_index(frame_index);
         let command_buffer = canvas.command_buffers[image_index];
-        let framebuffer = canvas.framebuffers[image_index];
-        self.record_commmand_buffer(temp_arenas, frame_index, command_buffer, framebuffer, canvas, scene, debug_value)?;
+        let framebuffer = &canvas.framebuffers[image_index];
+        self.record_commmand_buffer(
+            temp_arenas,
+            frame_index,
+            command_buffer,
+            framebuffer.inner,
+            canvas,
+            scene,
+            debug_value,
+        )?;
 
         let render_wait_semaphores = self.render_wait_semaphores.1.try_iter().collect::<Vec<WaitSemaphore>>();
         let mut wait_semaphores = Vec::with_capacity(render_wait_semaphores.len());
@@ -636,7 +643,7 @@ impl Gpu {
                 .map_err(Error::VulkanQueueSubmit)
         }?;
 
-        let swapchains = [canvas.swapchain];
+        let swapchains = [canvas.swapchain.inner];
         let image_indices = [image_index as u32];
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&signal_semaphores)
@@ -644,7 +651,7 @@ impl Gpu {
             .image_indices(&image_indices);
         let present_result = unsafe {
             profiling::scope!("queue present");
-            self.swapchain_ext.queue_present(self.surface_queue, &present_info)
+            canvas.swapchain.device.queue_present(self.surface_queue, &present_info)
         };
 
         match present_result {
@@ -689,7 +696,7 @@ impl Gpu {
         depth_clear_value.depth_stencil.depth = 0.0;
         let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
-            .render_pass(canvas.final_render_pass)
+            .render_pass(canvas.final_render_pass.inner)
             .framebuffer(framebuffer)
             .render_area(render_area)
             .clear_values(&clear_colors);
@@ -721,8 +728,11 @@ impl Gpu {
             }
 
             unsafe {
-                self.device
-                    .cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, canvas.pipelines[pipeline_idx])
+                self.device.cmd_bind_pipeline(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    canvas.pipelines[pipeline_idx].inner,
+                )
             };
             let layout = self.descriptors.pipeline_layouts[pipeline_idx];
             let descriptor_sets = self.descriptors.descriptor_sets(self, frame_index, pipeline_idx);
