@@ -173,9 +173,10 @@ fn fallible_main() -> anyhow::Result<()> {
             // TODO: VRAM stats
             // NOTE: Remove the dead_code annotation from display_bytes when fixing this
             let _ = window.set_title(&format!(
-                "{} ({:.2} ms frame interval, {} of VRAM in use, {} allocated)",
+                "{} ({:.2} ms frame interval ({:.0} fps), {} of VRAM in use, {} allocated)",
                 env!("CARGO_PKG_NAME"),
                 avg_interval.as_secs_f64() * 1000.0,
+                1.0 / avg_interval.as_secs_f64(),
                 -1,
                 -1,
             ));

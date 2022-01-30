@@ -148,7 +148,7 @@ pub fn load_ktx(
     gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |command_buffer| {
         let mut current_mip_level_extent = extent;
         for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
-            profiling::scope!("record vkCmdCopyBufferToImage for mip #{}", mip_level);
+            profiling::scope!(&format!("record vkCmdCopyBufferToImage for mip #{}", mip_level));
             let subresource_range = vk::ImageSubresourceRange::builder()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                 .base_mip_level(mip_level as u32)
