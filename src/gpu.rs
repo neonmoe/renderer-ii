@@ -50,8 +50,9 @@ struct WaitSemaphore(vk::Semaphore, vk::PipelineStageFlags);
 /// frame while the previous one is still being rendered.
 struct FrameLocal {
     in_use: AtomicBool,
-    finished_command_buffers_sp: vk::Semaphore,
+    ready_for_present_sp: vk::Semaphore,
     frame_end_fence: vk::Fence,
+    // NOTE: These temporary resources should be removable after the async resource loading system is up and running
     temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
     temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
     temp_buffers: (Sender<Buffer>, Receiver<Buffer>),
@@ -114,7 +115,7 @@ impl Drop for Gpu {
             self.cleanup_temp_buffers(frame_local);
 
             unsafe {
-                self.device.destroy_semaphore(frame_local.finished_command_buffers_sp, None);
+                self.device.destroy_semaphore(frame_local.ready_for_present_sp, None);
                 self.device.destroy_fence(frame_local.frame_end_fence, None);
             }
         }
@@ -150,6 +151,8 @@ impl Gpu {
             matches!(support, Ok(true))
         };
 
+        // TODO: Move physical device stuff to its own module
+        // <physical device stuff>
         let all_physical_devices =
             unsafe { driver.instance.enumerate_physical_devices() }.map_err(Error::VulkanEnumeratePhysicalDevices)?;
         let mut physical_devices = all_physical_devices
@@ -182,20 +185,6 @@ impl Gpu {
                         .get_physical_device_format_properties(physical_device, vk::Format::R8G8B8A8_SRGB)
                 };
                 match format_properties.optimal_tiling_features {
-                    features if !features.contains(vk::FormatFeatureFlags::BLIT_SRC) => {
-                        log::warn!(
-                            "physical device '{}' does not have BLIT_SRC for optimal tiling 32-bit srgb images",
-                            get_device_name(&properties)
-                        );
-                        return None;
-                    }
-                    features if !features.contains(vk::FormatFeatureFlags::BLIT_DST) => {
-                        log::warn!(
-                            "physical device '{}' does not have BLIT_DST for optimal tiling 32-bit srgb images",
-                            get_device_name(&properties)
-                        );
-                        return None;
-                    }
                     features if !features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR) => {
                         log::warn!(
                             "physical device '{}' does not have SAMPLED_IMAGE_FILTER_LINEAR for optimal tiling 32-bit srgb images",
@@ -275,6 +264,7 @@ impl Gpu {
                 GpuInfo { in_use, name, id }
             })
             .collect::<Vec<GpuInfo>>();
+        // </physical device stuff>
 
         let queue_priorities = [1.0, 1.0];
         let queue_create_infos = if graphics_family_index == surface_family_index {
@@ -324,6 +314,7 @@ impl Gpu {
         }
         if driver.debug_utils_available {
             let debug_utils_ext = ext::DebugUtils::new(&driver.entry, &driver.instance);
+            // TODO: Make a utility function to give vulkan objects names, then use debug names more widely
             let graphics_name_info = vk::DebugUtilsObjectNameInfoEXT {
                 object_type: vk::ObjectType::QUEUE,
                 object_handle: graphics_queue.as_raw(),
@@ -342,6 +333,8 @@ impl Gpu {
             }
         }
 
+        // TODO: Move frame local stuff to its own module
+        // <frame local stuff>
         let frame_in_use_count = 3;
         let frame_locals = (0..frame_in_use_count)
             .map(|_| {
@@ -358,7 +351,7 @@ impl Gpu {
                 }?;
                 Ok(FrameLocal {
                     in_use: AtomicBool::new(false),
-                    finished_command_buffers_sp,
+                    ready_for_present_sp: finished_command_buffers_sp,
                     frame_end_fence,
                     temp_command_buffers: mpsc::channel(),
                     temp_semaphores: mpsc::channel(),
@@ -366,6 +359,7 @@ impl Gpu {
                 })
             })
             .collect::<Result<Vec<FrameLocal>, Error>>()?;
+        // </frame local stuff>
 
         let frame_start_fence = unsafe {
             device
@@ -379,8 +373,9 @@ impl Gpu {
         let command_pool =
             unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
 
+        // TODO: Move descriptors (and texture/material management) to its own module
+        // Or maybe just expose Descriptors as pub?
         let descriptors = Descriptors::new(&device, &physical_device_properties, &physical_device_features, frame_in_use_count)?;
-
         let mut texture_indices = Vec::with_capacity(MAX_TEXTURE_COUNT as usize);
         for _ in 0..MAX_TEXTURE_COUNT {
             texture_indices.push(AtomicBool::new(false));
@@ -423,6 +418,28 @@ impl Gpu {
     fn frame_local(&self, frame_index: FrameIndex) -> &FrameLocal {
         &self.frame_locals[self.image_index(frame_index)]
     }
+
+    // TODO: Add a proper way to create resources asynchronously
+    // For:
+    // - disposing of staging buffers after upload
+    // - disposing of uploading command buffers after they've run
+    // - creating resources in an "incomplete" state, turning them into "complete" after the creation command buffer has run?
+    //
+    // Thoughts: a Loading<T> where T is an Image or Buffer, would be
+    // neat, but hard to generalize further. Would Gltf become a
+    // Loading<Gltf>, and how would it communicate with the actual
+    // buffers and images? Another idea: simply tracking uploaded-ness
+    // via a fence alongisde all resources that need a command buffer
+    // for creation (like meshes and images, though meshes need a
+    // rewrite anyways). Gltf could then report its status (3/5
+    // resources ready), and perhaps its rendering could be
+    // conditional on the upload status.
+    //
+    // Should replace add_temp_buffer and run_command_buffer here.
+    //
+    // See also: FrameLocal, the temp stuff can be removed after this
+    // is implemented. Really temp stuff, like transform buffers, may
+    // require something like them though.
 
     pub(crate) fn add_temp_buffer(&self, frame_index: FrameIndex, buffer: Buffer) {
         let _ = self.frame_local(frame_index).temp_buffers.0.send(buffer);
@@ -514,6 +531,52 @@ impl Gpu {
         }
     }
 
+    // TODO: Re-do the texture index reservation system
+    // Currently it basically requires Rc's to communicate that a texture has been released.
+    // It does not work after the memory management refactor.
+    #[profiling::function]
+    pub(crate) fn reserve_texture_index(
+        &self,
+        base_color: Option<Rc<ImageView>>,
+        metallic_roughness: Option<Rc<ImageView>>,
+        normal: Option<Rc<ImageView>>,
+        occlusion: Option<Rc<ImageView>>,
+        emission: Option<Rc<ImageView>>,
+    ) -> Result<TextureIndex, Error> {
+        let index = self
+            .texture_indices
+            .iter()
+            .position(|occupied| {
+                occupied
+                    .compare_exchange_weak(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+            })
+            .ok_or(Error::TextureIndexReserve)? as u32;
+        let image_views = &[base_color, metallic_roughness, normal, occlusion, emission];
+        self.descriptors
+            .set_uniform_images(&self.device, Pipeline::Default, 1, 1, image_views, index..index + 1);
+        Ok(TextureIndex(index))
+    }
+
+    #[profiling::function]
+    pub(crate) fn release_texture_index(&self, index: u32) {
+        self.texture_indices[index as usize].store(false, Ordering::Relaxed);
+    }
+
+    // TODO: Refactor Gpu to handle just the pub fns, rename to maybe Renderer?
+    // Pub fns meaning the following:
+    // - wait until gpu is idle
+    // - wait for next frame
+    // - render next frame (+ the command buffer recording function, which is kind of a part of this)
+    //
+    // Would be ideal if a Renderer object wouldn't even be
+    // needed. Might be that once everything else is split out, these
+    // could be just their owned functions and everything required
+    // could be passed in. OTOH, one of Gpu's functions is to hold the
+    // vulkan Device. Though maybe it would be more ideal for the user
+    // to hold the Device, it could be passed to various subsystems
+    // more directly.
+
     /// Wait until the device is idle. Should be called before
     /// swapchain recreation and after the game loop is over.
     #[profiling::function]
@@ -556,38 +619,6 @@ impl Gpu {
         Ok(frame_index)
     }
 
-    // TODO: Re-do the texture index reservation system
-    // Currently it basically requires Rc's to communicate that a texture has been released.
-    // It does not work after the memory management refactor.
-    #[profiling::function]
-    pub(crate) fn reserve_texture_index(
-        &self,
-        base_color: Option<Rc<ImageView>>,
-        metallic_roughness: Option<Rc<ImageView>>,
-        normal: Option<Rc<ImageView>>,
-        occlusion: Option<Rc<ImageView>>,
-        emission: Option<Rc<ImageView>>,
-    ) -> Result<TextureIndex, Error> {
-        let index = self
-            .texture_indices
-            .iter()
-            .position(|occupied| {
-                occupied
-                    .compare_exchange_weak(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                    .is_ok()
-            })
-            .ok_or(Error::TextureIndexReserve)? as u32;
-        let image_views = &[base_color, metallic_roughness, normal, occlusion, emission];
-        self.descriptors
-            .set_uniform_images(&self.device, Pipeline::Default, 1, 1, image_views, index..index + 1);
-        Ok(TextureIndex(index))
-    }
-
-    #[profiling::function]
-    pub(crate) fn release_texture_index(&self, index: u32) {
-        self.texture_indices[index as usize].store(false, Ordering::Relaxed);
-    }
-
     /// Queue up all the rendering commands.
     ///
     /// The rendered frame will appear on the screen some time in the
@@ -628,7 +659,7 @@ impl Gpu {
             wait_stages.push(wait_stage);
         }
 
-        let signal_semaphores = [frame_local.finished_command_buffers_sp];
+        let signal_semaphores = [frame_local.ready_for_present_sp];
         let command_buffers = [command_buffer];
         let submit_infos = [vk::SubmitInfo::builder()
             .wait_semaphores(&wait_semaphores)
