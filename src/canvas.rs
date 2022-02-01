@@ -1,7 +1,7 @@
 use crate::arena::VulkanArena;
 use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{AnyImage, Framebuffer, ImageView, Pipeline, RenderPass, Swapchain};
-use crate::{Error, Gpu};
+use crate::{Error, Gpu, PhysicalDevice};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
 use ash::{vk, Device};
@@ -63,6 +63,7 @@ impl Canvas {
     /// refresh rate.
     pub fn new(
         gpu: &Rc<Gpu>,
+        physical_device: &PhysicalDevice,
         old_canvas: Option<&Canvas>,
         fallback_width: u32,
         fallback_height: u32,
@@ -70,14 +71,15 @@ impl Canvas {
     ) -> Result<Canvas, Error> {
         profiling::scope!("new_canvas");
         let device = &gpu.device;
+        let surface_ext = khr::Surface::new(&gpu.driver.entry, &gpu.driver.instance);
         let swapchain_ext = khr::Swapchain::new(&gpu.driver.instance, &*gpu.device);
-        let queue_family_indices = [gpu.graphics_family_index, gpu.surface_family_index];
+        let queue_family_indices = [physical_device.graphics_family_index, physical_device.surface_family_index];
         let (swapchain, swapchain_format, extent, frame_count) = create_swapchain(
-            &gpu.surface_ext,
+            &surface_ext,
             &swapchain_ext,
             gpu.driver.surface,
             old_canvas.map(|r| r.swapchain.inner),
-            gpu.physical_device,
+            physical_device.inner,
             &queue_family_indices,
             &SwapchainSettings {
                 extent: vk::Extent2D {
@@ -95,7 +97,7 @@ impl Canvas {
         let framebuffer_arena = VulkanArena::new(
             &gpu.driver.instance,
             &gpu.device,
-            gpu.physical_device,
+            physical_device.inner,
             300_000_000, // FIXME: too small for very big framebuffers?
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -150,7 +152,7 @@ impl Canvas {
         let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
         let swapchain = Rc::new(Swapchain {
             inner: swapchain,
-            device: Rc::new(swapchain_ext),
+            device: swapchain_ext,
         });
         let swapchain_image_views = swapchain_images
             .into_iter()
@@ -177,17 +179,18 @@ impl Canvas {
             .collect::<Result<Vec<_>, _>>()?;
 
         let final_render_pass = create_render_pass(device)?;
-        let pipelines = create_pipelines(
-            device,
-            final_render_pass,
-            extent,
-            &gpu.descriptors.pipeline_layouts,
-            &PIPELINE_PARAMETERS,
-        )?;
         let final_render_pass = Rc::new(RenderPass {
             inner: final_render_pass,
             device: device.clone(),
         });
+
+        let pipelines = create_pipelines(
+            device,
+            final_render_pass.inner,
+            extent,
+            &gpu.descriptors.pipeline_layouts,
+            &PIPELINE_PARAMETERS,
+        )?;
         let pipelines = pipelines
             .into_iter()
             .map(|pipeline| Pipeline {
@@ -316,10 +319,7 @@ fn create_swapchain(
         .present_mode(present_mode)
         .clipped(true)
         .image_extent(get_image_extent()?);
-    if queue_family_indices
-        .windows(2)
-        .any(|indices| if let [a, b] = *indices { a != b } else { unreachable!() })
-    {
+    if queue_family_indices[0] == queue_family_indices[1] {
         swapchain_create_info = swapchain_create_info
             .image_sharing_mode(vk::SharingMode::CONCURRENT)
             .queue_family_indices(queue_family_indices);

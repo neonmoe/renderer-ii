@@ -37,12 +37,15 @@ mod gltf;
 pub use gltf::{Gltf, GltfResources, MeshIter};
 
 mod gpu;
-pub use gpu::{FrameIndex, Gpu, GpuId, GpuInfo};
+pub use gpu::{FrameIndex, Gpu};
 
 pub mod image_loading;
 
 mod material;
 pub use material::Material;
+
+mod physical_device;
+pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 
 mod pipeline;
 pub use pipeline::Pipeline;

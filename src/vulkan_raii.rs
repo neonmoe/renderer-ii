@@ -71,7 +71,7 @@ impl From<Image> for AnyImage {
 
 pub struct Swapchain {
     pub inner: vk::SwapchainKHR,
-    pub device: Rc<khr::Swapchain>,
+    pub device: khr::Swapchain,
 }
 trivial_drop_impl!(Swapchain, destroy_swapchain);
 

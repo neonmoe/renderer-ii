@@ -45,14 +45,16 @@ fn fallible_main() -> anyhow::Result<()> {
     let (width, height) = window.vulkan_drawable_size();
 
     let driver = Rc::new(neonvk::Driver::new(&window)?);
-    let (gpu, _gpus) = neonvk::Gpu::new(&driver, None)?;
+    let physical_devices = neonvk::get_physical_devices(&driver.entry, &driver.instance, driver.surface)?;
+    let physical_device = &physical_devices[0];
+    let gpu = neonvk::Gpu::new(&driver, physical_device)?;
     let gpu = Rc::new(gpu);
     let temp_arenas = (0..gpu.temp_arena_count())
         .map(|_| {
             neonvk::VulkanArena::new(
                 &driver.instance,
                 &gpu.device,
-                gpu.physical_device,
+                physical_device.inner,
                 300_000_000,
                 neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE,
                 neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE,
@@ -60,7 +62,7 @@ fn fallible_main() -> anyhow::Result<()> {
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut canvas = neonvk::Canvas::new(&gpu, None, width, height, false)?;
+    let mut canvas = neonvk::Canvas::new(&gpu, physical_device, None, width, height, false)?;
 
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     loading_frame_index.get_arena(&temp_arenas).reset().unwrap();
@@ -69,7 +71,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let assets_arena = neonvk::VulkanArena::new(
         &driver.instance,
         &gpu.device,
-        gpu.physical_device,
+        physical_device.inner,
         500_000_000,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -139,7 +141,7 @@ fn fallible_main() -> anyhow::Result<()> {
         if size_changed {
             gpu.wait_idle()?;
             let (width, height) = window.vulkan_drawable_size();
-            canvas = neonvk::Canvas::new(&gpu, Some(&canvas), width, height, immediate_present)?;
+            canvas = neonvk::Canvas::new(&gpu, physical_device, Some(&canvas), width, height, immediate_present)?;
             size_changed = false;
         }
 

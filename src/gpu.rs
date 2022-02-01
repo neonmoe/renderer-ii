@@ -2,13 +2,12 @@ use crate::descriptors::Descriptors;
 use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
 use crate::vulkan_raii::Buffer;
 use crate::vulkan_raii::ImageView;
-use crate::{Camera, Canvas, Driver, Error, Scene, VulkanArena};
-use ash::extensions::{ext, khr};
+use crate::{Camera, Canvas, Driver, Error, PhysicalDevice, Scene, VulkanArena};
+use ash::extensions::ext;
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
-use ash::{vk, Device, Instance};
+use ash::{vk, Device};
 use glam::Mat4;
-use std::ffi::CStr;
 use std::mem;
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
@@ -29,17 +28,6 @@ impl FrameIndex {
     pub fn get_arena(self, arenas: &[VulkanArena]) -> &VulkanArena {
         &arenas[self.index as usize]
     }
-}
-
-/// A unique id for every distinct GPU.
-pub struct GpuId([u8; 16]);
-
-/// Describes a GPU that can be used as a [Gpu]. Queried in
-/// [Gpu::new].
-pub struct GpuInfo {
-    pub in_use: bool,
-    pub name: String,
-    pub id: GpuId,
 }
 
 struct WaitSemaphore(vk::Semaphore, vk::PipelineStageFlags);
@@ -73,14 +61,9 @@ pub struct Gpu {
     /// the instance.
     pub driver: Rc<Driver>,
 
-    pub(crate) surface_ext: khr::Surface,
-
-    pub physical_device: vk::PhysicalDevice,
     pub device: Rc<Device>,
     pub(crate) command_pool: vk::CommandPool,
 
-    pub(crate) graphics_family_index: u32,
-    pub(crate) surface_family_index: u32,
     pub(crate) graphics_queue: vk::Queue,
     surface_queue: vk::Queue,
     frame_start_fence: vk::Fence,
@@ -143,150 +126,30 @@ impl Gpu {
     /// The inner tuples consist of: whether the gpu is the one picked
     /// in this function call, the display name, and the id passed to
     /// a new [Gpu] when recreating it with a new physical device.
-    pub fn new(driver: &Rc<Driver>, preferred_physical_device: Option<[u8; 16]>) -> Result<(Gpu, Vec<GpuInfo>), Error> {
+    pub fn new(driver: &Rc<Driver>, physical_device: &PhysicalDevice) -> Result<Gpu, Error> {
         profiling::scope!("new_gpu");
-        let surface_ext = khr::Surface::new(&driver.entry, &driver.instance);
-        let queue_family_supports_surface = |pd: vk::PhysicalDevice, index: u32| {
-            let support = unsafe { surface_ext.get_physical_device_surface_support(pd, index, driver.surface) };
-            matches!(support, Ok(true))
-        };
-
-        // TODO: Move physical device stuff to its own module
-        // <physical device stuff>
-        let all_physical_devices =
-            unsafe { driver.instance.enumerate_physical_devices() }.map_err(Error::VulkanEnumeratePhysicalDevices)?;
-        let mut physical_devices = all_physical_devices
-            .into_iter()
-            .filter_map(|physical_device| {
-                if !is_extension_supported(&driver.instance, physical_device, "VK_KHR_swapchain") {
-                    return None;
-                }
-
-                let queue_families = unsafe { driver.instance.get_physical_device_queue_family_properties(physical_device) };
-                let mut graphics_family_index = None;
-                let mut surface_family_index = None;
-                for (index, family_index) in queue_families.into_iter().enumerate() {
-                    if family_index.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-                        graphics_family_index = Some(index as u32);
-                    }
-                    if queue_family_supports_surface(physical_device, index as u32) {
-                        surface_family_index = Some(index as u32);
-                    }
-                    if graphics_family_index == surface_family_index {
-                        // If there's a queue which supports both, prefer that one.
-                        break;
-                    }
-                }
-
-                let properties = unsafe { driver.instance.get_physical_device_properties(physical_device) };
-                let format_properties = unsafe {
-                    driver
-                        .instance
-                        .get_physical_device_format_properties(physical_device, vk::Format::R8G8B8A8_SRGB)
-                };
-                match format_properties.optimal_tiling_features {
-                    features if !features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR) => {
-                        log::warn!(
-                            "physical device '{}' does not have SAMPLED_IMAGE_FILTER_LINEAR for optimal tiling 32-bit srgb images",
-                            get_device_name(&properties)
-                        );
-                        return None;
-                    }
-                    _ => {}
-                }
-
-                let features = unsafe { driver.instance.get_physical_device_features(physical_device) };
-                if let (Some(graphics_family_index), Some(surface_family_index)) = (graphics_family_index, surface_family_index) {
-                    Some((physical_device, properties, features, graphics_family_index, surface_family_index))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<(
-                vk::PhysicalDevice,
-                vk::PhysicalDeviceProperties,
-                vk::PhysicalDeviceFeatures,
-                u32,
-                u32,
-            )>>();
-
-        let (physical_device, physical_device_properties, physical_device_features, graphics_family_index, surface_family_index) =
-            if let Some(uuid) = preferred_physical_device {
-                physical_devices
-                    .iter()
-                    .find_map(|tuple| {
-                        let (_, properties, _, _, _) = tuple;
-                        if properties.pipeline_cache_uuid == uuid {
-                            Some(*tuple)
-                        } else {
-                            None
-                        }
-                    })
-                    .ok_or(Error::VulkanPhysicalDeviceMissing)?
-            } else {
-                physical_devices.sort_by(|(_, a_props, _, a_gfx, a_surf), (_, b_props, _, b_gfx, b_surf)| {
-                    let type_score = |properties: vk::PhysicalDeviceProperties| match properties.device_type {
-                        vk::PhysicalDeviceType::DISCRETE_GPU => 30,
-                        vk::PhysicalDeviceType::INTEGRATED_GPU => 20,
-                        vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
-                        vk::PhysicalDeviceType::CPU => 0,
-                        _ => 0,
-                    };
-                    let queue_score = |graphics_queue, surface_queue| {
-                        if graphics_queue == surface_queue {
-                            1
-                        } else {
-                            0
-                        }
-                    };
-                    let a_score = type_score(*a_props) + queue_score(a_gfx, a_surf);
-                    let b_score = type_score(*b_props) + queue_score(b_gfx, b_surf);
-                    // Highest score first.
-                    b_score.cmp(&a_score)
-                });
-                physical_devices.get(0).copied().ok_or(Error::VulkanPhysicalDeviceMissing)?
-            };
-
-        let physical_devices = physical_devices
-            .into_iter()
-            .map(|(_, properties, _, _, _)| {
-                let name = get_device_name(&properties);
-                let pd_type = match properties.device_type {
-                    vk::PhysicalDeviceType::DISCRETE_GPU => " (Discrete GPU)",
-                    vk::PhysicalDeviceType::INTEGRATED_GPU => " (Integrated GPU)",
-                    vk::PhysicalDeviceType::VIRTUAL_GPU => " (vGPU)",
-                    vk::PhysicalDeviceType::CPU => " (CPU)",
-                    _ => "",
-                };
-                let in_use = properties.pipeline_cache_uuid == physical_device_properties.pipeline_cache_uuid;
-                let name = format!("{}{}", name, pd_type);
-                let id = GpuId(properties.pipeline_cache_uuid);
-                GpuInfo { in_use, name, id }
-            })
-            .collect::<Vec<GpuInfo>>();
-        // </physical device stuff>
 
         let queue_priorities = [1.0, 1.0];
-        let queue_create_infos = if graphics_family_index == surface_family_index {
+        let queue_create_infos = if physical_device.graphics_family_index == physical_device.surface_family_index {
             vec![vk::DeviceQueueCreateInfo::builder()
-                .queue_family_index(graphics_family_index)
+                .queue_family_index(physical_device.graphics_family_index)
                 .queue_priorities(&queue_priorities)
                 .build()]
         } else {
             vec![
                 vk::DeviceQueueCreateInfo::builder()
-                    .queue_family_index(graphics_family_index)
+                    .queue_family_index(physical_device.graphics_family_index)
                     .queue_priorities(&queue_priorities[0..1])
                     .build(),
                 vk::DeviceQueueCreateInfo::builder()
-                    .queue_family_index(surface_family_index)
+                    .queue_family_index(physical_device.surface_family_index)
                     .queue_priorities(&queue_priorities[1..2])
                     .build(),
             ]
         };
         let mut extensions = vec![cstr!("VK_KHR_swapchain").as_ptr()];
         log::debug!("Device extension: VK_KHR_swapchain");
-        if is_extension_supported(&driver.instance, physical_device, "VK_EXT_memory_budget") {
+        if physical_device.extension_supported("VK_EXT_memory_budget") {
             extensions.push(cstr!("VK_EXT_memory_budget").as_ptr());
             log::debug!("Device extension (optional): VK_EXT_memory_budget");
         }
@@ -296,21 +159,21 @@ impl Gpu {
         let device_create_info = vk::DeviceCreateInfo::builder()
             .push_next(&mut physical_device_descriptor_indexing_features)
             .queue_create_infos(&queue_create_infos)
-            .enabled_features(&physical_device_features)
+            .enabled_features(&physical_device.features)
             .enabled_extension_names(&extensions);
         let device = unsafe {
             driver
                 .instance
-                .create_device(physical_device, &device_create_info, None)
+                .create_device(physical_device.inner, &device_create_info, None)
                 .map_err(Error::VulkanDeviceCreation)
         }?;
 
-        let graphics_queue = unsafe { device.get_device_queue(graphics_family_index, 0) };
+        let graphics_queue = unsafe { device.get_device_queue(physical_device.graphics_family_index, 0) };
         let surface_queue;
-        if graphics_family_index == surface_family_index {
-            surface_queue = unsafe { device.get_device_queue(graphics_family_index, 1) };
+        if physical_device.graphics_family_index == physical_device.surface_family_index {
+            surface_queue = unsafe { device.get_device_queue(physical_device.graphics_family_index, 1) };
         } else {
-            surface_queue = unsafe { device.get_device_queue(surface_family_index, 0) };
+            surface_queue = unsafe { device.get_device_queue(physical_device.surface_family_index, 0) };
         }
         if driver.debug_utils_available {
             let debug_utils_ext = ext::DebugUtils::new(&driver.entry, &driver.instance);
@@ -368,43 +231,35 @@ impl Gpu {
         }?;
 
         let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .queue_family_index(graphics_family_index)
+            .queue_family_index(physical_device.graphics_family_index)
             .flags(vk::CommandPoolCreateFlags::TRANSIENT | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
         let command_pool =
             unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
 
         // TODO: Move descriptors (and texture/material management) to its own module
         // Or maybe just expose Descriptors as pub?
-        let descriptors = Descriptors::new(&device, &physical_device_properties, &physical_device_features, frame_in_use_count)?;
+        let descriptors = Descriptors::new(&device, &physical_device.properties, &physical_device.features, frame_in_use_count)?;
         let mut texture_indices = Vec::with_capacity(MAX_TEXTURE_COUNT as usize);
         for _ in 0..MAX_TEXTURE_COUNT {
             texture_indices.push(AtomicBool::new(false));
         }
 
-        Ok((
-            Gpu {
-                driver: driver.clone(),
+        Ok(Gpu {
+            driver: driver.clone(),
 
-                surface_ext,
+            device: Rc::new(device),
+            command_pool,
 
-                physical_device,
-                device: Rc::new(device),
-                command_pool,
+            graphics_queue,
+            surface_queue,
+            frame_start_fence,
 
-                graphics_family_index,
-                surface_family_index,
-                graphics_queue,
-                surface_queue,
-                frame_start_fence,
+            descriptors,
+            texture_indices,
 
-                descriptors,
-                texture_indices,
-
-                frame_locals,
-                render_wait_semaphores: mpsc::channel(),
-            },
-            physical_devices,
-        ))
+            frame_locals,
+            render_wait_semaphores: mpsc::channel(),
+        })
     }
 
     pub fn temp_arena_count(&self) -> usize {
@@ -842,20 +697,4 @@ impl Gpu {
 
         Ok(())
     }
-}
-
-#[profiling::function]
-fn is_extension_supported(instance: &Instance, physical_device: vk::PhysicalDevice, target_extension_name: &str) -> bool {
-    match unsafe { instance.enumerate_device_extension_properties(physical_device) } {
-        Err(_) => false,
-        Ok(extensions) => extensions.iter().any(|extension_properties| {
-            let extension_name_slice = &extension_properties.extension_name[..];
-            let extension_name = unsafe { CStr::from_ptr(extension_name_slice.as_ptr()) }.to_string_lossy();
-            extension_name == target_extension_name
-        }),
-    }
-}
-
-fn get_device_name(properties: &vk::PhysicalDeviceProperties) -> std::borrow::Cow<'_, str> {
-    unsafe { CStr::from_ptr((&properties.device_name[..]).as_ptr()) }.to_string_lossy()
 }
