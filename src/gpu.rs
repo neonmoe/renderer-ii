@@ -1,8 +1,7 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::PushConstantStruct;
 use crate::vulkan_raii::Buffer;
-use crate::{Camera, Canvas, Driver, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
-use ash::extensions::ext;
+use crate::{debug_utils, Camera, Canvas, Driver, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
 use ash::{vk, Device};
@@ -171,24 +170,13 @@ impl Gpu {
             surface_queue = unsafe { device.get_device_queue(physical_device.surface_family_index, 0) };
         }
         if driver.debug_utils_available {
-            let debug_utils_ext = ext::DebugUtils::new(&driver.entry, &driver.instance);
-            // TODO: Make a utility function to give vulkan objects names, then use debug names more widely
-            let graphics_name_info = vk::DebugUtilsObjectNameInfoEXT {
-                object_type: vk::ObjectType::QUEUE,
-                object_handle: graphics_queue.as_raw(),
-                p_object_name: cstr!("Graphics Queue").as_ptr(),
-                ..Default::default()
-            };
-            let surface_name_info = vk::DebugUtilsObjectNameInfoEXT {
-                object_type: vk::ObjectType::QUEUE,
-                object_handle: surface_queue.as_raw(),
-                p_object_name: cstr!("Surface Presentation Queue").as_ptr(),
-                ..Default::default()
-            };
-            unsafe {
-                let _ = debug_utils_ext.debug_utils_set_object_name(device.handle(), &graphics_name_info);
-                let _ = debug_utils_ext.debug_utils_set_object_name(device.handle(), &surface_name_info);
-            }
+            debug_utils::name_vulkan_object(&device, vk::ObjectType::QUEUE, graphics_queue.as_raw(), cstr!("Queue [Graphics]"));
+            debug_utils::name_vulkan_object(
+                &device,
+                vk::ObjectType::QUEUE,
+                surface_queue.as_raw(),
+                cstr!("Queue [Surface Presentation]"),
+            );
         }
 
         // TODO: Move frame local stuff to its own module

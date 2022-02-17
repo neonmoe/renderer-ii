@@ -90,11 +90,13 @@ impl Driver {
         let instance = unsafe { entry.create_instance(&create_info, None) }?;
         let surface = unsafe { ash_window::create_surface(&entry, &instance, window, None) }.map_err(Error::VulkanSurfaceCreation)?;
 
-        let debug_utils_messenger = if debug_utils_available {
-            debug_utils::create_debug_utils_messenger(&entry, &instance).ok()
+        let debug_utils_messenger;
+        if debug_utils_available {
+            debug_utils::init_debug_utils(&entry, &instance);
+            debug_utils_messenger = debug_utils::create_debug_utils_messenger(&entry, &instance).ok();
         } else {
-            None
-        };
+            debug_utils_messenger = None;
+        }
 
         let surface_ext = khr::Surface::new(&entry, &instance);
 

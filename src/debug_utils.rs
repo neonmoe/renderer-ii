@@ -1,7 +1,31 @@
+use ash::extensions::ext;
 use ash::extensions::ext::DebugUtils;
-use ash::{vk, Entry, Instance};
+use ash::{vk, Device, Entry, Instance};
+use once_cell::sync::Lazy;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
+use std::sync::Mutex;
+
+static DEBUG_UTILS: Lazy<Mutex<Option<ext::DebugUtils>>> = Lazy::new(|| Mutex::new(None));
+
+#[profiling::function]
+pub(crate) fn init_debug_utils(entry: &Entry, instance: &Instance) {
+    let mut debug_utils = DEBUG_UTILS.lock().unwrap();
+    *debug_utils = Some(ext::DebugUtils::new(entry, instance));
+}
+
+#[profiling::function]
+pub(crate) fn name_vulkan_object(device: &Device, object_type: vk::ObjectType, object_handle: u64, name: &CStr) {
+    let debug_utils = DEBUG_UTILS.lock().unwrap();
+    let debug_utils = debug_utils.as_ref().unwrap();
+    let name_info = vk::DebugUtilsObjectNameInfoEXT {
+        object_type,
+        object_handle,
+        p_object_name: name.as_ptr(),
+        ..Default::default()
+    };
+    let _ = unsafe { debug_utils.debug_utils_set_object_name(device.handle(), &name_info) };
+}
 
 #[profiling::function]
 pub(crate) fn create_debug_utils_messenger(entry: &Entry, instance: &Instance) -> Result<vk::DebugUtilsMessengerEXT, vk::Result> {

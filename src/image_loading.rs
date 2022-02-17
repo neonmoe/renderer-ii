@@ -103,7 +103,7 @@ pub fn create_pixel(
     pixels: [u8; 4],
     kind: TextureKind,
 ) -> Result<ImageView, Error> {
-    let format = kind.convert_format(vk::Format::R8G8B8A8_UINT);
+    let format = kind.convert_format(vk::Format::R8G8B8A8_UNORM);
     let extent = *vk::Extent3D::builder().width(1).height(1).depth(1);
 
     let temp_arena = frame_index.get_arena(temp_arenas);
