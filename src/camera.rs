@@ -1,4 +1,4 @@
-use crate::{Canvas, Error, FrameIndex, Pipeline, VulkanArena};
+use crate::{Canvas, Descriptors, Error, FrameIndex, Pipeline, VulkanArena};
 use ash::vk;
 use glam::{Mat4, Quat, Vec3};
 use std::mem;
@@ -37,7 +37,13 @@ impl Camera {
     /// Updates Vulkan buffers with the current state of the
     /// [Camera] and [Canvas].
     #[profiling::function]
-    pub(crate) fn update(&self, canvas: &Canvas, temp_arenas: &[VulkanArena], frame_index: FrameIndex) -> Result<(), Error> {
+    pub(crate) fn update(
+        &self,
+        descriptors: &Descriptors,
+        canvas: &Canvas,
+        temp_arenas: &[VulkanArena],
+        frame_index: FrameIndex,
+    ) -> Result<(), Error> {
         let gpu = &canvas.gpu;
         let temp_arena = frame_index.get_arena(temp_arenas);
         let buffer_allocation = {
@@ -56,8 +62,8 @@ impl Camera {
             unsafe { buffer_allocation.write(src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
         }
 
-        gpu.descriptors
-            .set_uniform_buffer(gpu, frame_index, Pipeline::Default, 0, 0, buffer_allocation.buffer.inner);
+        let pipeline = Pipeline::SHARED_DESCRIPTOR_PIPELINE;
+        descriptors.set_uniform_buffer(frame_index, pipeline, 0, 0, buffer_allocation.buffer.inner);
         gpu.add_temp_buffer(frame_index, buffer_allocation.buffer);
         Ok(())
     }

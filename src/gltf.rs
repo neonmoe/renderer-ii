@@ -1,8 +1,9 @@
 use crate::arena::VulkanArena;
+use crate::descriptors::PipelineSpecificData;
 use crate::image_loading::{self, TextureKind};
 use crate::mesh::Mesh;
 use crate::vulkan_raii::ImageView;
-use crate::{Error, FrameIndex, Gpu, Material, Pipeline};
+use crate::{Descriptors, Error, FrameIndex, Gpu, Material, Pipeline};
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -31,7 +32,7 @@ pub struct Gltf {
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
     meshes: Vec<Vec<(Mesh, usize)>>,
-    materials: Vec<Material>,
+    materials: Vec<Rc<Material>>,
 }
 
 impl Gltf {
@@ -42,6 +43,7 @@ impl Gltf {
     #[profiling::function]
     pub fn from_glb(
         gpu: &Gpu,
+        descriptors: &mut Descriptors,
         main_arena: &VulkanArena,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
@@ -106,7 +108,16 @@ impl Gltf {
 
         let json = json.ok_or(Error::MissingGlbJson)?;
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
-        create_gltf(gpu, main_arena, temp_arenas, frame_index, gltf, resources, Some(buffer))
+        create_gltf(
+            gpu,
+            descriptors,
+            main_arena,
+            temp_arenas,
+            frame_index,
+            gltf,
+            resources,
+            Some(buffer),
+        )
     }
 
     /// Loads the glTF scene from the contents of a .gltf file.
@@ -116,6 +127,7 @@ impl Gltf {
     #[profiling::function]
     pub fn from_gltf(
         gpu: &Gpu,
+        descriptors: &mut Descriptors,
         main_arena: &VulkanArena,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
@@ -123,7 +135,7 @@ impl Gltf {
         resources: &mut GltfResources,
     ) -> Result<Gltf, Error> {
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(gltf).map_err(Error::GltfJsonDeserialization)?;
-        create_gltf(gpu, main_arena, temp_arenas, frame_index, gltf, resources, None)
+        create_gltf(gpu, descriptors, main_arena, temp_arenas, frame_index, gltf, resources, None)
     }
 
     pub fn mesh_iter(&self) -> MeshIter<'_> {
@@ -134,6 +146,7 @@ impl Gltf {
 #[profiling::function]
 fn create_gltf(
     gpu: &Gpu,
+    descriptors: &mut Descriptors,
     arena: &VulkanArena,
     temp_arenas: &[VulkanArena],
     frame_index: FrameIndex,
@@ -336,9 +349,19 @@ fn create_gltf(
                 let normal = handle_optional_result!(mat.normal_texture.as_ref().and_then(|tex| mktex(&images, tex)));
                 let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex)));
                 let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-                Material::new(gpu, base_color, metallic_roughness, normal, occlusion, emissive)
+                Material::new(
+                    descriptors,
+                    Pipeline::Gltf,
+                    PipelineSpecificData::Gltf {
+                        base_color,
+                        metallic_roughness,
+                        normal,
+                        occlusion,
+                        emissive,
+                    },
+                )
             })
-            .collect::<Result<Vec<Material>, Error>>()?
+            .collect::<Result<Vec<Rc<Material>>, Error>>()?
     };
 
     {
@@ -412,7 +435,7 @@ fn create_primitive(
         frame_index,
         &[pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
         index_buffer,
-        Pipeline::Default,
+        Pipeline::Gltf,
     )?;
 
     Ok(mesh)

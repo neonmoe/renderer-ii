@@ -1,8 +1,7 @@
 use crate::descriptors::Descriptors;
-use crate::pipeline::{Pipeline, PushConstantStruct, MAX_TEXTURE_COUNT};
+use crate::pipeline::PushConstantStruct;
 use crate::vulkan_raii::Buffer;
-use crate::vulkan_raii::ImageView;
-use crate::{Camera, Canvas, Driver, Error, PhysicalDevice, Scene, VulkanArena};
+use crate::{Camera, Canvas, Driver, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
 use ash::extensions::ext;
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk::Handle;
@@ -17,11 +16,15 @@ use std::sync::mpsc::{self, Receiver, Sender};
 /// Get from [Gpu::wait_frame].
 #[derive(Clone, Copy)]
 pub struct FrameIndex {
-    index: u32,
+    /// The index of the swapchain image we're rendering to this
+    /// frame. Can be used to index into frame-specific buffers that
+    /// need to make sure they don't overwrite stuff still in use by
+    /// previous frames.
+    pub index: usize,
 }
 
 impl FrameIndex {
-    fn new(index: u32) -> FrameIndex {
+    fn new(index: usize) -> FrameIndex {
         FrameIndex { index }
     }
 
@@ -68,9 +71,6 @@ pub struct Gpu {
     surface_queue: vk::Queue,
     frame_start_fence: vk::Fence,
 
-    pub(crate) descriptors: Descriptors,
-    pub(crate) texture_indices: Vec<AtomicBool>,
-
     frame_locals: Vec<FrameLocal>,
     render_wait_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
 }
@@ -79,11 +79,6 @@ impl Drop for Gpu {
     #[profiling::function]
     fn drop(&mut self) {
         let _ = self.wait_idle();
-
-        {
-            profiling::scope!("destroy descriptors");
-            self.descriptors.clean_up(&self.device);
-        }
 
         {
             profiling::scope!("destroy frame start fence");
@@ -236,14 +231,6 @@ impl Gpu {
         let command_pool =
             unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
 
-        // TODO: Move descriptors (and texture/material management) to its own module
-        // Or maybe just expose Descriptors as pub?
-        let descriptors = Descriptors::new(&device, &physical_device.properties, &physical_device.features, frame_in_use_count)?;
-        let mut texture_indices = Vec::with_capacity(MAX_TEXTURE_COUNT as usize);
-        for _ in 0..MAX_TEXTURE_COUNT {
-            texture_indices.push(AtomicBool::new(false));
-        }
-
         Ok(Gpu {
             driver: driver.clone(),
 
@@ -254,9 +241,6 @@ impl Gpu {
             surface_queue,
             frame_start_fence,
 
-            descriptors,
-            texture_indices,
-
             frame_locals,
             render_wait_semaphores: mpsc::channel(),
         })
@@ -266,12 +250,8 @@ impl Gpu {
         self.frame_locals.len()
     }
 
-    pub(crate) fn image_index(&self, frame_index: FrameIndex) -> usize {
-        frame_index.index as usize
-    }
-
     fn frame_local(&self, frame_index: FrameIndex) -> &FrameLocal {
-        &self.frame_locals[self.image_index(frame_index)]
+        &self.frame_locals[frame_index.index]
     }
 
     // TODO: Add a proper way to create resources asynchronously
@@ -386,38 +366,6 @@ impl Gpu {
         }
     }
 
-    // TODO: Re-do the texture index reservation system
-    // Currently it basically requires Rc's to communicate that a texture has been released.
-    // It does not work after the memory management refactor.
-    #[profiling::function]
-    pub(crate) fn reserve_texture_index(
-        &self,
-        base_color: Option<Rc<ImageView>>,
-        metallic_roughness: Option<Rc<ImageView>>,
-        normal: Option<Rc<ImageView>>,
-        occlusion: Option<Rc<ImageView>>,
-        emission: Option<Rc<ImageView>>,
-    ) -> Result<TextureIndex, Error> {
-        let index = self
-            .texture_indices
-            .iter()
-            .position(|occupied| {
-                occupied
-                    .compare_exchange_weak(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                    .is_ok()
-            })
-            .ok_or(Error::TextureIndexReserve)? as u32;
-        let image_views = &[base_color, metallic_roughness, normal, occlusion, emission];
-        self.descriptors
-            .set_uniform_images(&self.device, Pipeline::Default, 1, 1, image_views, index..index + 1);
-        Ok(TextureIndex(index))
-    }
-
-    #[profiling::function]
-    pub(crate) fn release_texture_index(&self, index: u32) {
-        self.texture_indices[index as usize].store(false, Ordering::Relaxed);
-    }
-
     // TODO: Refactor Gpu to handle just the pub fns, rename to maybe Renderer?
     // Pub fns meaning the following:
     // - wait until gpu is idle
@@ -453,7 +401,7 @@ impl Gpu {
                 .acquire_next_image(canvas.swapchain.inner, u64::MAX, vk::Semaphore::null(), self.frame_start_fence)
                 .map_err(Error::VulkanAcquireImage)
         }?;
-        let frame_index = FrameIndex::new(image_index);
+        let frame_index = FrameIndex::new(image_index as usize);
         let frame_local = self.frame_local(frame_index);
 
         let fences = [self.frame_start_fence, frame_local.frame_end_fence];
@@ -484,6 +432,7 @@ impl Gpu {
         &self,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
+        descriptors: &mut Descriptors,
         canvas: &Canvas,
         camera: &Camera,
         scene: &Scene,
@@ -491,16 +440,16 @@ impl Gpu {
     ) -> Result<(), Error> {
         let frame_local = self.frame_local(frame_index);
         frame_local.in_use.store(true, Ordering::Relaxed);
-        camera.update(canvas, temp_arenas, frame_index)?;
+        camera.update(descriptors, canvas, temp_arenas, frame_index)?;
 
-        let image_index = self.image_index(frame_index);
-        let command_buffer = canvas.command_buffers[image_index];
-        let framebuffer = &canvas.framebuffers[image_index];
-        self.record_commmand_buffer(
+        let command_buffer = canvas.command_buffers[frame_index.index];
+        let framebuffer = &canvas.framebuffers[frame_index.index];
+        self.record_command_buffer(
             temp_arenas,
             frame_index,
             command_buffer,
             framebuffer.inner,
+            descriptors,
             canvas,
             scene,
             debug_value,
@@ -530,7 +479,7 @@ impl Gpu {
         }?;
 
         let swapchains = [canvas.swapchain.inner];
-        let image_indices = [image_index as u32];
+        let image_indices = [frame_index.index as u32];
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&signal_semaphores)
             .swapchains(&swapchains)
@@ -550,12 +499,13 @@ impl Gpu {
     }
 
     #[profiling::function]
-    fn record_commmand_buffer(
+    fn record_command_buffer(
         &self,
         temp_arenas: &[VulkanArena],
         frame_index: FrameIndex,
         command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
+        descriptors: &mut Descriptors,
         canvas: &Canvas,
         scene: &Scene,
         debug_value: u32,
@@ -568,6 +518,8 @@ impl Gpu {
                 .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
                 .map_err(Error::VulkanResetCommandBuffer)?;
         }
+
+        descriptors.write_descriptors(frame_index);
 
         let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {
@@ -592,23 +544,25 @@ impl Gpu {
                 .cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
         }
 
-        // Bind the shared descriptor set (#0)
-        let shared_descriptor_set = self.descriptors.descriptor_sets(self, frame_index, 0)[0];
-        unsafe {
-            profiling::scope!("bind shared descriptor set");
-            self.device.cmd_bind_descriptor_sets(
-                command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.descriptors.pipeline_layouts[0],
-                0,
-                &[shared_descriptor_set],
-                &[],
-            );
+        // Bind the shared descriptor set
+        {
+            let pipeline = Pipeline::SHARED_DESCRIPTOR_PIPELINE;
+            let shared_descriptor_set = descriptors.descriptor_sets(frame_index, pipeline)[0];
+            unsafe {
+                profiling::scope!("bind shared descriptor set");
+                self.device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    descriptors.pipeline_layouts.get(pipeline).inner,
+                    0,
+                    &[shared_descriptor_set],
+                    &[],
+                );
+            }
         }
 
-        for (pipeline, meshes) in &scene.pipeline_map {
+        for (&pipeline, meshes) in &scene.pipeline_map {
             profiling::scope!("pipeline");
-            let pipeline_idx = *pipeline as usize;
             if meshes.is_empty() {
                 continue;
             }
@@ -617,21 +571,16 @@ impl Gpu {
                 self.device.cmd_bind_pipeline(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
-                    canvas.pipelines[pipeline_idx].inner,
+                    canvas.pipelines.get(pipeline).inner,
                 )
             };
-            let layout = self.descriptors.pipeline_layouts[pipeline_idx];
-            let descriptor_sets = self.descriptors.descriptor_sets(self, frame_index, pipeline_idx);
+            let bind_point = vk::PipelineBindPoint::GRAPHICS;
+            let layout = descriptors.pipeline_layouts.get(pipeline).inner;
+            let descriptor_sets = descriptors.descriptor_sets(frame_index, pipeline);
             if descriptor_sets.len() > 1 {
                 unsafe {
-                    self.device.cmd_bind_descriptor_sets(
-                        command_buffer,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        layout,
-                        1,
-                        &descriptor_sets[1..],
-                        &[],
-                    )
+                    self.device
+                        .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[])
                 };
             }
 
@@ -653,7 +602,7 @@ impl Gpu {
                 }
 
                 let push_constants = [PushConstantStruct {
-                    texture_index: material.texture_index.0,
+                    texture_index: material.array_index,
                     debug_value,
                 }];
                 let push_constants = bytemuck::bytes_of(&push_constants);

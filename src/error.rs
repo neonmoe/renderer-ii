@@ -93,8 +93,8 @@ pub enum Error {
     VulkanFlushMapped(#[source] vk::Result),
     #[error("tried to update vertices, buffer is not editable (see Buffer::new)")]
     BufferNotEditable,
-    #[error("too many textures: failed to reserve a texture index")]
-    TextureIndexReserve,
+    #[error("too many materials: failed to reserve a material index")]
+    MaterialIndexReserve,
     #[error("not a glb file")]
     InvalidGlbHeader,
     #[error("glb header length mismatch")]

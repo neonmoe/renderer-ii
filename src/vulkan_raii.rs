@@ -130,3 +130,49 @@ pub struct Pipeline {
     pub render_pass: Rc<RenderPass>,
 }
 trivial_drop_impl!(Pipeline, destroy_pipeline);
+
+pub struct Sampler {
+    pub inner: vk::Sampler,
+    pub device: Rc<Device>,
+}
+trivial_drop_impl!(Sampler, destroy_sampler);
+
+pub struct DescriptorSetLayouts {
+    pub inner: Vec<vk::DescriptorSetLayout>,
+    pub device: Rc<Device>,
+    pub immutable_samplers: Vec<Rc<Sampler>>,
+}
+impl Drop for DescriptorSetLayouts {
+    fn drop(&mut self) {
+        for descriptor_set_layout in &self.inner {
+            unsafe { self.device.destroy_descriptor_set_layout(*descriptor_set_layout, None) };
+        }
+    }
+}
+
+pub struct PipelineLayout {
+    pub inner: vk::PipelineLayout,
+    pub device: Rc<Device>,
+    pub descriptor_set_layouts: Rc<DescriptorSetLayouts>,
+}
+trivial_drop_impl!(PipelineLayout, destroy_pipeline_layout);
+
+pub struct DescriptorPool {
+    pub inner: vk::DescriptorPool,
+    pub device: Rc<Device>,
+}
+trivial_drop_impl!(DescriptorPool, destroy_descriptor_pool);
+
+pub struct DescriptorSets {
+    pub inner: Vec<vk::DescriptorSet>,
+    pub device: Rc<Device>,
+    pub descriptor_pool: Rc<DescriptorPool>,
+}
+impl Drop for DescriptorSets {
+    fn drop(&mut self) {
+        // NOTE: Maybe pointless? The descriptor pool should clean up
+        // everything, and all the sets are allocated at the start of
+        // the program.
+        let _ = unsafe { self.device.free_descriptor_sets(self.descriptor_pool.inner, &self.inner) };
+    }
+}

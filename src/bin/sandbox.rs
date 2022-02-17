@@ -62,7 +62,13 @@ fn fallible_main() -> anyhow::Result<()> {
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut canvas = neonvk::Canvas::new(&gpu, physical_device, None, width, height, false)?;
+    let mut descriptors = neonvk::Descriptors::new(
+        &gpu.device,
+        &physical_device.properties,
+        &physical_device.features,
+        gpu.temp_arena_count() as u32, // TODO: Come up with a proper way to get this
+    )?;
+    let mut canvas = neonvk::Canvas::new(&gpu, physical_device, &descriptors, None, width, height, false)?;
 
     let loading_frame_index = gpu.wait_frame(&canvas)?;
     loading_frame_index.get_arena(&temp_arenas).reset().unwrap();
@@ -80,6 +86,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut resources = neonvk::GltfResources::with_path(find_resources_path());
     let sponza_model = neonvk::Gltf::from_gltf(
         &gpu,
+        &mut descriptors,
         &assets_arena,
         &temp_arenas,
         loading_frame_index,
@@ -91,7 +98,15 @@ fn fallible_main() -> anyhow::Result<()> {
     drop(resources);
 
     // Get the first frame out of the way, to upload the meshes.
-    gpu.render_frame(&temp_arenas, loading_frame_index, &canvas, &camera, &neonvk::Scene::new(), 0)?;
+    gpu.render_frame(
+        &temp_arenas,
+        loading_frame_index,
+        &mut descriptors,
+        &canvas,
+        &camera,
+        &neonvk::Scene::new(),
+        0,
+    )?;
 
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
@@ -141,7 +156,7 @@ fn fallible_main() -> anyhow::Result<()> {
         if size_changed {
             gpu.wait_idle()?;
             let (width, height) = window.vulkan_drawable_size();
-            canvas = neonvk::Canvas::new(&gpu, physical_device, Some(&canvas), width, height, immediate_present)?;
+            canvas = neonvk::Canvas::new(&gpu, physical_device, &descriptors, Some(&canvas), width, height, immediate_present)?;
             size_changed = false;
         }
 
@@ -152,7 +167,7 @@ fn fallible_main() -> anyhow::Result<()> {
 
         let frame_index = gpu.wait_frame(&canvas)?;
         frame_index.get_arena(&temp_arenas).reset().unwrap();
-        match gpu.render_frame(&temp_arenas, frame_index, &canvas, &camera, &scene, debug_value) {
+        match gpu.render_frame(&temp_arenas, frame_index, &mut descriptors, &canvas, &camera, &scene, debug_value) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),

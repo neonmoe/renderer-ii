@@ -10,7 +10,6 @@ macro_rules! cstr {
 // internal modules:
 
 mod debug_utils;
-mod descriptors;
 mod mesh;
 mod vulkan_raii;
 
@@ -27,6 +26,9 @@ pub use camera::Camera;
 mod canvas;
 pub use canvas::Canvas;
 
+mod descriptors;
+pub use descriptors::{Descriptors, Material};
+
 mod driver;
 pub use driver::Driver;
 
@@ -40,9 +42,6 @@ mod gpu;
 pub use gpu::{FrameIndex, Gpu};
 
 pub mod image_loading;
-
-mod material;
-pub use material::Material;
 
 mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};

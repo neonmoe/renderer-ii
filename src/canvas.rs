@@ -1,6 +1,7 @@
 use crate::arena::VulkanArena;
-use crate::pipeline::{PipelineParameters, PIPELINE_PARAMETERS};
-use crate::vulkan_raii::{AnyImage, Framebuffer, ImageView, Pipeline, RenderPass, Swapchain};
+use crate::pipeline::{PipelineMap, PIPELINE_PARAMETERS};
+use crate::vulkan_raii::{self, AnyImage, Framebuffer, ImageView, PipelineLayout, RenderPass, Swapchain};
+use crate::Descriptors;
 use crate::{Error, Gpu, PhysicalDevice};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
@@ -36,7 +37,7 @@ pub struct Canvas {
     pub(crate) swapchain: Rc<Swapchain>,
     pub(crate) framebuffers: Vec<Framebuffer>,
     pub(crate) final_render_pass: Rc<RenderPass>,
-    pub(crate) pipelines: Vec<Pipeline>,
+    pub(crate) pipelines: PipelineMap<vulkan_raii::Pipeline>,
     pub(crate) command_buffers: Vec<vk::CommandBuffer>,
 }
 
@@ -64,6 +65,7 @@ impl Canvas {
     pub fn new(
         gpu: &Rc<Gpu>,
         physical_device: &PhysicalDevice,
+        descriptors: &Descriptors,
         old_canvas: Option<&Canvas>,
         fallback_width: u32,
         fallback_height: u32,
@@ -184,21 +186,14 @@ impl Canvas {
             device: device.clone(),
         });
 
-        let pipelines = create_pipelines(
-            device,
-            final_render_pass.inner,
-            extent,
-            &gpu.descriptors.pipeline_layouts,
-            &PIPELINE_PARAMETERS,
-        )?;
-        let pipelines = pipelines
-            .into_iter()
-            .map(|pipeline| Pipeline {
-                inner: pipeline,
+        let mut vk_pipelines = create_pipelines(device, final_render_pass.inner, extent, &descriptors.pipeline_layouts)?.into_iter();
+        let pipelines = PipelineMap::new::<Error, _>(|_| {
+            Ok(vulkan_raii::Pipeline {
+                inner: vk_pipelines.next().unwrap(),
                 device: device.clone(),
                 render_pass: final_render_pass.clone(),
             })
-            .collect::<Vec<_>>();
+        })?;
 
         let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(gpu.command_pool)
@@ -319,7 +314,7 @@ fn create_swapchain(
         .present_mode(present_mode)
         .clipped(true)
         .image_extent(get_image_extent()?);
-    if queue_family_indices[0] == queue_family_indices[1] {
+    if queue_family_indices[0] != queue_family_indices[1] {
         swapchain_create_info = swapchain_create_info
             .image_sharing_mode(vk::SharingMode::CONCURRENT)
             .queue_family_indices(queue_family_indices);
@@ -392,10 +387,9 @@ fn create_pipelines(
     device: &Device,
     render_pass: vk::RenderPass,
     extent: vk::Extent2D,
-    pipeline_layouts: &[vk::PipelineLayout],
-    pipelines_params: &[PipelineParameters],
+    pipeline_layouts: &PipelineMap<PipelineLayout>,
 ) -> Result<Vec<vk::Pipeline>, Error> {
-    let mut all_shader_modules = Vec::with_capacity(pipelines_params.len() * 2);
+    let mut all_shader_modules = Vec::with_capacity(PIPELINE_PARAMETERS.len() * 2);
     let mut create_shader_module = |spirv: &'static [u32]| -> Result<vk::ShaderModule, Error> {
         let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
         let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(Error::VulkanShaderModuleCreation)?;
@@ -403,27 +397,27 @@ fn create_pipelines(
         Ok(shader_module)
     };
 
-    let shader_stages_per_pipeline = pipelines_params
+    let shader_stages_per_pipeline = PIPELINE_PARAMETERS
         .iter()
-        .map(|pipeline| {
+        .map(|params| {
             let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
                 .stage(vk::ShaderStageFlags::VERTEX)
-                .module(create_shader_module(pipeline.vertex_shader)?)
+                .module(create_shader_module(params.vertex_shader)?)
                 .name(cstr!("main"));
             let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
                 .stage(vk::ShaderStageFlags::FRAGMENT)
-                .module(create_shader_module(pipeline.fragment_shader)?)
+                .module(create_shader_module(params.fragment_shader)?)
                 .name(cstr!("main"));
             Ok([vert_shader_stage_create_info.build(), frag_shader_stage_create_info.build()])
         })
         .collect::<Result<Vec<[vk::PipelineShaderStageCreateInfo; 2]>, Error>>()?;
 
-    let vertex_input_per_pipeline = pipelines_params
+    let vertex_input_per_pipeline = PIPELINE_PARAMETERS
         .iter()
-        .map(|pipeline| {
+        .map(|params| {
             vk::PipelineVertexInputStateCreateInfo::builder()
-                .vertex_binding_descriptions(pipeline.bindings)
-                .vertex_attribute_descriptions(pipeline.attributes)
+                .vertex_binding_descriptions(params.bindings)
+                .vertex_attribute_descriptions(params.attributes)
                 .build()
         })
         .collect::<Vec<vk::PipelineVertexInputStateCreateInfo>>();
@@ -473,7 +467,7 @@ fn create_pipelines(
             .iter()
             .zip(vertex_input_per_pipeline.iter())
             .zip(pipeline_layouts.iter())
-            .map(|((shader_stages, vertex_input), &pipeline_layout)| {
+            .map(|((shader_stages, vertex_input), pipeline_layout)| {
                 vk::GraphicsPipelineCreateInfo::builder()
                     .stages(&shader_stages[..])
                     .vertex_input_state(vertex_input)
@@ -483,7 +477,7 @@ fn create_pipelines(
                     .multisample_state(&multisample_create_info)
                     .depth_stencil_state(&pipeline_depth_stencil_create_info)
                     .color_blend_state(&color_blend_create_info)
-                    .layout(pipeline_layout)
+                    .layout(pipeline_layout.inner)
                     .render_pass(render_pass)
                     .subpass(0)
                     .build()
