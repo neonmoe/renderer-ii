@@ -27,7 +27,7 @@ mod canvas;
 pub use canvas::Canvas;
 
 mod descriptors;
-pub use descriptors::{Descriptors, Material};
+pub use descriptors::{Descriptors, Material, PbrDefaults};
 
 mod driver;
 pub use driver::Driver;

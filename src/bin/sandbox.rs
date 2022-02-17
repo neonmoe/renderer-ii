@@ -83,6 +83,10 @@ fn fallible_main() -> anyhow::Result<()> {
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         "sandbox asset arena [gpu]",
     )?;
+
+    let pbr_defaults = neonvk::PbrDefaults::new(&gpu, &assets_arena, &temp_arenas, loading_frame_index)?;
+    descriptors.set_pbr_defaults(pbr_defaults);
+
     let mut resources = neonvk::GltfResources::with_path(find_resources_path());
     let sponza_model = neonvk::Gltf::from_gltf(
         &gpu,

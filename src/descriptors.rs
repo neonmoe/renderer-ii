@@ -1,6 +1,7 @@
+use crate::image_loading::{self, TextureKind};
 use crate::pipeline::{DescriptorSetLayoutParams, Pipeline, PipelineMap, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{DescriptorPool, DescriptorSetLayouts, DescriptorSets, ImageView, PipelineLayout, Sampler};
-use crate::{Error, FrameIndex};
+use crate::{Error, FrameIndex, Gpu, VulkanArena};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::Device;
@@ -64,9 +65,43 @@ impl Material {
 
 type MaterialSlot = Option<Weak<Material>>;
 type MaterialSlotArray = Vec<MaterialSlot>;
-/// Synchronization status per frame index.
+
+/// Synchronization status per frame index. True means the image views
+/// for the frame index are up to date.
 type MaterialStatus = Vec<bool>;
 type MaterialStatusArray = Vec<MaterialStatus>;
+
+pub struct PbrDefaults {
+    default_base_color: ImageView,
+    default_metallic_roughness: ImageView,
+    default_normal: ImageView,
+    default_occlusion: ImageView,
+    default_emissive: ImageView,
+}
+
+impl PbrDefaults {
+    pub fn new(gpu: &Gpu, arena: &VulkanArena, temp_arenas: &[VulkanArena], frame_idx: FrameIndex) -> Result<PbrDefaults, Error> {
+        const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+        const BLACK: [u8; 4] = [0, 0, 0, 0];
+        const NORMAL: [u8; 4] = [0, 0, 0, 0];
+        const M_AND_R: [u8; 4] = [0, 0, 0, 0];
+
+        let default_base_color = image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, WHITE, TextureKind::SrgbColor)?;
+        let default_metallic_roughness =
+            image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, M_AND_R, TextureKind::LinearColor)?;
+        let default_normal = image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, NORMAL, TextureKind::NormalMap)?;
+        let default_occlusion = image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, WHITE, TextureKind::LinearColor)?;
+        let default_emissive = image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, BLACK, TextureKind::SrgbColor)?;
+
+        Ok(PbrDefaults {
+            default_base_color,
+            default_metallic_roughness,
+            default_normal,
+            default_occlusion,
+            default_emissive,
+        })
+    }
+}
 
 pub struct Descriptors {
     pub(crate) pipeline_layouts: PipelineMap<PipelineLayout>,
@@ -74,6 +109,8 @@ pub struct Descriptors {
     device: Rc<Device>,
     material_slots_per_pipeline: PipelineMap<MaterialSlotArray>,
     material_status_per_pipeline: PipelineMap<MaterialStatusArray>,
+    // FIXME: Unwrap this.
+    pbr_defaults: Option<PbrDefaults>,
 }
 
 impl Descriptors {
@@ -223,7 +260,16 @@ impl Descriptors {
             device: device.clone(),
             material_slots_per_pipeline,
             material_status_per_pipeline,
+            pbr_defaults: None,
         })
+    }
+
+    // FIXME: Delete this. This will require image uploads to not
+    // require a canvas (currently required in order to get a
+    // FrameIndex, which in turn is needed for a temp arena, which in
+    // turn is needed for resource uploads).
+    pub fn set_pbr_defaults(&mut self, pbr_defaults: PbrDefaults) {
+        self.pbr_defaults = Some(pbr_defaults);
     }
 
     pub(crate) fn write_descriptors(&mut self, frame_index: FrameIndex) {
@@ -250,7 +296,28 @@ impl Descriptors {
                 emissive,
             } => {
                 let index = material.array_index..material.array_index + 1;
-                let images = [base_color, metallic_roughness, normal, occlusion, emissive];
+                let images = [
+                    base_color
+                        .as_ref()
+                        .map(Rc::as_ref)
+                        .unwrap_or(&self.pbr_defaults.as_ref().unwrap().default_base_color),
+                    metallic_roughness
+                        .as_ref()
+                        .map(Rc::as_ref)
+                        .unwrap_or(&self.pbr_defaults.as_ref().unwrap().default_metallic_roughness),
+                    normal
+                        .as_ref()
+                        .map(Rc::as_ref)
+                        .unwrap_or(&self.pbr_defaults.as_ref().unwrap().default_normal),
+                    occlusion
+                        .as_ref()
+                        .map(Rc::as_ref)
+                        .unwrap_or(&self.pbr_defaults.as_ref().unwrap().default_occlusion),
+                    emissive
+                        .as_ref()
+                        .map(Rc::as_ref)
+                        .unwrap_or(&self.pbr_defaults.as_ref().unwrap().default_emissive),
+                ];
                 self.set_uniform_images(frame_index, pipeline, 1, 1, &images, index);
             }
         }
@@ -287,17 +354,13 @@ impl Descriptors {
         pipeline: Pipeline,
         set: u32,
         first_binding: u32,
-        image_views: &[&Option<Rc<ImageView>>],
+        image_views: &[&ImageView],
         range: Range<u32>,
     ) {
         let frame_idx = frame_index.index;
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[frame_idx].get(pipeline).inner[set_idx];
-        for (i, image_view) in image_views
-            .iter()
-            .enumerate()
-            .filter_map(|(i, image_view)| image_view.as_ref().map(|img| (i, img)))
-        {
+        for (i, image_view) in image_views.iter().enumerate() {
             let descriptor_image_info = vk::DescriptorImageInfo::builder()
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .image_view(image_view.inner)
