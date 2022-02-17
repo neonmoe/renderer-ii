@@ -209,6 +209,7 @@ fn fallible_main() -> anyhow::Result<()> {
     drop(sponza_model);
     drop(assets_arena);
     drop(canvas);
+    drop(descriptors);
     drop(gpu);
 
     Ok(())

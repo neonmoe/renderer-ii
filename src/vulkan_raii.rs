@@ -163,16 +163,12 @@ pub struct DescriptorPool {
 }
 trivial_drop_impl!(DescriptorPool, destroy_descriptor_pool);
 
+/// Wrapper for an array of descriptor sets.
+///
+/// Does not implement drop, as the resources are freed when the pool
+/// is destroyed.
 pub struct DescriptorSets {
     pub inner: Vec<vk::DescriptorSet>,
     pub device: Rc<Device>,
     pub descriptor_pool: Rc<DescriptorPool>,
-}
-impl Drop for DescriptorSets {
-    fn drop(&mut self) {
-        // NOTE: Maybe pointless? The descriptor pool should clean up
-        // everything, and all the sets are allocated at the start of
-        // the program.
-        let _ = unsafe { self.device.free_descriptor_sets(self.descriptor_pool.inner, &self.inner) };
-    }
 }
