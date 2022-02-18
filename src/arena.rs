@@ -56,7 +56,7 @@ impl BufferAllocation {
 }
 
 pub struct VulkanArena {
-    pub device: Rc<Device>,
+    device: Rc<Device>,
     memory: Rc<DeviceMemory>,
     total_size: vk::DeviceSize,
     /// The location where the available memory starts. Gets set to 0

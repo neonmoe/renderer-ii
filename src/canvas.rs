@@ -100,7 +100,7 @@ impl Canvas {
             &gpu.driver.instance,
             &gpu.device,
             physical_device.inner,
-            300_000_000, // FIXME: too small for very big framebuffers?
+            630_000_000, // FIXME: too small for very big framebuffers?
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
             "framebuffer arena",
