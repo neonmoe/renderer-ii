@@ -308,8 +308,9 @@ fn create_gltf(
                     return Err(Error::GltfSpec("image does not have an uri nor a mimetype + buffer view"));
                 };
 
-                let texture_kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
-                Ok(Rc::new(image_load(gpu, arena, temp_arenas, frame_index, &bytes, texture_kind)?))
+                let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
+                let name = image.uri.as_ref().map(String::as_str).unwrap_or("glb binary buffer");
+                Ok(Rc::new(image_load(gpu, arena, temp_arenas, frame_index, &bytes, kind, name)?))
             })
             .collect::<Result<Vec<_>, Error>>()?
     };

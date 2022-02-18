@@ -58,7 +58,7 @@ fn fallible_main() -> anyhow::Result<()> {
                 300_000_000,
                 neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE,
                 neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE,
-                "frame local arena [gpu/cpu]",
+                "frame local arena",
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -81,7 +81,7 @@ fn fallible_main() -> anyhow::Result<()> {
         500_000_000,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        "sandbox asset arena [gpu]",
+        "sandbox asset arena",
     )?;
 
     let pbr_defaults = neonvk::PbrDefaults::new(&gpu, &assets_arena, &temp_arenas, loading_frame_index)?;

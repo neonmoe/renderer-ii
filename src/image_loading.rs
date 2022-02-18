@@ -1,5 +1,5 @@
 use crate::vulkan_raii::ImageView;
-use crate::{Error, FrameIndex, Gpu, VulkanArena};
+use crate::{debug_utils, Error, FrameIndex, Gpu, VulkanArena};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use std::rc::Rc;
@@ -245,6 +245,7 @@ pub fn load_ktx(
     frame_index: FrameIndex,
     bytes: &[u8],
     kind: TextureKind,
+    debug_identifier: &str,
 ) -> Result<ImageView, Error> {
     let ktx::KtxData {
         width,
@@ -266,6 +267,11 @@ pub fn load_ktx(
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         temp_arena.create_buffer(*buffer_create_info)?
     };
+    debug_utils::name_vulkan_object(
+        &gpu.device,
+        staging_buffer.buffer.inner,
+        format_args!("staging buffer: {}", debug_identifier),
+    );
 
     {
         profiling::scope!("write to staging buffer");
@@ -287,6 +293,7 @@ pub fn load_ktx(
             .samples(vk::SampleCountFlags::TYPE_1);
         arena.create_image(*image_info)?
     };
+    debug_utils::name_vulkan_object(&gpu.device, image_allocation.inner, format_args!("{}", debug_identifier));
 
     gpu.run_command_buffer(frame_index, vk::PipelineStageFlags::FRAGMENT_SHADER, |command_buffer| {
         let mut current_mip_level_extent = extent;
@@ -399,6 +406,7 @@ pub fn load_ktx(
             image: Rc::new(image_allocation.into()),
         }
     };
+    debug_utils::name_vulkan_object(&gpu.device, image_view.inner, format_args!("{}", debug_identifier));
 
     gpu.add_temp_buffer(frame_index, staging_buffer.buffer);
 

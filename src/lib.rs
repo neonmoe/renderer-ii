@@ -52,6 +52,9 @@ pub use pipeline::Pipeline;
 mod scene;
 pub use scene::Scene;
 
+mod uploader;
+pub use uploader::Uploader;
+
 // docs modules:
 
 pub mod plan_for_refcountification {

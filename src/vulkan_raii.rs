@@ -8,14 +8,29 @@
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
 use ash::vk;
-use ash::Device;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+
+pub struct Device {
+    pub inner: ash::Device,
+}
+impl std::ops::Deref for Device {
+    type Target = ash::Device;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+impl Drop for Device {
+    fn drop(&mut self) {
+        unsafe { self.inner.destroy_device(None) };
+    }
+}
 
 macro_rules! trivial_drop_impl {
     ($struct_name:ident, $destroy_func_name:ident) => {
         impl Drop for $struct_name {
             fn drop(&mut self) {
+                profiling::scope!(concat!("vk::", stringify!($destroy_func_name)));
                 unsafe { self.device.$destroy_func_name(self.inner, None) }
             }
         }
@@ -172,3 +187,15 @@ pub struct DescriptorSets {
     pub device: Rc<Device>,
     pub descriptor_pool: Rc<DescriptorPool>,
 }
+
+pub struct CommandPool {
+    pub inner: vk::CommandPool,
+    pub device: Rc<Device>,
+}
+trivial_drop_impl!(CommandPool, destroy_command_pool);
+
+pub struct Semaphore {
+    pub inner: vk::Semaphore,
+    pub device: Rc<Device>,
+}
+trivial_drop_impl!(Semaphore, destroy_semaphore);

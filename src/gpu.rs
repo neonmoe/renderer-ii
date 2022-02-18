@@ -1,10 +1,9 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::PushConstantStruct;
-use crate::vulkan_raii::Buffer;
+use crate::vulkan_raii::{Buffer, Device};
 use crate::{debug_utils, Camera, Canvas, Driver, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
 use ash::version::{DeviceV1_0, InstanceV1_0};
-use ash::vk::Handle;
-use ash::{vk, Device};
+use ash::vk;
 use glam::Mat4;
 use std::mem;
 use std::rc::Rc;
@@ -101,11 +100,6 @@ impl Drop for Gpu {
             profiling::scope!("destroy command pools");
             unsafe { self.device.destroy_command_pool(self.command_pool, None) };
         }
-
-        {
-            profiling::scope!("destroy vulkan device");
-            unsafe { self.device.destroy_device(None) };
-        }
     }
 }
 
@@ -161,6 +155,7 @@ impl Gpu {
                 .create_device(physical_device.inner, &device_create_info, None)
                 .map_err(Error::VulkanDeviceCreation)
         }?;
+        let device = Device { inner: device };
 
         let graphics_queue = unsafe { device.get_device_queue(physical_device.graphics_family_index, 0) };
         let surface_queue;
@@ -170,13 +165,8 @@ impl Gpu {
             surface_queue = unsafe { device.get_device_queue(physical_device.surface_family_index, 0) };
         }
         if driver.debug_utils_available {
-            debug_utils::name_vulkan_object(&device, vk::ObjectType::QUEUE, graphics_queue.as_raw(), cstr!("Queue [Graphics]"));
-            debug_utils::name_vulkan_object(
-                &device,
-                vk::ObjectType::QUEUE,
-                surface_queue.as_raw(),
-                cstr!("Queue [Surface Presentation]"),
-            );
+            debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
+            debug_utils::name_vulkan_object(&device, surface_queue, format_args!("present"));
         }
 
         // TODO: Move frame local stuff to its own module
@@ -504,7 +494,7 @@ impl Gpu {
             profiling::scope!("reset command buffer");
             self.device
                 .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
-                .map_err(Error::VulkanResetCommandBuffer)?;
+                .unwrap(); // FIXME: Use per-frame command pools instead of resettable buffers
         }
 
         descriptors.write_descriptors(frame_index);

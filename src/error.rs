@@ -42,7 +42,7 @@ pub enum Error {
     #[error("could not allocate the command buffers")]
     VulkanCommandBuffersAllocation(#[source] vk::Result),
     #[error("could not reset the command buffer")]
-    VulkanResetCommandBuffer(#[source] vk::Result),
+    VulkanResetCommandPool(#[source] vk::Result),
     #[error("could not begin command buffer recording")]
     VulkanBeginCommandBuffer(#[source] vk::Result),
     #[error("failed to record command buffer")]

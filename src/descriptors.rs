@@ -1,10 +1,9 @@
 use crate::image_loading::{self, TextureKind};
 use crate::pipeline::{DescriptorSetLayoutParams, Pipeline, PipelineMap, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS};
-use crate::vulkan_raii::{DescriptorPool, DescriptorSetLayouts, DescriptorSets, ImageView, PipelineLayout, Sampler};
-use crate::{debug_utils, Error, FrameIndex, Gpu, VulkanArena};
+use crate::vulkan_raii::{DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
+use crate::{Error, FrameIndex, Gpu, VulkanArena};
 use ash::version::DeviceV1_0;
-use ash::vk::{self, Handle};
-use ash::Device;
+use ash::vk;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::ops::Range;
@@ -86,43 +85,12 @@ impl PbrDefaults {
         const NORMAL: [u8; 4] = [0, 0, 0xFF, 0];
         const M_AND_R: [u8; 4] = [0, 0x88, 0, 0];
 
-        let default_base_color = image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, WHITE, TextureKind::SrgbColor)?;
-        let default_metallic_roughness =
-            image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, M_AND_R, TextureKind::LinearColor)?;
-        let default_normal = image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, NORMAL, TextureKind::NormalMap)?;
-        let default_occlusion = image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, WHITE, TextureKind::LinearColor)?;
-        let default_emissive = image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, BLACK, TextureKind::SrgbColor)?;
-
-        debug_utils::name_vulkan_object(
-            &gpu.device,
-            vk::ObjectType::IMAGE_VIEW,
-            default_base_color.inner.as_raw(),
-            cstr!("Default PBR Texture [Base Color]"),
-        );
-        debug_utils::name_vulkan_object(
-            &gpu.device,
-            vk::ObjectType::IMAGE_VIEW,
-            default_metallic_roughness.inner.as_raw(),
-            cstr!("Default PBR Texture [Metallic/Roughness]"),
-        );
-        debug_utils::name_vulkan_object(
-            &gpu.device,
-            vk::ObjectType::IMAGE_VIEW,
-            default_normal.inner.as_raw(),
-            cstr!("Default PBR Texture [Normal Maps]"),
-        );
-        debug_utils::name_vulkan_object(
-            &gpu.device,
-            vk::ObjectType::IMAGE_VIEW,
-            default_occlusion.inner.as_raw(),
-            cstr!("Default PBR Texture [Occlusion]"),
-        );
-        debug_utils::name_vulkan_object(
-            &gpu.device,
-            vk::ObjectType::IMAGE_VIEW,
-            default_emissive.inner.as_raw(),
-            cstr!("Default PBR Texture [Emissive]"),
-        );
+        let create_pixel = |color, kind| image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, color, kind);
+        let default_base_color = create_pixel(WHITE, TextureKind::SrgbColor)?;
+        let default_metallic_roughness = create_pixel(M_AND_R, TextureKind::LinearColor)?;
+        let default_normal = create_pixel(NORMAL, TextureKind::NormalMap)?;
+        let default_occlusion = create_pixel(WHITE, TextureKind::LinearColor)?;
+        let default_emissive = create_pixel(BLACK, TextureKind::SrgbColor)?;
 
         Ok(PbrDefaults {
             default_base_color,

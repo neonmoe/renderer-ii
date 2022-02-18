@@ -1,9 +1,10 @@
 //! An arena allocator for managing GPU memory.
+use crate::debug_utils;
 use crate::error::Error;
-use crate::vulkan_raii::{Buffer, DeviceMemory, Image};
+use crate::vulkan_raii::{Buffer, Device, DeviceMemory, Image};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk;
-use ash::{Device, Instance};
+use ash::Instance;
 use std::cell::Cell;
 use std::ptr;
 use std::rc::Rc;
@@ -91,6 +92,7 @@ impl VulkanArena {
             .memory_type_index(memory_type_index);
         let memory =
             unsafe { device.allocate_memory(&alloc_info, None) }.map_err(|err| Error::VulkanAllocate(err, debug_identifier, size))?;
+        debug_utils::name_vulkan_object(device, memory, format_args!("{}", debug_identifier));
 
         let physical_device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
         let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;

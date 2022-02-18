@@ -2,7 +2,8 @@ use ash::extensions::ext;
 use ash::extensions::ext::DebugUtils;
 use ash::{vk, Device, Entry, Instance};
 use once_cell::sync::Lazy;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
+use std::fmt::Arguments;
 use std::os::raw::{c_char, c_void};
 use std::sync::Mutex;
 
@@ -15,16 +16,46 @@ pub(crate) fn init_debug_utils(entry: &Entry, instance: &Instance) {
 }
 
 #[profiling::function]
-pub(crate) fn name_vulkan_object(device: &Device, object_type: vk::ObjectType, object_handle: u64, name: &CStr) {
+pub(crate) fn name_vulkan_object<H: vk::Handle>(device: &Device, object: H, name: Arguments) {
+    name_vulkan_object_impl(device, H::TYPE, object.as_raw(), name)
+}
+
+fn name_vulkan_object_impl(device: &Device, object_type: vk::ObjectType, object_handle: u64, name: Arguments) {
     let debug_utils = DEBUG_UTILS.lock().unwrap();
-    let debug_utils = debug_utils.as_ref().unwrap();
-    let name_info = vk::DebugUtilsObjectNameInfoEXT {
-        object_type,
-        object_handle,
-        p_object_name: name.as_ptr(),
-        ..Default::default()
-    };
-    let _ = unsafe { debug_utils.debug_utils_set_object_name(device.handle(), &name_info) };
+    if let Some(debug_utils) = debug_utils.as_ref() {
+        let object_name = format_object_name(format!("{:?}", object_type));
+        let name = CString::from_vec_with_nul(format!("{}: {}\0", object_name, name).into_bytes()).unwrap();
+        let name_info = vk::DebugUtilsObjectNameInfoEXT {
+            object_type,
+            object_handle,
+            p_object_name: name.as_ptr(),
+            ..Default::default()
+        };
+        let _ = unsafe { debug_utils.debug_utils_set_object_name(device.handle(), &name_info) };
+    }
+}
+
+fn format_object_name(mut object_name: String) -> String {
+    // The object_name string is the debug form of an object type,
+    // e.g. IMAGE_VIEW. This transforms it into PascalCase.
+
+    // The first char is already correctly cased.
+    for i in 1.. {
+        // The length changes over the loop, hence the manual check.
+        if i >= object_name.len() {
+            break;
+        }
+
+        if &object_name[i..i + 1] == "_" {
+            // Remove the _. The uppercase character after it will be
+            // left in its place.
+            object_name.remove(i);
+        } else {
+            // Everything else gets lowercased.
+            (&mut object_name[i..i + 1]).make_ascii_lowercase();
+        }
+    }
+    object_name
 }
 
 #[profiling::function]

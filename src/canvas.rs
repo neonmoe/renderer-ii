@@ -1,11 +1,11 @@
 use crate::arena::VulkanArena;
 use crate::pipeline::{PipelineMap, PIPELINE_PARAMETERS};
-use crate::vulkan_raii::{self, AnyImage, Framebuffer, ImageView, PipelineLayout, RenderPass, Swapchain};
+use crate::vulkan_raii::{self, AnyImage, Device, Framebuffer, ImageView, PipelineLayout, RenderPass, Swapchain};
 use crate::Descriptors;
 use crate::{Error, Gpu, PhysicalDevice};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
-use ash::{vk, Device};
+use ash::vk;
 use std::rc::Rc;
 
 pub const SWAPCHAIN_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
@@ -74,7 +74,7 @@ impl Canvas {
         profiling::scope!("new_canvas");
         let device = &gpu.device;
         let surface_ext = khr::Surface::new(&gpu.driver.entry, &gpu.driver.instance);
-        let swapchain_ext = khr::Swapchain::new(&gpu.driver.instance, &*gpu.device);
+        let swapchain_ext = khr::Swapchain::new(&gpu.driver.instance, &gpu.device.inner);
         let queue_family_indices = [physical_device.graphics_family_index, physical_device.surface_family_index];
         let (swapchain, swapchain_format, extent, frame_count) = create_swapchain(
             &surface_ext,
