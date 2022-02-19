@@ -2,8 +2,8 @@ use crate::arena::VulkanArena;
 use crate::descriptors::PipelineSpecificData;
 use crate::image_loading::{self, TextureKind};
 use crate::mesh::Mesh;
-use crate::vulkan_raii::ImageView;
-use crate::{Descriptors, Error, FrameIndex, Gpu, Material, Pipeline};
+use crate::vulkan_raii::{Device, ImageView};
+use crate::{Descriptors, Error, Material, Pipeline, Uploader};
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -42,11 +42,10 @@ impl Gltf {
     /// relative to `directory`.
     #[profiling::function]
     pub fn from_glb(
-        gpu: &Gpu,
+        device: &Rc<Device>,
+        uploader: &mut Uploader,
         descriptors: &mut Descriptors,
-        main_arena: &VulkanArena,
-        temp_arenas: &[VulkanArena],
-        frame_index: FrameIndex,
+        main_arena: &mut VulkanArena,
         glb: &[u8],
         resources: &mut GltfResources,
     ) -> Result<Gltf, Error> {
@@ -108,16 +107,7 @@ impl Gltf {
 
         let json = json.ok_or(Error::MissingGlbJson)?;
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
-        create_gltf(
-            gpu,
-            descriptors,
-            main_arena,
-            temp_arenas,
-            frame_index,
-            gltf,
-            resources,
-            Some(buffer),
-        )
+        create_gltf(device, uploader, descriptors, main_arena, gltf, resources, Some(buffer))
     }
 
     /// Loads the glTF scene from the contents of a .gltf file.
@@ -126,16 +116,15 @@ impl Gltf {
     /// relative to `directory`.
     #[profiling::function]
     pub fn from_gltf(
-        gpu: &Gpu,
+        device: &Rc<Device>,
+        uploader: &mut Uploader,
         descriptors: &mut Descriptors,
-        main_arena: &VulkanArena,
-        temp_arenas: &[VulkanArena],
-        frame_index: FrameIndex,
+        main_arena: &mut VulkanArena,
         gltf: &str,
         resources: &mut GltfResources,
     ) -> Result<Gltf, Error> {
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(gltf).map_err(Error::GltfJsonDeserialization)?;
-        create_gltf(gpu, descriptors, main_arena, temp_arenas, frame_index, gltf, resources, None)
+        create_gltf(device, uploader, descriptors, main_arena, gltf, resources, None)
     }
 
     pub fn mesh_iter(&self) -> MeshIter<'_> {
@@ -145,11 +134,10 @@ impl Gltf {
 
 #[profiling::function]
 fn create_gltf(
-    gpu: &Gpu,
+    device: &Rc<Device>,
+    uploader: &mut Uploader,
     descriptors: &mut Descriptors,
-    arena: &VulkanArena,
-    temp_arenas: &[VulkanArena],
-    frame_index: FrameIndex,
+    arena: &mut VulkanArena,
     gltf: gltf_json::GltfJson,
     resources: &mut GltfResources,
     bin_buffer: Option<&[u8]>,
@@ -192,7 +180,7 @@ fn create_gltf(
                 mesh.primitives
                     .iter()
                     .map(|primitive| {
-                        let mesh = create_primitive(gpu, arena, temp_arenas, frame_index, &gltf, &buffers, primitive)?;
+                        let mesh = create_primitive(uploader, arena, &gltf, &buffers, primitive)?;
                         let material_index = primitive.material.ok_or(Error::GltfMisc("material missing"))?;
                         Ok((mesh, material_index))
                     })
@@ -309,8 +297,8 @@ fn create_gltf(
                 };
 
                 let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
-                let name = image.uri.as_ref().map(String::as_str).unwrap_or("glb binary buffer");
-                Ok(Rc::new(image_load(gpu, arena, temp_arenas, frame_index, &bytes, kind, name)?))
+                let name = image.uri.as_deref().unwrap_or("glb binary buffer");
+                Ok(Rc::new(image_load(device, uploader, arena, &bytes, kind, name)?))
             })
             .collect::<Result<Vec<_>, Error>>()?
     };
@@ -394,10 +382,8 @@ fn create_gltf(
 
 #[profiling::function]
 fn create_primitive(
-    gpu: &Gpu,
-    arena: &VulkanArena,
-    temp_arenas: &[VulkanArena],
-    frame_index: FrameIndex,
+    uploader: &mut Uploader,
+    arena: &mut VulkanArena,
     gltf: &gltf_json::GltfJson,
     buffers: &[Rc<Cow<'_, [u8]>>],
     primitive: &gltf_json::Primitive,
@@ -430,10 +416,8 @@ fn create_primitive(
     let tangent_buffer = get_slice_from_accessor(gltf, buffers, tangent_accessor, GLTF_FLOAT, "VEC4")?;
 
     let mesh = Mesh::new::<u16>(
-        gpu,
+        uploader,
         arena,
-        temp_arenas,
-        frame_index,
         &[pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
         index_buffer,
         Pipeline::Gltf,

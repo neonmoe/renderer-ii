@@ -1,20 +1,20 @@
-use crate::vulkan_raii::{CommandPool, Device, Semaphore};
+use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence};
 use crate::{Error, PhysicalDevice, VulkanArena};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::Instance;
 use std::rc::Rc;
-
-struct WaitSemaphore(Semaphore, vk::PipelineStageFlags);
+use std::time::Duration;
 
 pub struct Uploader {
-    pub staging_memory: VulkanArena,
-    pub transfer_queue: vk::Queue,
-    pub graphics_queue: vk::Queue,
+    pub staging_arena: VulkanArena,
+    pub queue_family_indices: [u32; 2],
     device: Rc<Device>,
+    transfer_queue: vk::Queue,
     command_pool: CommandPool,
-    wait_semaphores: Vec<WaitSemaphore>,
-    free_semaphores: Vec<Semaphore>,
+    staging_buffers: Vec<Buffer>,
+    upload_fences: Vec<Fence>,
+    free_fences: Vec<Fence>,
 }
 
 impl Uploader {
@@ -22,7 +22,7 @@ impl Uploader {
         instance: &Instance,
         device: &Rc<Device>,
         transfer_queue: vk::Queue,
-        graphics_queue: vk::Queue,
+        upload_queue_family_indices: [u32; 2],
         physical_device: &PhysicalDevice,
         staging_buffer_size: vk::DeviceSize,
     ) -> Result<Uploader, Error> {
@@ -47,20 +47,57 @@ impl Uploader {
         )?;
 
         Ok(Uploader {
-            staging_memory,
-            transfer_queue,
-            graphics_queue,
+            staging_arena: staging_memory,
+            queue_family_indices: upload_queue_family_indices,
             device: device.clone(),
+            transfer_queue,
             command_pool,
-            wait_semaphores: Vec::new(),
-            free_semaphores: Vec::new(),
+            staging_buffers: Vec::new(),
+            upload_fences: Vec::new(),
+            free_fences: Vec::new(),
         })
     }
 
-    pub(crate) fn start_command_buffer<F>(&mut self, wait_stage: vk::PipelineStageFlags, f: F) -> Result<(), Error>
+    /// Returns true if the uploads should use concurrent sharing mode.
+    pub(crate) fn dedicated_transfers(&self) -> bool {
+        self.queue_family_indices[0] != self.queue_family_indices[1]
+    }
+
+    pub fn get_upload_statuses(&self) -> impl Iterator<Item = bool> + '_ {
+        self.upload_fences
+            .iter()
+            .map(move |fence| unsafe { self.device.get_fence_status(fence.inner) }.unwrap_or(false))
+    }
+
+    /// Waits `timeout` for the uploads to finish, then returns true
+    /// if the uploads are done, false if some are still in progress.
+    ///
+    /// A zero duration can be passed in to simply check the status of
+    /// the uploads as a whole, as opposed to the status of every
+    /// individual upload operation with
+    /// [Uploader::get_upload_statuses], which may be more
+    /// inefficient.
+    pub fn wait(&self, timeout: Duration) -> Result<bool, Error> {
+        let fences = self.upload_fences.iter().map(|fence| fence.inner).collect::<Vec<_>>();
+        match unsafe { self.device.wait_for_fences(&fences, true, timeout.as_nanos() as u64) } {
+            Ok(_) => Ok(true),
+            Err(vk::Result::TIMEOUT) => Ok(false),
+            Err(err) => Err(Error::VulkanFenceWait(err)),
+        }
+    }
+
+    pub(crate) fn start_upload<F>(
+        &mut self,
+        // Not currently used, but very probably will be used at a
+        // later point, for intra-frame-upload-waiting.
+        #[allow(unused_variables)] wait_stage: vk::PipelineStageFlags,
+        staging_buffer: Buffer,
+        record_upload_commands: F,
+    ) -> Result<(), Error>
     where
-        F: FnOnce(vk::CommandBuffer),
+        F: FnOnce(&ash::Device, &Buffer, vk::CommandBuffer),
     {
+        profiling::scope!("start upload");
         let command_buffers = {
             profiling::scope!("allocate command buffer");
             let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
@@ -71,14 +108,16 @@ impl Uploader {
         };
         let temp_command_buffer = command_buffers[0];
 
-        let signal_semaphore = if let Some(semaphore) = self.free_semaphores.pop() {
-            semaphore
+        let upload_fence = if let Some(fence) = self.free_fences.pop() {
+            let fences = [fence.inner];
+            unsafe { self.device.reset_fences(&fences) }.map_err(Error::VulkanFenceReset)?;
+            fence
         } else {
-            profiling::scope!("create semaphore");
-            let semaphore = unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
-                .map_err(Error::VulkanSemaphoreCreation)?;
-            Semaphore {
-                inner: semaphore,
+            profiling::scope!("create fence");
+            let fence =
+                unsafe { self.device.create_fence(&vk::FenceCreateInfo::default(), None) }.map_err(Error::VulkanSemaphoreCreation)?;
+            Fence {
+                inner: fence,
                 device: self.device.clone(),
             }
         };
@@ -90,7 +129,10 @@ impl Uploader {
                 .map_err(Error::VulkanBeginCommandBuffer)?;
         }
 
-        f(temp_command_buffer);
+        {
+            profiling::scope!("record commands");
+            record_upload_commands(&self.device, &staging_buffer, temp_command_buffer);
+        }
 
         {
             profiling::scope!("end command buffer recording");
@@ -100,29 +142,31 @@ impl Uploader {
         {
             profiling::scope!("submit command buffer");
             let command_buffers = [temp_command_buffer];
-            let signal_semaphores = [signal_semaphore.inner];
-            let submit_infos = [vk::SubmitInfo::builder()
-                .command_buffers(&command_buffers)
-                .signal_semaphores(&signal_semaphores)
-                .build()];
+            let submit_infos = [vk::SubmitInfo::builder().command_buffers(&command_buffers).build()];
             unsafe {
                 self.device
-                    .queue_submit(self.transfer_queue, &submit_infos, vk::Fence::null())
+                    .queue_submit(self.transfer_queue, &submit_infos, upload_fence.inner)
                     .map_err(Error::VulkanQueueSubmit)
             }?;
         }
 
-        self.wait_semaphores.push(WaitSemaphore(signal_semaphore, wait_stage));
+        self.staging_buffers.push(staging_buffer);
+        self.upload_fences.push(upload_fence);
         Ok(())
     }
 
     pub fn reset(&mut self) -> Result<(), Error> {
-        self.free_semaphores
-            .extend(self.wait_semaphores.drain(..).map(|WaitSemaphore(semaphore, _)| semaphore));
+        if self.get_upload_statuses().any(|uploaded| !uploaded) {
+            return Err(Error::UploaderNotResettable);
+        }
+        self.staging_buffers.clear();
+        self.staging_arena.reset()?;
+        self.free_fences.append(&mut self.upload_fences);
         unsafe {
             self.device
                 .reset_command_pool(self.command_pool.inner, vk::CommandPoolResetFlags::empty())
                 .map_err(Error::VulkanResetCommandPool)
-        }
+        }?;
+        Ok(())
     }
 }

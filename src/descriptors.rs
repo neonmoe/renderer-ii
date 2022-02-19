@@ -1,7 +1,7 @@
 use crate::image_loading::{self, TextureKind};
 use crate::pipeline::{DescriptorSetLayoutParams, Pipeline, PipelineMap, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
-use crate::{Error, FrameIndex, Gpu, VulkanArena};
+use crate::{Error, FrameIndex, Uploader, VulkanArena};
 use ash::version::DeviceV1_0;
 use ash::vk;
 use std::hash::{Hash, Hasher};
@@ -79,18 +79,18 @@ pub struct PbrDefaults {
 }
 
 impl PbrDefaults {
-    pub fn new(gpu: &Gpu, arena: &VulkanArena, temp_arenas: &[VulkanArena], frame_idx: FrameIndex) -> Result<PbrDefaults, Error> {
+    pub fn new(device: &Rc<Device>, uploader: &mut Uploader, arena: &mut VulkanArena) -> Result<PbrDefaults, Error> {
         const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
         const BLACK: [u8; 4] = [0, 0, 0, 0xFF];
         const NORMAL: [u8; 4] = [0, 0, 0xFF, 0];
         const M_AND_R: [u8; 4] = [0, 0x88, 0, 0];
 
-        let create_pixel = |color, kind| image_loading::create_pixel(gpu, arena, temp_arenas, frame_idx, color, kind);
-        let default_base_color = create_pixel(WHITE, TextureKind::SrgbColor)?;
-        let default_metallic_roughness = create_pixel(M_AND_R, TextureKind::LinearColor)?;
-        let default_normal = create_pixel(NORMAL, TextureKind::NormalMap)?;
-        let default_occlusion = create_pixel(WHITE, TextureKind::LinearColor)?;
-        let default_emissive = create_pixel(BLACK, TextureKind::SrgbColor)?;
+        let mut create_pixel = |color, kind, name| image_loading::create_pixel(device, uploader, arena, color, kind, name);
+        let default_base_color = create_pixel(WHITE, TextureKind::SrgbColor, "default pbr base color")?;
+        let default_metallic_roughness = create_pixel(M_AND_R, TextureKind::LinearColor, "default pbr metallic/roughness")?;
+        let default_normal = create_pixel(NORMAL, TextureKind::NormalMap, "default pbr normals")?;
+        let default_occlusion = create_pixel(WHITE, TextureKind::LinearColor, "default pbr occlusion")?;
+        let default_emissive = create_pixel(BLACK, TextureKind::SrgbColor, "default pbr emissive")?;
 
         Ok(PbrDefaults {
             default_base_color,
@@ -108,8 +108,7 @@ pub struct Descriptors {
     device: Rc<Device>,
     material_slots_per_pipeline: PipelineMap<MaterialSlotArray>,
     material_status_per_pipeline: PipelineMap<MaterialStatusArray>,
-    // FIXME: Unwrap this.
-    pbr_defaults: Option<PbrDefaults>,
+    pbr_defaults: PbrDefaults,
 }
 
 impl Descriptors {
@@ -118,6 +117,7 @@ impl Descriptors {
         physical_device_properties: &vk::PhysicalDeviceProperties,
         physical_device_features: &vk::PhysicalDeviceFeatures,
         frame_count: u32,
+        pbr_defaults: PbrDefaults,
     ) -> Result<Descriptors, Error> {
         profiling::scope!("new_descriptors");
         let sampler_create_info = vk::SamplerCreateInfo::builder()
@@ -259,16 +259,8 @@ impl Descriptors {
             device: device.clone(),
             material_slots_per_pipeline,
             material_status_per_pipeline,
-            pbr_defaults: None,
+            pbr_defaults,
         })
-    }
-
-    // FIXME: Delete this. This will require image uploads to not
-    // require a canvas (currently required in order to get a
-    // FrameIndex, which in turn is needed for a temp arena, which in
-    // turn is needed for resource uploads).
-    pub fn set_pbr_defaults(&mut self, pbr_defaults: PbrDefaults) {
-        self.pbr_defaults = Some(pbr_defaults);
     }
 
     pub(crate) fn write_descriptors(&mut self, frame_index: FrameIndex) {
@@ -296,26 +288,14 @@ impl Descriptors {
             } => {
                 let index = material.array_index..material.array_index + 1;
                 let images = [
-                    base_color
-                        .as_ref()
-                        .map(Rc::as_ref)
-                        .unwrap_or(&self.pbr_defaults.as_ref().unwrap().default_base_color),
+                    base_color.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.default_base_color),
                     metallic_roughness
                         .as_ref()
                         .map(Rc::as_ref)
-                        .unwrap_or(&self.pbr_defaults.as_ref().unwrap().default_metallic_roughness),
-                    normal
-                        .as_ref()
-                        .map(Rc::as_ref)
-                        .unwrap_or(&self.pbr_defaults.as_ref().unwrap().default_normal),
-                    occlusion
-                        .as_ref()
-                        .map(Rc::as_ref)
-                        .unwrap_or(&self.pbr_defaults.as_ref().unwrap().default_occlusion),
-                    emissive
-                        .as_ref()
-                        .map(Rc::as_ref)
-                        .unwrap_or(&self.pbr_defaults.as_ref().unwrap().default_emissive),
+                        .unwrap_or(&self.pbr_defaults.default_metallic_roughness),
+                    normal.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.default_normal),
+                    occlusion.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.default_occlusion),
+                    emissive.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.default_emissive),
                 ];
                 self.set_uniform_images(frame_index, pipeline, 1, 1, &images, index);
             }

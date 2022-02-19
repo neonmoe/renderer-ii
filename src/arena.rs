@@ -5,7 +5,6 @@ use crate::vulkan_raii::{Buffer, Device, DeviceMemory, Image};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk;
 use ash::Instance;
-use std::cell::Cell;
 use std::ptr;
 use std::rc::Rc;
 
@@ -68,10 +67,11 @@ pub struct VulkanArena {
     /// instead of using atomic operations. At least currently, Arenas
     /// are per-thread. A possible multi-threaded arena should use an
     /// atomic int here.
-    offset: Cell<vk::DeviceSize>,
+    offset: vk::DeviceSize,
     non_coherent_atom_size: vk::DeviceSize,
     buffer_image_granularity: vk::DeviceSize,
-    previous_allocation_was_image: Cell<bool>,
+    previous_allocation_was_image: bool,
+    pinned_buffers: Vec<Buffer>,
     debug_identifier: &'static str,
 }
 
@@ -105,25 +105,26 @@ impl VulkanArena {
                 device: device.clone(),
             }),
             total_size: size,
-            offset: Cell::new(0),
+            offset: 0,
             non_coherent_atom_size,
             buffer_image_granularity,
-            previous_allocation_was_image: Cell::new(false),
+            previous_allocation_was_image: false,
+            pinned_buffers: Vec::new(),
             debug_identifier,
         })
     }
 
-    pub fn create_buffer(&self, buffer_create_info: vk::BufferCreateInfo) -> Result<BufferAllocation, Error> {
+    pub fn create_buffer(&mut self, buffer_create_info: vk::BufferCreateInfo) -> Result<BufferAllocation, Error> {
         let buffer = unsafe { self.device.create_buffer(&buffer_create_info, None) }.map_err(Error::VulkanBufferCreation)?;
         let buffer_memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         let alignment = buffer_memory_requirements.alignment;
-        let alignment = if self.previous_allocation_was_image.get() {
+        let alignment = if self.previous_allocation_was_image {
             alignment.max(self.buffer_image_granularity)
         } else {
             alignment
         };
 
-        let offset = align_up(self.offset.get(), alignment);
+        let offset = align_up(self.offset, alignment);
         let size = buffer_memory_requirements.size;
 
         if self.total_size - offset < size {
@@ -144,8 +145,8 @@ impl VulkanArena {
             }
         }
 
-        self.offset.set(offset + size);
-        self.previous_allocation_was_image.set(false);
+        self.offset = offset + size;
+        self.previous_allocation_was_image = false;
         Ok(BufferAllocation {
             buffer: Buffer {
                 inner: buffer,
@@ -159,12 +160,12 @@ impl VulkanArena {
         })
     }
 
-    pub fn create_image(&self, image_create_info: vk::ImageCreateInfo) -> Result<Image, Error> {
+    pub fn create_image(&mut self, image_create_info: vk::ImageCreateInfo) -> Result<Image, Error> {
         let image = unsafe { self.device.create_image(&image_create_info, None) }.map_err(Error::VulkanImageCreation)?;
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
         let alignment = image_memory_requirements.alignment.max(self.buffer_image_granularity);
 
-        let offset = align_up(self.offset.get(), alignment);
+        let offset = align_up(self.offset, alignment);
         let size = image_memory_requirements.size;
 
         if self.total_size - offset < size {
@@ -185,8 +186,8 @@ impl VulkanArena {
             }
         }
 
-        self.offset.set(offset + size);
-        self.previous_allocation_was_image.set(true);
+        self.offset = offset + size;
+        self.previous_allocation_was_image = true;
         Ok(Image {
             inner: image,
             device: self.device.clone(),
@@ -194,15 +195,23 @@ impl VulkanArena {
         })
     }
 
+    /// Stores the buffer in this arena, to be destroyed when the
+    /// arena is reset. Ideal for temporary arenas whose buffers just
+    /// have to live "long enough."
+    pub fn add_buffer(&mut self, buffer: Buffer) {
+        self.pinned_buffers.push(buffer);
+    }
+
     /// Attempts to reset the arena, marking all graphics memory owned
     /// by it as usable again. If some of the memory allocated from
     /// this arena is still in use, Err is returned and the arena is
     /// not reset.
-    pub fn reset(&self) -> Result<(), Error> {
-        if Rc::strong_count(&self.memory) > 1 {
+    pub fn reset(&mut self) -> Result<(), Error> {
+        if Rc::strong_count(&self.memory) > 1 + self.pinned_buffers.len() {
             Err(Error::ArenaNotResettable)
         } else {
-            self.offset.set(0);
+            self.pinned_buffers.clear();
+            self.offset = 0;
             Ok(())
         }
     }

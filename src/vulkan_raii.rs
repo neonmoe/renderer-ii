@@ -199,3 +199,9 @@ pub struct Semaphore {
     pub device: Rc<Device>,
 }
 trivial_drop_impl!(Semaphore, destroy_semaphore);
+
+pub struct Fence {
+    pub inner: vk::Fence,
+    pub device: Rc<Device>,
+}
+trivial_drop_impl!(Fence, destroy_fence);

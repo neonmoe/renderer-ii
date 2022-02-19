@@ -144,4 +144,6 @@ pub enum Error {
     },
     #[error("tried to reset arena while some resources allocated from it are still in use")]
     ArenaNotResettable,
+    #[error("tried to reset uploader while some uploads are still in progress (or the device has been lost)")]
+    UploaderNotResettable,
 }

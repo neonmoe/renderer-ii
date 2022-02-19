@@ -28,9 +28,7 @@ struct SwapchainSettings {
 /// This struct has the concrete rendering objects, like the render
 /// passes, framebuffers, command buffers and so on.
 pub struct Canvas {
-    /// Held by [Canvas] to ensure that the swapchain and command
-    /// buffers are dropped before the device.
-    pub gpu: Rc<Gpu>,
+    gpu: Rc<Gpu>, // FIXME: Almost ready to remove?
 
     pub extent: vk::Extent2D,
 
@@ -96,7 +94,7 @@ impl Canvas {
         // Alternatively, recreate arena, but size it exactly, and
         // make sure to free the previous one in advance (to not
         // require double the memory between resizes).
-        let framebuffer_arena = VulkanArena::new(
+        let mut framebuffer_arena = VulkanArena::new(
             &gpu.driver.instance,
             &gpu.device,
             physical_device.inner,
@@ -132,7 +130,7 @@ impl Canvas {
             }
         };
 
-        let create_image = |format: vk::Format, usage: vk::ImageUsageFlags| {
+        let mut create_image = |format: vk::Format, usage: vk::ImageUsageFlags| {
             let image_create_info = vk::ImageCreateInfo::builder()
                 .image_type(vk::ImageType::TYPE_2D)
                 .format(format)

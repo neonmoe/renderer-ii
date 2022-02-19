@@ -49,13 +49,34 @@ fn fallible_main() -> anyhow::Result<()> {
     let physical_device = &physical_devices[0];
     let gpu = neonvk::Gpu::new(&driver, physical_device)?;
     let gpu = Rc::new(gpu);
-    let temp_arenas = (0..gpu.temp_arena_count())
+
+    let mut uploader = neonvk::Uploader::new(
+        &driver.instance,
+        &gpu.device,
+        gpu.transfer_queue,
+        gpu.upload_queue_family_indices,
+        physical_device,
+        300_000_000,
+    )?;
+
+    let mut assets_arena = neonvk::VulkanArena::new(
+        &driver.instance,
+        &gpu.device,
+        physical_device.inner,
+        500_000_000,
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        "sandbox asset arena",
+    )?;
+    let pbr_defaults = neonvk::PbrDefaults::new(&gpu.device, &mut uploader, &mut assets_arena)?;
+
+    let mut temp_arenas = (0..gpu.temp_arena_count())
         .map(|_| {
             neonvk::VulkanArena::new(
                 &driver.instance,
                 &gpu.device,
                 physical_device.inner,
-                300_000_000,
+                10_000_000,
                 neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE,
                 neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE,
                 "frame local arena",
@@ -67,50 +88,26 @@ fn fallible_main() -> anyhow::Result<()> {
         &physical_device.properties,
         &physical_device.features,
         gpu.temp_arena_count() as u32, // TODO: Come up with a proper way to get this
+        pbr_defaults,
     )?;
     let mut canvas = neonvk::Canvas::new(&gpu, physical_device, &descriptors, None, width, height, false)?;
 
-    let loading_frame_index = gpu.wait_frame(&canvas)?;
-    loading_frame_index.get_arena(&temp_arenas).reset().unwrap();
     let camera = neonvk::Camera::default();
-
-    let assets_arena = neonvk::VulkanArena::new(
-        &driver.instance,
-        &gpu.device,
-        physical_device.inner,
-        500_000_000,
-        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        "sandbox asset arena",
-    )?;
-
-    let pbr_defaults = neonvk::PbrDefaults::new(&gpu, &assets_arena, &temp_arenas, loading_frame_index)?;
-    descriptors.set_pbr_defaults(pbr_defaults);
 
     let mut resources = neonvk::GltfResources::with_path(find_resources_path());
     let sponza_model = neonvk::Gltf::from_gltf(
-        &gpu,
+        &gpu.device,
+        &mut uploader,
         &mut descriptors,
-        &assets_arena,
-        &temp_arenas,
-        loading_frame_index,
+        &mut assets_arena,
         include_str!("sponza/glTF/Sponza.gltf"),
         &mut resources,
     )?;
+
+    assert!(uploader.wait(Duration::from_secs(5))?);
     // At this point the data has been copied to gpu-visible buffers,
     // hence why it's not held by the Gltfs, and can be dropped here.
     drop(resources);
-
-    // Get the first frame out of the way, to upload the meshes.
-    gpu.render_frame(
-        &temp_arenas,
-        loading_frame_index,
-        &mut descriptors,
-        &canvas,
-        &camera,
-        &neonvk::Scene::new(),
-        0,
-    )?;
 
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
@@ -170,8 +167,16 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;
-        frame_index.get_arena(&temp_arenas).reset().unwrap();
-        match gpu.render_frame(&temp_arenas, frame_index, &mut descriptors, &canvas, &camera, &scene, debug_value) {
+        frame_index.get_arena(&mut temp_arenas).reset().unwrap();
+        match gpu.render_frame(
+            &mut temp_arenas,
+            frame_index,
+            &mut descriptors,
+            &canvas,
+            &camera,
+            &scene,
+            debug_value,
+        ) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),

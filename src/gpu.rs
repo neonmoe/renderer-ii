@@ -1,6 +1,6 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::PushConstantStruct;
-use crate::vulkan_raii::{Buffer, Device};
+use crate::vulkan_raii::Device;
 use crate::{debug_utils, Camera, Canvas, Driver, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk;
@@ -26,8 +26,8 @@ impl FrameIndex {
         FrameIndex { index }
     }
 
-    pub fn get_arena(self, arenas: &[VulkanArena]) -> &VulkanArena {
-        &arenas[self.index as usize]
+    pub fn get_arena(self, arenas: &mut [VulkanArena]) -> &mut VulkanArena {
+        &mut arenas[self.index as usize]
     }
 }
 
@@ -41,10 +41,6 @@ struct FrameLocal {
     in_use: AtomicBool,
     ready_for_present_sp: vk::Semaphore,
     frame_end_fence: vk::Fence,
-    // NOTE: These temporary resources should be removable after the async resource loading system is up and running
-    temp_command_buffers: (Sender<vk::CommandBuffer>, Receiver<vk::CommandBuffer>),
-    temp_semaphores: (Sender<vk::Semaphore>, Receiver<vk::Semaphore>),
-    temp_buffers: (Sender<Buffer>, Receiver<Buffer>),
     // TODO: Add per-frame rendering command pools which get reset as pools intead of just resetting the individual command buffers
     // Creating many buffers (which should be cleaned up after) will be needed for multithreaded draw submission too
 }
@@ -67,6 +63,8 @@ pub struct Gpu {
 
     pub(crate) graphics_queue: vk::Queue,
     surface_queue: vk::Queue,
+    pub transfer_queue: vk::Queue,
+    pub upload_queue_family_indices: [u32; 2],
     frame_start_fence: vk::Fence,
 
     frame_locals: Vec<FrameLocal>,
@@ -85,10 +83,6 @@ impl Drop for Gpu {
 
         for frame_local in &self.frame_locals {
             profiling::scope!("destroy frame locals");
-
-            self.cleanup_temp_command_buffers(frame_local);
-            self.cleanup_temp_semaphores(frame_local);
-            self.cleanup_temp_buffers(frame_local);
 
             unsafe {
                 self.device.destroy_semaphore(frame_local.ready_for_present_sp, None);
@@ -117,24 +111,45 @@ impl Gpu {
     pub fn new(driver: &Rc<Driver>, physical_device: &PhysicalDevice) -> Result<Gpu, Error> {
         profiling::scope!("new_gpu");
 
-        let queue_priorities = [1.0, 1.0];
-        let queue_create_infos = if physical_device.graphics_family_index == physical_device.surface_family_index {
-            vec![vk::DeviceQueueCreateInfo::builder()
-                .queue_family_index(physical_device.graphics_family_index)
-                .queue_priorities(&queue_priorities)
-                .build()]
-        } else {
-            vec![
-                vk::DeviceQueueCreateInfo::builder()
-                    .queue_family_index(physical_device.graphics_family_index)
-                    .queue_priorities(&queue_priorities[0..1])
-                    .build(),
-                vk::DeviceQueueCreateInfo::builder()
-                    .queue_family_index(physical_device.surface_family_index)
-                    .queue_priorities(&queue_priorities[1..2])
-                    .build(),
-            ]
-        };
+        fn create_device_queue_create_infos(family_indices: &[u32], ones: &[f32]) -> Vec<vk::DeviceQueueCreateInfo> {
+            use std::collections::HashMap;
+            let mut indices_with_counts: HashMap<u32, usize> = HashMap::with_capacity(family_indices.len());
+            for queue_family_index in family_indices {
+                let entry = indices_with_counts.entry(*queue_family_index);
+                let count = entry.or_insert(0);
+                *count += 1;
+            }
+            indices_with_counts
+                .into_iter()
+                .map(|(key, value)| {
+                    log::trace!("creating {} queues for queue family index {}", value, key);
+                    vk::DeviceQueueCreateInfo::builder()
+                        .queue_family_index(key)
+                        .queue_priorities(&ones[..value])
+                        .build()
+                })
+                .collect::<Vec<_>>()
+        }
+
+        fn get_device_queues<const N: usize>(device: &Device, family_indices: &[u32; N], queues: &mut [vk::Queue; N]) {
+            let mut picks = Vec::with_capacity(N);
+            for (&queue_family_index, queue) in family_indices.iter().zip(queues.iter_mut()) {
+                let queue_index = picks.iter().filter(|index| **index == queue_family_index).count() as u32;
+                *queue = unsafe { device.get_device_queue(queue_family_index, queue_index) };
+                log::trace!("got queue with params: {}, {}", queue_family_index, queue_index);
+                picks.push(queue_family_index);
+            }
+        }
+
+        // Just to have an array to point at for the queue priorities.
+        let ones = [1.0, 1.0, 1.0];
+        let queue_family_indices = [
+            physical_device.graphics_family_index,
+            physical_device.surface_family_index,
+            // FIXME: Use a dedicated transfer family
+            physical_device.graphics_family_index,
+        ];
+        let queue_create_infos = create_device_queue_create_infos(&queue_family_indices, &ones);
         let mut extensions = vec![cstr!("VK_KHR_swapchain").as_ptr()];
         log::debug!("Device extension: VK_KHR_swapchain");
         if physical_device.extension_supported("VK_EXT_memory_budget") {
@@ -157,13 +172,9 @@ impl Gpu {
         }?;
         let device = Device { inner: device };
 
-        let graphics_queue = unsafe { device.get_device_queue(physical_device.graphics_family_index, 0) };
-        let surface_queue;
-        if physical_device.graphics_family_index == physical_device.surface_family_index {
-            surface_queue = unsafe { device.get_device_queue(physical_device.graphics_family_index, 1) };
-        } else {
-            surface_queue = unsafe { device.get_device_queue(physical_device.surface_family_index, 0) };
-        }
+        let mut queues = [vk::Queue::default(); 3];
+        get_device_queues(&device, &queue_family_indices, &mut queues);
+        let [graphics_queue, surface_queue, transfer_queue] = queues;
         if driver.debug_utils_available {
             debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
             debug_utils::name_vulkan_object(&device, surface_queue, format_args!("present"));
@@ -189,9 +200,6 @@ impl Gpu {
                     in_use: AtomicBool::new(false),
                     ready_for_present_sp: finished_command_buffers_sp,
                     frame_end_fence,
-                    temp_command_buffers: mpsc::channel(),
-                    temp_semaphores: mpsc::channel(),
-                    temp_buffers: mpsc::channel(),
                 })
             })
             .collect::<Result<Vec<FrameLocal>, Error>>()?;
@@ -217,6 +225,9 @@ impl Gpu {
 
             graphics_queue,
             surface_queue,
+            transfer_queue,
+            // FIXME: Use a dedicated transfer queue family
+            upload_queue_family_indices: [physical_device.graphics_family_index, physical_device.graphics_family_index],
             frame_start_fence,
 
             frame_locals,
@@ -230,118 +241,6 @@ impl Gpu {
 
     fn frame_local(&self, frame_index: FrameIndex) -> &FrameLocal {
         &self.frame_locals[frame_index.index]
-    }
-
-    // TODO: Add a proper way to create resources asynchronously
-    // For:
-    // - disposing of staging buffers after upload
-    // - disposing of uploading command buffers after they've run
-    // - creating resources in an "incomplete" state, turning them into "complete" after the creation command buffer has run?
-    //
-    // Thoughts: a Loading<T> where T is an Image or Buffer, would be
-    // neat, but hard to generalize further. Would Gltf become a
-    // Loading<Gltf>, and how would it communicate with the actual
-    // buffers and images? Another idea: simply tracking uploaded-ness
-    // via a fence alongisde all resources that need a command buffer
-    // for creation (like meshes and images, though meshes need a
-    // rewrite anyways). Gltf could then report its status (3/5
-    // resources ready), and perhaps its rendering could be
-    // conditional on the upload status.
-    //
-    // Should replace add_temp_buffer and run_command_buffer here.
-    //
-    // See also: FrameLocal, the temp stuff can be removed after this
-    // is implemented. Really temp stuff, like transform buffers, may
-    // require something like them though.
-
-    pub(crate) fn add_temp_buffer(&self, frame_index: FrameIndex, buffer: Buffer) {
-        let _ = self.frame_local(frame_index).temp_buffers.0.send(buffer);
-    }
-
-    pub(crate) fn run_command_buffer<F: FnOnce(vk::CommandBuffer)>(
-        &self,
-        frame_index: FrameIndex,
-        wait_stage: vk::PipelineStageFlags,
-        f: F,
-    ) -> Result<(), Error> {
-        let command_buffers = {
-            profiling::scope!("allocate command buffer");
-            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-                .command_pool(self.command_pool)
-                .level(vk::CommandBufferLevel::PRIMARY)
-                .command_buffer_count(1);
-            unsafe { self.device.allocate_command_buffers(&command_buffer_allocate_info) }.map_err(Error::VulkanCommandBuffersAllocation)?
-        };
-        let temp_command_buffer = command_buffers[0];
-
-        let signal_semaphore = {
-            profiling::scope!("create semaphore");
-            unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.map_err(Error::VulkanSemaphoreCreation)?
-        };
-
-        {
-            profiling::scope!("begin command buffer recording");
-            let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            unsafe { self.device.begin_command_buffer(temp_command_buffer, &command_buffer_begin_info) }
-                .map_err(Error::VulkanBeginCommandBuffer)?;
-        }
-
-        f(temp_command_buffer);
-
-        {
-            profiling::scope!("end command buffer recording");
-            unsafe { self.device.end_command_buffer(temp_command_buffer) }.map_err(Error::VulkanEndCommandBuffer)?;
-        }
-
-        {
-            profiling::scope!("submit command buffer");
-            let command_buffers = [temp_command_buffer];
-            let signal_semaphores = [signal_semaphore];
-            let submit_infos = [vk::SubmitInfo::builder()
-                .command_buffers(&command_buffers)
-                .signal_semaphores(&signal_semaphores)
-                .build()];
-            unsafe {
-                self.device
-                    .queue_submit(self.graphics_queue, &submit_infos, vk::Fence::null())
-                    .map_err(Error::VulkanQueueSubmit)
-            }?;
-        }
-
-        {
-            profiling::scope!("queue for gc");
-            let temp_cmdbuf_sender = &self.frame_local(frame_index).temp_command_buffers.0;
-            let _ = temp_cmdbuf_sender.send(temp_command_buffer);
-            let temp_semaphore_sender = &self.frame_local(frame_index).temp_semaphores.0;
-            let _ = temp_semaphore_sender.send(signal_semaphore);
-            let render_wait_semaphore_sender = &self.render_wait_semaphores.0;
-            let _ = render_wait_semaphore_sender.send(WaitSemaphore(signal_semaphore, wait_stage));
-        }
-        Ok(())
-    }
-
-    #[profiling::function]
-    fn cleanup_temp_command_buffers(&self, frame_local: &FrameLocal) {
-        for command_buffer in frame_local.temp_command_buffers.1.try_iter() {
-            let cmdbufs = [command_buffer];
-            unsafe {
-                self.device.free_command_buffers(self.command_pool, &cmdbufs);
-            }
-        }
-    }
-
-    #[profiling::function]
-    fn cleanup_temp_semaphores(&self, frame_local: &FrameLocal) {
-        for semaphore in frame_local.temp_semaphores.1.try_iter() {
-            unsafe { self.device.destroy_semaphore(semaphore, None) };
-        }
-    }
-
-    #[profiling::function]
-    fn cleanup_temp_buffers(&self, frame_local: &FrameLocal) {
-        for buffer in frame_local.temp_buffers.1.try_iter() {
-            drop(buffer);
-        }
     }
 
     // TODO: Refactor Gpu to handle just the pub fns, rename to maybe Renderer?
@@ -391,12 +290,6 @@ impl Gpu {
             self.device.reset_fences(&fences).map_err(Error::VulkanFenceReset)?;
         }
 
-        if frame_local.in_use.load(Ordering::Relaxed) {
-            self.cleanup_temp_command_buffers(frame_local);
-            self.cleanup_temp_semaphores(frame_local);
-            self.cleanup_temp_buffers(frame_local);
-        }
-
         Ok(frame_index)
     }
 
@@ -408,7 +301,7 @@ impl Gpu {
     #[profiling::function]
     pub fn render_frame(
         &self,
-        temp_arenas: &[VulkanArena],
+        temp_arenas: &mut [VulkanArena],
         frame_index: FrameIndex,
         descriptors: &mut Descriptors,
         canvas: &Canvas,
@@ -479,7 +372,7 @@ impl Gpu {
     #[profiling::function]
     fn record_command_buffer(
         &self,
-        temp_arenas: &[VulkanArena],
+        temp_arenas: &mut [VulkanArena],
         frame_index: FrameIndex,
         command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
@@ -596,8 +489,6 @@ impl Gpu {
                 vertex_offsets.push(0);
                 vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
 
-                self.add_temp_buffer(frame_index, transform_buffer.buffer);
-
                 unsafe {
                     profiling::scope!("draw");
                     self.device
@@ -607,6 +498,8 @@ impl Gpu {
                     self.device
                         .cmd_draw_indexed(command_buffer, mesh.index_count, transforms.len() as u32, 0, 0, 0);
                 }
+
+                temp_arena.add_buffer(transform_buffer.buffer);
             }
         }
 

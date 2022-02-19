@@ -41,10 +41,9 @@ impl Camera {
         &self,
         descriptors: &Descriptors,
         canvas: &Canvas,
-        temp_arenas: &[VulkanArena],
+        temp_arenas: &mut [VulkanArena],
         frame_index: FrameIndex,
     ) -> Result<(), Error> {
-        let gpu = &canvas.gpu;
         let temp_arena = frame_index.get_arena(temp_arenas);
         let buffer_allocation = {
             profiling::scope!("create uniform buffer");
@@ -64,7 +63,7 @@ impl Camera {
 
         let pipeline = Pipeline::SHARED_DESCRIPTOR_PIPELINE;
         descriptors.set_uniform_buffer(frame_index, pipeline, 0, 0, buffer_allocation.buffer.inner);
-        gpu.add_temp_buffer(frame_index, buffer_allocation.buffer);
+        temp_arena.add_buffer(buffer_allocation.buffer);
         Ok(())
     }
 }
