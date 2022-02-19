@@ -217,6 +217,7 @@ pub fn create_pixel(
             let barrier_from_transfer_dst_to_shader = vk::ImageMemoryBarrier::builder()
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                // TODO: Use exclusive image and buffer resources, move to correct queue family via barriers
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .image(image_allocation.inner)

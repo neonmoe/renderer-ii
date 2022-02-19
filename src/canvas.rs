@@ -2,10 +2,10 @@ use crate::arena::VulkanArena;
 use crate::pipeline::{PipelineMap, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, AnyImage, Device, Framebuffer, ImageView, PipelineLayout, RenderPass, Swapchain};
 use crate::Descriptors;
-use crate::{Error, Gpu, PhysicalDevice};
+use crate::{Error, PhysicalDevice};
 use ash::extensions::khr;
 use ash::version::DeviceV1_0;
-use ash::vk;
+use ash::{vk, Entry, Instance};
 use std::rc::Rc;
 
 pub const SWAPCHAIN_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
@@ -28,23 +28,13 @@ struct SwapchainSettings {
 /// This struct has the concrete rendering objects, like the render
 /// passes, framebuffers, command buffers and so on.
 pub struct Canvas {
-    gpu: Rc<Gpu>, // FIXME: Almost ready to remove?
-
     pub extent: vk::Extent2D,
+    pub frame_count: u32,
 
     pub(crate) swapchain: Rc<Swapchain>,
     pub(crate) framebuffers: Vec<Framebuffer>,
     pub(crate) final_render_pass: Rc<RenderPass>,
     pub(crate) pipelines: PipelineMap<vulkan_raii::Pipeline>,
-    pub(crate) command_buffers: Vec<vk::CommandBuffer>,
-}
-
-impl Drop for Canvas {
-    #[profiling::function]
-    fn drop(&mut self) {
-        profiling::scope!("free command buffers");
-        unsafe { self.gpu.device.free_command_buffers(self.gpu.command_pool, &self.command_buffers) };
-    }
 }
 
 impl Canvas {
@@ -61,7 +51,10 @@ impl Canvas {
     /// been displayed on screen, so it caps the fps to the screen's
     /// refresh rate.
     pub fn new(
-        gpu: &Rc<Gpu>,
+        entry: &Entry,
+        instance: &Instance,
+        surface: vk::SurfaceKHR,
+        device: &Rc<Device>,
         physical_device: &PhysicalDevice,
         descriptors: &Descriptors,
         old_canvas: Option<&Canvas>,
@@ -70,14 +63,13 @@ impl Canvas {
         immediate_present: bool,
     ) -> Result<Canvas, Error> {
         profiling::scope!("new_canvas");
-        let device = &gpu.device;
-        let surface_ext = khr::Surface::new(&gpu.driver.entry, &gpu.driver.instance);
-        let swapchain_ext = khr::Swapchain::new(&gpu.driver.instance, &gpu.device.inner);
+        let surface_ext = khr::Surface::new(entry, instance);
+        let swapchain_ext = khr::Swapchain::new(instance, &device.inner);
         let queue_family_indices = [physical_device.graphics_family_index, physical_device.surface_family_index];
         let (swapchain, swapchain_format, extent, frame_count) = create_swapchain(
             &surface_ext,
             &swapchain_ext,
-            gpu.driver.surface,
+            surface,
             old_canvas.map(|r| r.swapchain.inner),
             physical_device.inner,
             &queue_family_indices,
@@ -95,8 +87,8 @@ impl Canvas {
         // make sure to free the previous one in advance (to not
         // require double the memory between resizes).
         let mut framebuffer_arena = VulkanArena::new(
-            &gpu.driver.instance,
-            &gpu.device,
+            instance,
+            device,
             physical_device.inner,
             630_000_000, // FIXME: too small for very big framebuffers?
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
@@ -193,16 +185,6 @@ impl Canvas {
             })
         })?;
 
-        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(gpu.command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(frame_count);
-        let command_buffers = unsafe {
-            device
-                .allocate_command_buffers(&command_buffer_allocate_info)
-                .map_err(Error::VulkanCommandBuffersAllocation)
-        }?;
-
         let framebuffers = color_image_views
             .into_iter()
             .zip(depth_image_views.into_iter())
@@ -227,13 +209,12 @@ impl Canvas {
             .collect::<Result<Vec<Framebuffer>, Error>>()?;
 
         Ok(Canvas {
-            gpu: gpu.clone(),
             extent,
+            frame_count,
             swapchain,
             framebuffers,
             final_render_pass,
             pipelines,
-            command_buffers,
         })
     }
 }

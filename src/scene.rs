@@ -4,6 +4,7 @@ use glam::Mat4;
 use std::collections::HashMap;
 
 type MeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
+// TODO: Use PipelineMap here.
 type PipelineMap<'a> = HashMap<Pipeline, MeshMap<'a>>;
 
 /// A container for the meshes rendered during a particular frame, and
@@ -25,10 +26,6 @@ impl<'a> Scene<'a> {
         }
     }
 
-    // TODO: Instead of a Texture, this should take in a "material slot" or something.
-    // Because the same set of textures should be used across
-    // materials. A slice of textures could solve this as well, but I
-    // doubt that would perform that well.
     #[profiling::function]
     pub fn queue(&mut self, mesh: &'a Mesh, material: &'a Material, transform: Mat4) {
         let mesh_map = self.pipeline_map.entry(mesh.pipeline).or_insert_with(HashMap::new);

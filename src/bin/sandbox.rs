@@ -47,8 +47,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let driver = Rc::new(neonvk::Driver::new(&window)?);
     let physical_devices = neonvk::get_physical_devices(&driver.entry, &driver.instance, driver.surface)?;
     let physical_device = &physical_devices[0];
-    let gpu = neonvk::Gpu::new(&driver, physical_device)?;
-    let gpu = Rc::new(gpu);
+    let mut gpu = neonvk::Gpu::new(&driver, physical_device)?;
 
     let mut uploader = neonvk::Uploader::new(
         &driver.instance,
@@ -68,13 +67,7 @@ fn fallible_main() -> anyhow::Result<()> {
         "sandbox asset arena",
     )?;
     let pbr_defaults = neonvk::PbrDefaults::new(&gpu.device, &mut uploader, &mut assets_arena)?;
-    let mut descriptors = neonvk::Descriptors::new(
-        &gpu.device,
-        &physical_device.properties,
-        &physical_device.features,
-        gpu.temp_arena_count() as u32, // TODO: Come up with a proper way to get this
-        pbr_defaults,
-    )?;
+    let mut descriptors = neonvk::Descriptors::new(&gpu.device, &physical_device.properties, &physical_device.features, 3, pbr_defaults)?;
 
     let mut resources = neonvk::GltfResources::with_path(find_resources_path());
     let sponza_model = neonvk::Gltf::from_gltf(
@@ -92,20 +85,18 @@ fn fallible_main() -> anyhow::Result<()> {
     drop(uploader);
     drop(resources);
 
-    let mut temp_arenas = (0..gpu.temp_arena_count())
-        .map(|_| {
-            neonvk::VulkanArena::new(
-                &driver.instance,
-                &gpu.device,
-                physical_device.inner,
-                10_000_000,
-                neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE,
-                neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE,
-                "frame local arena",
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut canvas = neonvk::Canvas::new(&gpu, physical_device, &descriptors, None, width, height, false)?;
+    let mut canvas = neonvk::Canvas::new(
+        &driver.entry,
+        &driver.instance,
+        driver.surface,
+        &gpu.device,
+        physical_device,
+        &descriptors,
+        None,
+        width,
+        height,
+        false,
+    )?;
     let camera = neonvk::Camera::default();
 
     let mut frame_instants = Vec::with_capacity(10_000);
@@ -156,7 +147,18 @@ fn fallible_main() -> anyhow::Result<()> {
         if size_changed {
             gpu.wait_idle()?;
             let (width, height) = window.vulkan_drawable_size();
-            canvas = neonvk::Canvas::new(&gpu, physical_device, &descriptors, Some(&canvas), width, height, immediate_present)?;
+            canvas = neonvk::Canvas::new(
+                &driver.entry,
+                &driver.instance,
+                driver.surface,
+                &gpu.device,
+                physical_device,
+                &descriptors,
+                Some(&canvas),
+                width,
+                height,
+                immediate_present,
+            )?;
             size_changed = false;
         }
 
@@ -166,16 +168,7 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         let frame_index = gpu.wait_frame(&canvas)?;
-        frame_index.get_arena(&mut temp_arenas).reset().unwrap();
-        match gpu.render_frame(
-            &mut temp_arenas,
-            frame_index,
-            &mut descriptors,
-            &canvas,
-            &camera,
-            &scene,
-            debug_value,
-        ) {
+        match gpu.render_frame(frame_index, &mut descriptors, &canvas, &camera, &scene, debug_value) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
@@ -209,7 +202,6 @@ fn fallible_main() -> anyhow::Result<()> {
     }
 
     gpu.wait_idle()?;
-    drop(temp_arenas);
     drop(sponza_model);
     drop(assets_arena);
     drop(canvas);

@@ -1,6 +1,6 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::PushConstantStruct;
-use crate::vulkan_raii::Device;
+use crate::vulkan_raii::{CommandPool, Device};
 use crate::{debug_utils, Camera, Canvas, Driver, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk;
@@ -41,8 +41,8 @@ struct FrameLocal {
     in_use: AtomicBool,
     ready_for_present_sp: vk::Semaphore,
     frame_end_fence: vk::Fence,
-    // TODO: Add per-frame rendering command pools which get reset as pools intead of just resetting the individual command buffers
-    // Creating many buffers (which should be cleaned up after) will be needed for multithreaded draw submission too
+    temp_arena: VulkanArena,
+    command_pool: CommandPool,
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -59,7 +59,6 @@ pub struct Gpu {
     pub driver: Rc<Driver>,
 
     pub device: Rc<Device>,
-    pub(crate) command_pool: vk::CommandPool,
 
     pub graphics_queue: vk::Queue,
     surface_queue: vk::Queue,
@@ -87,11 +86,6 @@ impl Drop for Gpu {
                 self.device.destroy_semaphore(frame_local.ready_for_present_sp, None);
                 self.device.destroy_fence(frame_local.frame_end_fence, None);
             }
-        }
-
-        {
-            profiling::scope!("destroy command pools");
-            unsafe { self.device.destroy_command_pool(self.command_pool, None) };
         }
     }
 }
@@ -165,7 +159,7 @@ impl Gpu {
                 .create_device(physical_device.inner, &device_create_info, None)
                 .map_err(Error::VulkanDeviceCreation)
         }?;
-        let device = Device { inner: device };
+        let device = Rc::new(Device { inner: device });
 
         let mut queues = [vk::Queue::default(); 3];
         get_device_queues(&device, &queue_family_indices, &mut queues);
@@ -191,10 +185,30 @@ impl Gpu {
                         .create_fence(&fence_create_info, None)
                         .map_err(Error::VulkanSemaphoreCreation)
                 }?;
+                let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+                    .queue_family_index(physical_device.graphics_family_index)
+                    .flags(vk::CommandPoolCreateFlags::TRANSIENT);
+                let command_pool =
+                    unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
+                let command_pool = CommandPool {
+                    inner: command_pool,
+                    device: device.clone(),
+                };
+                let temp_arena = VulkanArena::new(
+                    &driver.instance,
+                    &device,
+                    physical_device.inner,
+                    10_000_000,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE,
+                    "frame local arena",
+                )?;
                 Ok(FrameLocal {
                     in_use: AtomicBool::new(false),
                     ready_for_present_sp: finished_command_buffers_sp,
                     frame_end_fence,
+                    command_pool,
+                    temp_arena,
                 })
             })
             .collect::<Result<Vec<FrameLocal>, Error>>()?;
@@ -206,17 +220,10 @@ impl Gpu {
                 .map_err(Error::VulkanSemaphoreCreation)
         }?;
 
-        let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .queue_family_index(physical_device.graphics_family_index)
-            .flags(vk::CommandPoolCreateFlags::TRANSIENT | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-        let command_pool =
-            unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
-
         Ok(Gpu {
             driver: driver.clone(),
 
-            device: Rc::new(device),
-            command_pool,
+            device,
 
             graphics_queue,
             surface_queue,
@@ -226,14 +233,6 @@ impl Gpu {
             frame_locals,
             render_wait_semaphores: mpsc::channel(),
         })
-    }
-
-    pub fn temp_arena_count(&self) -> usize {
-        self.frame_locals.len()
-    }
-
-    fn frame_local(&self, frame_index: FrameIndex) -> &FrameLocal {
-        &self.frame_locals[frame_index.index]
     }
 
     // TODO: Refactor Gpu to handle just the pub fns, rename to maybe Renderer?
@@ -262,7 +261,7 @@ impl Gpu {
     /// After ensuring that the next frame can be rendered, this also
     /// frees the resources that can now be freed up.
     #[profiling::function]
-    pub fn wait_frame(&self, canvas: &Canvas) -> Result<FrameIndex, Error> {
+    pub fn wait_frame(&mut self, canvas: &Canvas) -> Result<FrameIndex, Error> {
         let (image_index, _) = unsafe {
             profiling::scope!("acquire next image");
             canvas
@@ -272,7 +271,7 @@ impl Gpu {
                 .map_err(Error::VulkanAcquireImage)
         }?;
         let frame_index = FrameIndex::new(image_index as usize);
-        let frame_local = self.frame_local(frame_index);
+        let frame_local = &mut self.frame_locals[frame_index.index];
 
         let fences = [self.frame_start_fence, frame_local.frame_end_fence];
         unsafe {
@@ -282,6 +281,7 @@ impl Gpu {
                 .map_err(Error::VulkanFenceWait)?;
             self.device.reset_fences(&fences).map_err(Error::VulkanFenceReset)?;
         }
+        frame_local.temp_arena.reset()?;
 
         Ok(frame_index)
     }
@@ -293,8 +293,7 @@ impl Gpu {
     /// happens.
     #[profiling::function]
     pub fn render_frame(
-        &self,
-        temp_arenas: &mut [VulkanArena],
+        &mut self,
         frame_index: FrameIndex,
         descriptors: &mut Descriptors,
         canvas: &Canvas,
@@ -302,22 +301,14 @@ impl Gpu {
         scene: &Scene,
         debug_value: u32,
     ) -> Result<(), Error> {
-        let frame_local = self.frame_local(frame_index);
+        let frame_local = &mut self.frame_locals[frame_index.index];
         frame_local.in_use.store(true, Ordering::Relaxed);
-        camera.update(descriptors, canvas, temp_arenas, frame_index)?;
+        camera.update(descriptors, canvas, &mut frame_local.temp_arena, frame_index)?;
 
-        let command_buffer = canvas.command_buffers[frame_index.index];
         let framebuffer = &canvas.framebuffers[frame_index.index];
-        self.record_command_buffer(
-            temp_arenas,
-            frame_index,
-            command_buffer,
-            framebuffer.inner,
-            descriptors,
-            canvas,
-            scene,
-            debug_value,
-        )?;
+        let command_buffer = self.record_command_buffer(frame_index, framebuffer.inner, descriptors, canvas, scene, debug_value)?;
+
+        let frame_local = &self.frame_locals[frame_index.index];
 
         let render_wait_semaphores = self.render_wait_semaphores.1.try_iter().collect::<Vec<WaitSemaphore>>();
         let mut wait_semaphores = Vec::with_capacity(render_wait_semaphores.len());
@@ -364,26 +355,37 @@ impl Gpu {
 
     #[profiling::function]
     fn record_command_buffer(
-        &self,
-        temp_arenas: &mut [VulkanArena],
+        &mut self,
         frame_index: FrameIndex,
-        command_buffer: vk::CommandBuffer,
         framebuffer: vk::Framebuffer,
         descriptors: &mut Descriptors,
         canvas: &Canvas,
         scene: &Scene,
         debug_value: u32,
-    ) -> Result<(), Error> {
-        let temp_arena = frame_index.get_arena(temp_arenas);
-
-        unsafe {
-            profiling::scope!("reset command buffer");
-            self.device
-                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
-                .unwrap(); // FIXME: Use per-frame command pools instead of resettable buffers
-        }
+    ) -> Result<vk::CommandBuffer, Error> {
+        let frame_local = &mut self.frame_locals[frame_index.index];
+        let temp_arena = &mut frame_local.temp_arena;
 
         descriptors.write_descriptors(frame_index);
+
+        unsafe {
+            profiling::scope!("allocate command buffer");
+            self.device
+                .reset_command_pool(frame_local.command_pool.inner, vk::CommandPoolResetFlags::empty())
+                .map_err(Error::VulkanResetCommandPool)
+        }?;
+
+        let command_buffers = unsafe {
+            profiling::scope!("allocate command buffer");
+            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+                .command_pool(frame_local.command_pool.inner)
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_buffer_count(1);
+            self.device
+                .allocate_command_buffers(&command_buffer_allocate_info)
+                .map_err(Error::VulkanCommandBuffersAllocation)
+        }?;
+        let command_buffer = command_buffers[0];
 
         let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {
@@ -508,6 +510,6 @@ impl Gpu {
                 .map_err(Error::VulkanEndCommandBuffer)?;
         }
 
-        Ok(())
+        Ok(command_buffer)
     }
 }

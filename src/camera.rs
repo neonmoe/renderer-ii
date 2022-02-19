@@ -41,10 +41,9 @@ impl Camera {
         &self,
         descriptors: &Descriptors,
         canvas: &Canvas,
-        temp_arenas: &mut [VulkanArena],
+        temp_arena: &mut VulkanArena,
         frame_index: FrameIndex,
     ) -> Result<(), Error> {
-        let temp_arena = frame_index.get_arena(temp_arenas);
         let buffer_allocation = {
             profiling::scope!("create uniform buffer");
             let buffer_size = mem::size_of::<GlobalTransforms>() as vk::DeviceSize;
