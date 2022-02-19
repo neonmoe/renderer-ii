@@ -1,4 +1,4 @@
-use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence};
+use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
 use crate::{Error, PhysicalDevice, VulkanArena};
 use ash::version::DeviceV1_0;
 use ash::vk;
@@ -11,29 +11,47 @@ pub struct Uploader {
     pub queue_family_indices: [u32; 2],
     device: Rc<Device>,
     transfer_queue: vk::Queue,
-    command_pool: CommandPool,
+    transfer_command_pool: CommandPool,
+    graphics_queue: vk::Queue,
+    graphics_command_pool: CommandPool,
     staging_buffers: Vec<Buffer>,
     upload_fences: Vec<Fence>,
     free_fences: Vec<Fence>,
+    transfer_semaphores: Vec<Semaphore>,
+    free_semaphores: Vec<Semaphore>,
 }
 
 impl Uploader {
     pub fn new(
         instance: &Instance,
         device: &Rc<Device>,
+        graphics_queue: vk::Queue,
         transfer_queue: vk::Queue,
-        upload_queue_family_indices: [u32; 2],
         physical_device: &PhysicalDevice,
         staging_buffer_size: vk::DeviceSize,
     ) -> Result<Uploader, Error> {
-        let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .queue_family_index(physical_device.graphics_family_index)
-            .flags(vk::CommandPoolCreateFlags::TRANSIENT);
-        let command_pool =
-            unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
-        let command_pool = CommandPool {
-            inner: command_pool,
-            device: device.clone(),
+        let transfer_command_pool = {
+            let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+                .queue_family_index(physical_device.transfer_family_index)
+                .flags(vk::CommandPoolCreateFlags::TRANSIENT);
+            let command_pool =
+                unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
+            CommandPool {
+                inner: command_pool,
+                device: device.clone(),
+            }
+        };
+
+        let graphics_command_pool = {
+            let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+                .queue_family_index(physical_device.graphics_family_index)
+                .flags(vk::CommandPoolCreateFlags::TRANSIENT);
+            let command_pool =
+                unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
+            CommandPool {
+                inner: command_pool,
+                device: device.clone(),
+            }
         };
 
         let staging_memory = VulkanArena::new(
@@ -48,13 +66,17 @@ impl Uploader {
 
         Ok(Uploader {
             staging_arena: staging_memory,
-            queue_family_indices: upload_queue_family_indices,
+            queue_family_indices: [physical_device.graphics_family_index, physical_device.transfer_family_index],
             device: device.clone(),
             transfer_queue,
-            command_pool,
+            transfer_command_pool,
+            graphics_queue,
+            graphics_command_pool,
             staging_buffers: Vec::new(),
             upload_fences: Vec::new(),
             free_fences: Vec::new(),
+            transfer_semaphores: Vec::new(),
+            free_semaphores: Vec::new(),
         })
     }
 
@@ -86,27 +108,36 @@ impl Uploader {
         }
     }
 
-    pub(crate) fn start_upload<F>(
+    pub(crate) fn start_upload<F, G>(
         &mut self,
         // Not currently used, but very probably will be used at a
         // later point, for intra-frame-upload-waiting.
         #[allow(unused_variables)] wait_stage: vk::PipelineStageFlags,
         staging_buffer: Buffer,
-        record_upload_commands: F,
+        queue_transfer_commands: F,
+        queue_graphics_commands: G,
     ) -> Result<(), Error>
     where
         F: FnOnce(&ash::Device, &Buffer, vk::CommandBuffer),
+        G: FnOnce(&ash::Device, vk::CommandBuffer),
     {
         profiling::scope!("start upload");
-        let command_buffers = {
-            profiling::scope!("allocate command buffer");
-            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-                .command_pool(self.command_pool.inner)
+        let [transfer_cmdbuf, graphics_cmdbuf] = {
+            profiling::scope!("allocate command buffers");
+            let transfer = vk::CommandBufferAllocateInfo::builder()
+                .command_pool(self.transfer_command_pool.inner)
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
-            unsafe { self.device.allocate_command_buffers(&command_buffer_allocate_info) }.map_err(Error::VulkanCommandBuffersAllocation)?
+            let transfer_buffers =
+                unsafe { self.device.allocate_command_buffers(&transfer) }.map_err(Error::VulkanCommandBuffersAllocation)?;
+            let graphics = vk::CommandBufferAllocateInfo::builder()
+                .command_pool(self.graphics_command_pool.inner)
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_buffer_count(1);
+            let graphics_buffers =
+                unsafe { self.device.allocate_command_buffers(&graphics) }.map_err(Error::VulkanCommandBuffersAllocation)?;
+            [transfer_buffers[0], graphics_buffers[0]]
         };
-        let temp_command_buffer = command_buffers[0];
 
         let upload_fence = if let Some(fence) = self.free_fences.pop() {
             let fences = [fence.inner];
@@ -114,44 +145,81 @@ impl Uploader {
             fence
         } else {
             profiling::scope!("create fence");
-            let fence =
-                unsafe { self.device.create_fence(&vk::FenceCreateInfo::default(), None) }.map_err(Error::VulkanSemaphoreCreation)?;
+            let fence = unsafe { self.device.create_fence(&vk::FenceCreateInfo::default(), None) }.map_err(Error::VulkanFenceCreation)?;
             Fence {
                 inner: fence,
                 device: self.device.clone(),
             }
         };
 
+        let transfer_signal_semaphore = if let Some(semaphore) = self.free_semaphores.pop() {
+            // Cannot be reset manually, but semaphores get unsignaled
+            // after they are waited on, so all of the free semaphores
+            // should be ok to use.
+            semaphore
+        } else {
+            profiling::scope!("create semaphore");
+            let semaphore = unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
+                .map_err(Error::VulkanSemaphoreCreation)?;
+            Semaphore {
+                inner: semaphore,
+                device: self.device.clone(),
+            }
+        };
+
         {
-            profiling::scope!("begin command buffer recording");
+            profiling::scope!("record commands for transfer queue");
             let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            unsafe { self.device.begin_command_buffer(temp_command_buffer, &command_buffer_begin_info) }
+            unsafe { self.device.begin_command_buffer(transfer_cmdbuf, &command_buffer_begin_info) }
                 .map_err(Error::VulkanBeginCommandBuffer)?;
+            queue_transfer_commands(&self.device, &staging_buffer, transfer_cmdbuf);
+            unsafe { self.device.end_command_buffer(transfer_cmdbuf) }.map_err(Error::VulkanEndCommandBuffer)?;
         }
 
         {
-            profiling::scope!("record commands");
-            record_upload_commands(&self.device, &staging_buffer, temp_command_buffer);
+            profiling::scope!("record commands for graphics queue");
+            let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            unsafe { self.device.begin_command_buffer(graphics_cmdbuf, &command_buffer_begin_info) }
+                .map_err(Error::VulkanBeginCommandBuffer)?;
+            queue_graphics_commands(&self.device, graphics_cmdbuf);
+            unsafe { self.device.end_command_buffer(graphics_cmdbuf) }.map_err(Error::VulkanEndCommandBuffer)?;
         }
 
         {
-            profiling::scope!("end command buffer recording");
-            unsafe { self.device.end_command_buffer(temp_command_buffer) }.map_err(Error::VulkanEndCommandBuffer)?;
-        }
-
-        {
-            profiling::scope!("submit command buffer");
-            let command_buffers = [temp_command_buffer];
-            let submit_infos = [vk::SubmitInfo::builder().command_buffers(&command_buffers).build()];
+            profiling::scope!("submit transfer command buffer");
+            let command_buffers = [transfer_cmdbuf];
+            let signal_semaphores = [transfer_signal_semaphore.inner];
+            let submit_infos = [vk::SubmitInfo::builder()
+                .command_buffers(&command_buffers)
+                .signal_semaphores(&signal_semaphores)
+                .build()];
             unsafe {
                 self.device
-                    .queue_submit(self.transfer_queue, &submit_infos, upload_fence.inner)
+                    .queue_submit(self.transfer_queue, &submit_infos, vk::Fence::null())
+                    .map_err(Error::VulkanQueueSubmit)
+            }?;
+        }
+
+        {
+            profiling::scope!("submit graphics command buffer");
+            let command_buffers = [graphics_cmdbuf];
+            let dst_stage_mask = [vk::PipelineStageFlags::TRANSFER];
+            let wait_semaphores = [transfer_signal_semaphore.inner];
+            let submit_infos = [vk::SubmitInfo::builder()
+                .command_buffers(&command_buffers)
+                .wait_dst_stage_mask(&dst_stage_mask)
+                .wait_semaphores(&wait_semaphores)
+                .build()];
+            unsafe {
+                self.device
+                    .queue_submit(self.graphics_queue, &submit_infos, upload_fence.inner)
                     .map_err(Error::VulkanQueueSubmit)
             }?;
         }
 
         self.staging_buffers.push(staging_buffer);
         self.upload_fences.push(upload_fence);
+        self.transfer_semaphores.push(transfer_signal_semaphore);
         Ok(())
     }
 
@@ -162,9 +230,15 @@ impl Uploader {
         self.staging_buffers.clear();
         self.staging_arena.reset()?;
         self.free_fences.append(&mut self.upload_fences);
+        self.free_semaphores.append(&mut self.transfer_semaphores);
         unsafe {
             self.device
-                .reset_command_pool(self.command_pool.inner, vk::CommandPoolResetFlags::empty())
+                .reset_command_pool(self.transfer_command_pool.inner, vk::CommandPoolResetFlags::empty())
+                .map_err(Error::VulkanResetCommandPool)
+        }?;
+        unsafe {
+            self.device
+                .reset_command_pool(self.graphics_command_pool.inner, vk::CommandPoolResetFlags::empty())
                 .map_err(Error::VulkanResetCommandPool)
         }?;
         Ok(())

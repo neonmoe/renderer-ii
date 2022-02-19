@@ -53,12 +53,11 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut uploader = neonvk::Uploader::new(
         &driver.instance,
         &gpu.device,
+        gpu.graphics_queue,
         gpu.transfer_queue,
-        gpu.upload_queue_family_indices,
         physical_device,
         300_000_000,
     )?;
-
     let mut assets_arena = neonvk::VulkanArena::new(
         &driver.instance,
         &gpu.device,
@@ -69,6 +68,29 @@ fn fallible_main() -> anyhow::Result<()> {
         "sandbox asset arena",
     )?;
     let pbr_defaults = neonvk::PbrDefaults::new(&gpu.device, &mut uploader, &mut assets_arena)?;
+    let mut descriptors = neonvk::Descriptors::new(
+        &gpu.device,
+        &physical_device.properties,
+        &physical_device.features,
+        gpu.temp_arena_count() as u32, // TODO: Come up with a proper way to get this
+        pbr_defaults,
+    )?;
+
+    let mut resources = neonvk::GltfResources::with_path(find_resources_path());
+    let sponza_model = neonvk::Gltf::from_gltf(
+        &gpu.device,
+        &mut uploader,
+        &mut descriptors,
+        &mut assets_arena,
+        include_str!("sponza/glTF/Sponza.gltf"),
+        &mut resources,
+    )?;
+    profiling::scope!("resource uploading");
+    let upload_wait_start = Instant::now();
+    assert!(uploader.wait(Duration::from_secs(5))?);
+    log::info!("Waited {:?} for the scene to upload.", Instant::now() - upload_wait_start);
+    drop(uploader);
+    drop(resources);
 
     let mut temp_arenas = (0..gpu.temp_arena_count())
         .map(|_| {
@@ -83,31 +105,8 @@ fn fallible_main() -> anyhow::Result<()> {
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut descriptors = neonvk::Descriptors::new(
-        &gpu.device,
-        &physical_device.properties,
-        &physical_device.features,
-        gpu.temp_arena_count() as u32, // TODO: Come up with a proper way to get this
-        pbr_defaults,
-    )?;
     let mut canvas = neonvk::Canvas::new(&gpu, physical_device, &descriptors, None, width, height, false)?;
-
     let camera = neonvk::Camera::default();
-
-    let mut resources = neonvk::GltfResources::with_path(find_resources_path());
-    let sponza_model = neonvk::Gltf::from_gltf(
-        &gpu.device,
-        &mut uploader,
-        &mut descriptors,
-        &mut assets_arena,
-        include_str!("sponza/glTF/Sponza.gltf"),
-        &mut resources,
-    )?;
-
-    assert!(uploader.wait(Duration::from_secs(5))?);
-    // At this point the data has been copied to gpu-visible buffers,
-    // hence why it's not held by the Gltfs, and can be dropped here.
-    drop(resources);
 
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());

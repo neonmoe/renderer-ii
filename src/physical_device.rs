@@ -16,6 +16,7 @@ pub struct PhysicalDevice {
     pub features: vk::PhysicalDeviceFeatures,
     pub graphics_family_index: u32,
     pub surface_family_index: u32,
+    pub transfer_family_index: u32,
     pub extensions: Vec<String>,
 }
 
@@ -71,18 +72,24 @@ fn filter_capable_device(
     let queue_families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
     let mut graphics_family_index = None;
     let mut surface_family_index = None;
+    let mut transfer_family_index = None;
     for (index, family_index) in queue_families.into_iter().enumerate() {
         let surface_support = unsafe { surface_ext.get_physical_device_surface_support(physical_device, index as u32, surface) };
-
-        if family_index.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-            graphics_family_index = Some(index as u32);
+        if graphics_family_index.is_none() || surface_family_index.is_none() || graphics_family_index != surface_family_index {
+            if family_index.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                graphics_family_index = Some(index as u32);
+            }
+            if surface_support == Ok(true) {
+                surface_family_index = Some(index as u32);
+            }
         }
-        if surface_support == Ok(true) {
-            surface_family_index = Some(index as u32);
-        }
-        if graphics_family_index == surface_family_index {
-            // If there's a queue which supports both, prefer that one.
-            break;
+        // Prefer transfer-only queues, as they can probably do
+        // transfers without disturbing rendering.
+        let transfer_only = family_index.queue_flags.contains(vk::QueueFlags::TRANSFER)
+            && !family_index.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+            && !family_index.queue_flags.contains(vk::QueueFlags::COMPUTE);
+        if transfer_family_index.is_none() || transfer_only {
+            transfer_family_index = Some(index as u32);
         }
     }
 
@@ -100,7 +107,9 @@ fn filter_capable_device(
     }
 
     let features = unsafe { instance.get_physical_device_features(physical_device) };
-    if let (Some(graphics_family_index), Some(surface_family_index)) = (graphics_family_index, surface_family_index) {
+    if let (Some(graphics_family_index), Some(surface_family_index), Some(transfer_family_index)) =
+        (graphics_family_index, surface_family_index, transfer_family_index)
+    {
         let name = get_device_name(&properties);
         let pd_type = match properties.device_type {
             vk::PhysicalDeviceType::DISCRETE_GPU => " (Discrete GPU)",
@@ -120,6 +129,7 @@ fn filter_capable_device(
             features,
             graphics_family_index,
             surface_family_index,
+            transfer_family_index,
             extensions,
         })
     } else {

@@ -167,7 +167,7 @@ pub fn create_pixel(
         vk::PipelineStageFlags::FRAGMENT_SHADER,
         staging_buffer.buffer,
         |device, staging_buffer, command_buffer| {
-            profiling::scope!("record vkCmdCopyBufferToImage for 1px image");
+            profiling::scope!(&format!("record vkCmdCopyBufferToImage for {}", debug_identifier));
             let barrier_from_undefined_to_transfer_dst = vk::ImageMemoryBarrier::builder()
                 .old_layout(vk::ImageLayout::UNDEFINED)
                 .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
@@ -211,6 +211,9 @@ pub fn create_pixel(
                     &[image_copy_region],
                 );
             }
+        },
+        |device, command_buffer| {
+            profiling::scope!(&format!("record transfer->shader barrier for {}", debug_identifier));
             let barrier_from_transfer_dst_to_shader = vk::ImageMemoryBarrier::builder()
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
@@ -331,7 +334,10 @@ pub fn load_ktx(
         |device, staging_buffer, command_buffer| {
             let mut current_mip_level_extent = extent;
             for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
-                profiling::scope!(&format!("record vkCmdCopyBufferToImage for mip #{}", mip_level));
+                profiling::scope!(&format!(
+                    "record vkCmdCopyBufferToImage for {} mip #{}",
+                    debug_identifier, mip_level
+                ));
                 let subresource_range = vk::ImageSubresourceRange::builder()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .base_mip_level(mip_level as u32)
@@ -387,6 +393,14 @@ pub fn load_ktx(
                 current_mip_level_extent.width = (current_mip_level_extent.width / 2).max(1);
                 current_mip_level_extent.height = (current_mip_level_extent.height / 2).max(1);
                 current_mip_level_extent.depth = (current_mip_level_extent.depth / 2).max(1);
+            }
+        },
+        |device, command_buffer| {
+            for mip_level in 0..mip_ranges.len() {
+                profiling::scope!(&format!(
+                    "record transfer->shader barrier for {} mip #{}",
+                    debug_identifier, mip_level
+                ));
                 let subresource_range = vk::ImageSubresourceRange::builder()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .base_mip_level(mip_level as u32)

@@ -61,10 +61,9 @@ pub struct Gpu {
     pub device: Rc<Device>,
     pub(crate) command_pool: vk::CommandPool,
 
-    pub(crate) graphics_queue: vk::Queue,
+    pub graphics_queue: vk::Queue,
     surface_queue: vk::Queue,
     pub transfer_queue: vk::Queue,
-    pub upload_queue_family_indices: [u32; 2],
     frame_start_fence: vk::Fence,
 
     frame_locals: Vec<FrameLocal>,
@@ -111,24 +110,22 @@ impl Gpu {
     pub fn new(driver: &Rc<Driver>, physical_device: &PhysicalDevice) -> Result<Gpu, Error> {
         profiling::scope!("new_gpu");
 
-        fn create_device_queue_create_infos(family_indices: &[u32], ones: &[f32]) -> Vec<vk::DeviceQueueCreateInfo> {
-            use std::collections::HashMap;
-            let mut indices_with_counts: HashMap<u32, usize> = HashMap::with_capacity(family_indices.len());
-            for queue_family_index in family_indices {
-                let entry = indices_with_counts.entry(*queue_family_index);
-                let count = entry.or_insert(0);
-                *count += 1;
+        fn create_device_queue_create_infos(queue_family_indices: &[u32], ones: &[f32]) -> Vec<vk::DeviceQueueCreateInfo> {
+            let mut results: Vec<vk::DeviceQueueCreateInfo> = Vec::with_capacity(queue_family_indices.len());
+            'queue_families: for &queue_family_index in queue_family_indices {
+                for create_info in &results {
+                    if create_info.queue_family_index == queue_family_index {
+                        continue 'queue_families;
+                    }
+                }
+                let count = queue_family_indices.iter().filter(|index| **index == queue_family_index).count();
+                let create_info = vk::DeviceQueueCreateInfo::builder()
+                    .queue_family_index(queue_family_index)
+                    .queue_priorities(&ones[..count])
+                    .build();
+                results.push(create_info);
             }
-            indices_with_counts
-                .into_iter()
-                .map(|(key, value)| {
-                    log::trace!("creating {} queues for queue family index {}", value, key);
-                    vk::DeviceQueueCreateInfo::builder()
-                        .queue_family_index(key)
-                        .queue_priorities(&ones[..value])
-                        .build()
-                })
-                .collect::<Vec<_>>()
+            results
         }
 
         fn get_device_queues<const N: usize>(device: &Device, family_indices: &[u32; N], queues: &mut [vk::Queue; N]) {
@@ -136,7 +133,6 @@ impl Gpu {
             for (&queue_family_index, queue) in family_indices.iter().zip(queues.iter_mut()) {
                 let queue_index = picks.iter().filter(|index| **index == queue_family_index).count() as u32;
                 *queue = unsafe { device.get_device_queue(queue_family_index, queue_index) };
-                log::trace!("got queue with params: {}, {}", queue_family_index, queue_index);
                 picks.push(queue_family_index);
             }
         }
@@ -146,8 +142,7 @@ impl Gpu {
         let queue_family_indices = [
             physical_device.graphics_family_index,
             physical_device.surface_family_index,
-            // FIXME: Use a dedicated transfer family
-            physical_device.graphics_family_index,
+            physical_device.transfer_family_index,
         ];
         let queue_create_infos = create_device_queue_create_infos(&queue_family_indices, &ones);
         let mut extensions = vec![cstr!("VK_KHR_swapchain").as_ptr()];
@@ -226,8 +221,6 @@ impl Gpu {
             graphics_queue,
             surface_queue,
             transfer_queue,
-            // FIXME: Use a dedicated transfer queue family
-            upload_queue_family_indices: [physical_device.graphics_family_index, physical_device.graphics_family_index],
             frame_start_fence,
 
             frame_locals,

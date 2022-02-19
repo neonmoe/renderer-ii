@@ -114,6 +114,7 @@ impl Mesh {
                 let copy_regions = [vk::BufferCopy::builder().size(total_size as vk::DeviceSize).build()];
                 unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
             },
+            |_, _| {},
         )?;
 
         Ok(Mesh {
