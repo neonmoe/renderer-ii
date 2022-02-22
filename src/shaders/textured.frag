@@ -18,23 +18,28 @@ layout(set = 1, binding = 5) uniform texture2D emissive[MAX_TEXTURE_COUNT];
 layout(push_constant) uniform PushConstantStruct {
     int texture_index;
     int debug_texture;
-} push_constant;
+}
+push_constant;
 
 void main() {
-    vec4 base_color = texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
-    vec4 metallic_roughness = texture(sampler2D(metallic_roughness[push_constant.texture_index], tex_sampler), in_uv);
-    vec3 normal_tex = texture(sampler2D(normal[push_constant.texture_index], tex_sampler), in_uv).xyz;
+    vec4 base_color =
+        texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
+    vec4 metallic_roughness =
+        texture(sampler2D(metallic_roughness[push_constant.texture_index], tex_sampler), in_uv);
+    vec4 normal_tex = texture(sampler2D(normal[push_constant.texture_index], tex_sampler), in_uv);
     vec4 occlusion = texture(sampler2D(occlusion[push_constant.texture_index], tex_sampler), in_uv);
     vec4 emissive = texture(sampler2D(emissive[push_constant.texture_index], tex_sampler), in_uv);
 
     vec3 bitangent = in_tangent.w * cross(in_normal, in_tangent.xyz);
     mat3 tangent_to_world = mat3(in_tangent.xyz, bitangent, in_normal);
-    vec3 normal = tangent_to_world * normal_tex;
+    vec3 normal = tangent_to_world * normal_tex.xyz;
 
     switch (push_constant.debug_texture) {
-    // The actual rendering case, enabled by default and by pressing 0 in the sandbox:
+    // The actual rendering case, enabled by default and by pressing 0 in
+    // the sandbox:
     default:
-        float brightness = max(0.0, dot(normal, normalize(vec3(-1.0, 1.0, 1.0)))) * 0.6 + 0.3 * occlusion.r;
+        float brightness =
+            max(0.0, dot(normal, normalize(vec3(-1.0, 1.0, 1.0)))) * 0.6 + 0.3 * occlusion.r;
         out_color = brightness * base_color;
         break;
     // Debugging cases, selectable with keys 1-5 in the sandbox:

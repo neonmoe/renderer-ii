@@ -3,7 +3,8 @@
 layout(set = 0, binding = 0) uniform GlobalTransforms {
     mat4 proj;
     mat4 view;
-} uf_transforms;
+}
+uf_transforms;
 
 layout(location = 0) in mat4 in_transform;
 layout(location = 4) in vec3 in_position;
@@ -18,10 +19,12 @@ layout(location = 2) out vec4 out_tangent;
 void main() {
     gl_Position = uf_transforms.proj * uf_transforms.view * in_transform * vec4(in_position, 1.0);
     out_uv = in_uv;
-    // Normals and tangents should not be translated, and the translation is specified in the 4th column.
+    // Normals and tangents should not be translated, and the translation is
+    // specified in the 4th column.
     mat3 rotation_scale = mat3(in_transform);
     out_tangent = vec4(normalize(rotation_scale * in_tangent.xyz), in_tangent.w);
-    // For non-uniform scales, this scales the normals appropriately (otherwise only rotation would be enough)
+    // For non-uniform scales, this scales the normals appropriately (otherwise
+    // only rotation would be enough)
     mat3 normal_transform = transpose(inverse(rotation_scale));
     out_normal = normalize(normal_transform * in_normal);
     // Ensure 90 degree angle between normal and tangent.
