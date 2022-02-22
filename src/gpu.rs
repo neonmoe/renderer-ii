@@ -9,7 +9,6 @@ use std::mem;
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::{self, Receiver, Sender};
 
 /// Get from [Gpu::wait_frame].
 #[derive(Clone, Copy)]
@@ -31,8 +30,6 @@ impl FrameIndex {
     }
 }
 
-struct WaitSemaphore(vk::Semaphore, vk::PipelineStageFlags);
-
 /// Synchronization objects and buffers used during a single frame,
 /// which is only cleaned up after enough frames have passed that the
 /// specific FrameLocal struct is reused. This allows for processing a
@@ -44,9 +41,6 @@ struct FrameLocal {
     temp_arena: VulkanArena,
     command_pool: CommandPool,
 }
-
-#[derive(PartialEq, Eq, Hash)]
-pub(crate) struct TextureIndex(u32);
 
 /// The main half of the rendering pair, along with [Canvas].
 ///
@@ -66,7 +60,6 @@ pub struct Gpu {
     frame_start_fence: vk::Fence,
 
     frame_locals: Vec<FrameLocal>,
-    render_wait_semaphores: (Sender<WaitSemaphore>, Receiver<WaitSemaphore>),
 }
 
 impl Drop for Gpu {
@@ -222,16 +215,12 @@ impl Gpu {
 
         Ok(Gpu {
             driver: driver.clone(),
-
             device,
-
             graphics_queue,
             surface_queue,
             transfer_queue,
             frame_start_fence,
-
             frame_locals,
-            render_wait_semaphores: mpsc::channel(),
         })
     }
 
@@ -309,21 +298,10 @@ impl Gpu {
         let command_buffer = self.record_command_buffer(frame_index, framebuffer.inner, descriptors, canvas, scene, debug_value)?;
 
         let frame_local = &self.frame_locals[frame_index.index];
-
-        let render_wait_semaphores = self.render_wait_semaphores.1.try_iter().collect::<Vec<WaitSemaphore>>();
-        let mut wait_semaphores = Vec::with_capacity(render_wait_semaphores.len());
-        let mut wait_stages = Vec::with_capacity(render_wait_semaphores.len());
-        for WaitSemaphore(semaphore, wait_stage) in render_wait_semaphores {
-            wait_semaphores.push(semaphore);
-            wait_stages.push(wait_stage);
-        }
-
         let signal_semaphores = [frame_local.ready_for_present_sp];
         let command_buffers = [command_buffer];
         let submit_infos = [vk::SubmitInfo::builder()
-            .wait_semaphores(&wait_semaphores)
             .signal_semaphores(&signal_semaphores)
-            .wait_dst_stage_mask(&wait_stages)
             .command_buffers(&command_buffers)
             .build()];
         unsafe {
