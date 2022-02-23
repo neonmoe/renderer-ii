@@ -45,9 +45,10 @@ fn fallible_main() -> anyhow::Result<()> {
     let (width, height) = window.vulkan_drawable_size();
 
     let driver = Rc::new(neonvk::Driver::new(&window)?);
-    let physical_devices = neonvk::get_physical_devices(&driver.entry, &driver.instance, driver.surface)?;
+    let surface = Rc::new(neonvk::create_surface(&driver.entry, &driver.instance, &window)?);
+    let physical_devices = neonvk::get_physical_devices(&driver.entry, &driver.instance, surface.inner)?;
     let physical_device = &physical_devices[0];
-    let mut gpu = neonvk::Gpu::new(&driver, physical_device)?;
+    let mut gpu = neonvk::Gpu::new(&driver.instance, physical_device)?;
 
     let mut uploader = neonvk::Uploader::new(
         &driver.instance,
@@ -88,7 +89,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut canvas = neonvk::Canvas::new(
         &driver.entry,
         &driver.instance,
-        driver.surface,
+        &surface,
         &gpu.device,
         physical_device,
         &descriptors,
@@ -150,7 +151,7 @@ fn fallible_main() -> anyhow::Result<()> {
             canvas = neonvk::Canvas::new(
                 &driver.entry,
                 &driver.instance,
-                driver.surface,
+                &surface,
                 &gpu.device,
                 physical_device,
                 &descriptors,

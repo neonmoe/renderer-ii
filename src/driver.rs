@@ -1,3 +1,4 @@
+use crate::vulkan_raii::Surface;
 use crate::{debug_utils, Error};
 use ash::extensions::khr;
 use ash::version::{EntryV1_0, InstanceV1_0};
@@ -5,6 +6,15 @@ use ash::{vk, Entry, Instance};
 use raw_window_handle::HasRawWindowHandle;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+
+pub fn create_surface(entry: &Entry, instance: &Instance, window: &dyn HasRawWindowHandle) -> Result<Surface, Error> {
+    let surface = unsafe { ash_window::create_surface(entry, instance, window, None) }.map_err(Error::VulkanSurfaceCreation)?;
+    let surface_ext = khr::Surface::new(entry, instance);
+    Ok(Surface {
+        inner: surface,
+        device: surface_ext,
+    })
+}
 
 /// Holds the Vulkan functions, instance and surface, acting as the
 /// basis for everything else rendering.
@@ -14,10 +24,8 @@ use std::os::raw::c_char;
 pub struct Driver {
     pub entry: Entry,
     pub instance: Instance,
-    pub surface: vk::SurfaceKHR,
     pub debug_utils_available: bool,
     debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
-    surface_ext: khr::Surface,
 }
 
 impl Drop for Driver {
@@ -25,11 +33,6 @@ impl Drop for Driver {
     fn drop(&mut self) {
         if let Some(debug_utils_messenger) = self.debug_utils_messenger.take() {
             debug_utils::destroy_debug_utils_messenger(&self.entry, &self.instance, debug_utils_messenger);
-        }
-
-        {
-            profiling::scope!("destroy surface");
-            unsafe { self.surface_ext.destroy_surface(self.surface, None) };
         }
 
         {
@@ -56,7 +59,12 @@ impl Driver {
         let mut extensions = ash_window::enumerate_required_extensions(window)
             .map_err(Error::WindowRequiredExtensions)?
             .into_iter()
-            .map(|cs| cs.as_ptr())
+            .map(|cs| {
+                if let Ok(s) = cs.to_str() {
+                    log::debug!("Instance extension: {}", s);
+                }
+                cs.as_ptr()
+            })
             .collect::<Vec<*const c_char>>();
         let debug_utils_available = is_extension_supported(&entry, "VK_EXT_debug_utils");
         if debug_utils_available {
@@ -88,7 +96,6 @@ impl Driver {
         };
 
         let instance = unsafe { entry.create_instance(&create_info, None) }?;
-        let surface = unsafe { ash_window::create_surface(&entry, &instance, window, None) }.map_err(Error::VulkanSurfaceCreation)?;
 
         let debug_utils_messenger;
         if debug_utils_available {
@@ -98,15 +105,11 @@ impl Driver {
             debug_utils_messenger = None;
         }
 
-        let surface_ext = khr::Surface::new(&entry, &instance);
-
         Ok(Driver {
             entry,
             instance,
-            surface,
             debug_utils_available,
             debug_utils_messenger,
-            surface_ext,
         })
     }
 }

@@ -1,6 +1,6 @@
 use crate::arena::VulkanArena;
 use crate::pipeline::{PipelineMap, PIPELINE_PARAMETERS};
-use crate::vulkan_raii::{self, AnyImage, Device, Framebuffer, ImageView, PipelineLayout, RenderPass, Swapchain};
+use crate::vulkan_raii::{self, AnyImage, Device, Framebuffer, ImageView, PipelineLayout, RenderPass, Surface, Swapchain};
 use crate::Descriptors;
 use crate::{Error, PhysicalDevice};
 use ash::extensions::khr;
@@ -53,7 +53,7 @@ impl Canvas {
     pub fn new(
         entry: &Entry,
         instance: &Instance,
-        surface: vk::SurfaceKHR,
+        surface: &Rc<Surface>,
         device: &Rc<Device>,
         physical_device: &PhysicalDevice,
         descriptors: &Descriptors,
@@ -69,7 +69,7 @@ impl Canvas {
         let (swapchain, swapchain_format, extent, frame_count) = create_swapchain(
             &surface_ext,
             &swapchain_ext,
-            surface,
+            surface.inner,
             old_canvas.map(|r| r.swapchain.inner),
             physical_device.inner,
             &queue_family_indices,
@@ -145,6 +145,7 @@ impl Canvas {
         let swapchain = Rc::new(Swapchain {
             inner: swapchain,
             device: swapchain_ext,
+            surface: surface.clone(),
         });
         let swapchain_image_views = swapchain_images
             .into_iter()

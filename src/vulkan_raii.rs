@@ -84,9 +84,16 @@ impl From<Image> for AnyImage {
     }
 }
 
+pub struct Surface {
+    pub inner: vk::SurfaceKHR,
+    pub device: khr::Surface,
+}
+trivial_drop_impl!(Surface, destroy_surface);
+
 pub struct Swapchain {
     pub inner: vk::SwapchainKHR,
     pub device: khr::Swapchain,
+    pub surface: Rc<Surface>,
 }
 trivial_drop_impl!(Swapchain, destroy_swapchain);
 

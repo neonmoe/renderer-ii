@@ -1,9 +1,9 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::PushConstantStruct;
 use crate::vulkan_raii::{CommandPool, Device};
-use crate::{debug_utils, Camera, Canvas, Driver, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
+use crate::{debug_utils, Camera, Canvas, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
 use ash::version::{DeviceV1_0, InstanceV1_0};
-use ash::vk;
+use ash::{vk, Instance};
 use glam::Mat4;
 use std::mem;
 use std::rc::Rc;
@@ -48,10 +48,6 @@ struct FrameLocal {
 /// device in Vulkan terms, i.e. a GPU, and everything else is built
 /// off of that.
 pub struct Gpu {
-    /// Held by [Gpu] to ensure that the devices are dropped before
-    /// the instance.
-    pub driver: Rc<Driver>,
-
     pub device: Rc<Device>,
 
     pub graphics_queue: vk::Queue,
@@ -94,7 +90,7 @@ impl Gpu {
     /// The inner tuples consist of: whether the gpu is the one picked
     /// in this function call, the display name, and the id passed to
     /// a new [Gpu] when recreating it with a new physical device.
-    pub fn new(driver: &Rc<Driver>, physical_device: &PhysicalDevice) -> Result<Gpu, Error> {
+    pub fn new(instance: &Instance, physical_device: &PhysicalDevice) -> Result<Gpu, Error> {
         profiling::scope!("new_gpu");
 
         fn create_device_queue_create_infos(queue_family_indices: &[u32], ones: &[f32]) -> Vec<vk::DeviceQueueCreateInfo> {
@@ -147,8 +143,7 @@ impl Gpu {
             .enabled_features(&physical_device.features)
             .enabled_extension_names(&extensions);
         let device = unsafe {
-            driver
-                .instance
+            instance
                 .create_device(physical_device.inner, &device_create_info, None)
                 .map_err(Error::VulkanDeviceCreation)
         }?;
@@ -157,10 +152,8 @@ impl Gpu {
         let mut queues = [vk::Queue::default(); 3];
         get_device_queues(&device, &queue_family_indices, &mut queues);
         let [graphics_queue, surface_queue, transfer_queue] = queues;
-        if driver.debug_utils_available {
-            debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
-            debug_utils::name_vulkan_object(&device, surface_queue, format_args!("present"));
-        }
+        debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
+        debug_utils::name_vulkan_object(&device, surface_queue, format_args!("present"));
 
         // TODO: Move frame local stuff to its own module
         // <frame local stuff>
@@ -188,7 +181,7 @@ impl Gpu {
                     device: device.clone(),
                 };
                 let temp_arena = VulkanArena::new(
-                    &driver.instance,
+                    instance,
                     &device,
                     physical_device.inner,
                     10_000_000,
@@ -214,7 +207,6 @@ impl Gpu {
         }?;
 
         Ok(Gpu {
-            driver: driver.clone(),
             device,
             graphics_queue,
             surface_queue,

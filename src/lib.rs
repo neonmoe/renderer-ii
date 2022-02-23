@@ -30,7 +30,7 @@ mod descriptors;
 pub use descriptors::{Descriptors, Material, PbrDefaults};
 
 mod driver;
-pub use driver::Driver;
+pub use driver::{create_surface, Driver};
 
 mod error;
 pub use error::Error;
