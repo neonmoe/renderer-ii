@@ -2,7 +2,6 @@
 use crate::debug_utils;
 use crate::error::Error;
 use crate::vulkan_raii::{Buffer, Device, DeviceMemory, Image};
-use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk;
 use ash::Instance;
 use std::ptr;

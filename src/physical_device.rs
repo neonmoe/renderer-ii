@@ -1,6 +1,5 @@
 use crate::Error;
 use ash::extensions::khr;
-use ash::version::InstanceV1_0;
 use ash::vk;
 use ash::{Entry, Instance};
 use std::ffi::CStr;

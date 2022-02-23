@@ -2,7 +2,6 @@ use crate::image_loading::{self, TextureKind};
 use crate::pipeline::{DescriptorSetLayoutParams, Pipeline, PipelineMap, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 use crate::{Error, FrameIndex, Uploader, VulkanArena};
-use ash::version::DeviceV1_0;
 use ash::vk;
 use std::hash::{Hash, Hasher};
 use std::mem;

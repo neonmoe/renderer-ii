@@ -1,6 +1,5 @@
 use crate::arena::{BufferAllocation, VulkanArena};
 use crate::{Error, Pipeline, Uploader};
-use ash::version::DeviceV1_0;
 use ash::vk;
 use glam::Vec4;
 use std::{mem, ptr};

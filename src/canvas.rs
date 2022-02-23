@@ -4,7 +4,6 @@ use crate::vulkan_raii::{self, AnyImage, Device, Framebuffer, ImageView, Pipelin
 use crate::Descriptors;
 use crate::{Error, PhysicalDevice};
 use ash::extensions::khr;
-use ash::version::DeviceV1_0;
 use ash::{vk, Entry, Instance};
 use std::rc::Rc;
 

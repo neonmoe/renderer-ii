@@ -1,5 +1,4 @@
 use crate::{debug_utils, Error};
-use ash::version::{EntryV1_0, InstanceV1_0};
 use ash::{vk, Entry, Instance};
 use raw_window_handle::HasRawWindowHandle;
 use std::ffi::CStr;
@@ -34,10 +33,11 @@ impl Drop for Driver {
 impl Driver {
     pub fn new(window: &dyn HasRawWindowHandle) -> Result<Driver, Error> {
         profiling::scope!("new_driver");
-        let entry = unsafe { Entry::new().unwrap() };
+        // TODO: Missing Vulkan is not gracefully handled.
+        let entry = unsafe { Entry::load().unwrap() };
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))
-            .application_version(vk::make_version(0, 1, 0))
+            .application_version(make_api_version(0, 0, 1, 0))
             .api_version(vk::API_VERSION_1_2);
 
         let mut layers = Vec::with_capacity(1);
@@ -84,7 +84,7 @@ impl Driver {
             create_info
         };
 
-        let instance = unsafe { entry.create_instance(&create_info, None) }?;
+        let instance = unsafe { entry.create_instance(&create_info, None) }.map_err(Error::VulkanInstanceCreation)?;
 
         let debug_utils_messenger;
         if debug_utils_available {
@@ -103,6 +103,10 @@ impl Driver {
     }
 }
 
+fn make_api_version(variant: u32, major: u32, minor: u32, patch: u32) -> u32 {
+    (variant << 29) | (major << 22) | (minor << 12) | patch
+}
+
 #[profiling::function]
 fn is_validation_layer_supported(entry: &Entry, target_layer_name: &str) -> bool {
     match entry.enumerate_instance_layer_properties() {
@@ -117,7 +121,7 @@ fn is_validation_layer_supported(entry: &Entry, target_layer_name: &str) -> bool
 
 #[profiling::function]
 fn is_extension_supported(entry: &Entry, target_extension_name: &str) -> bool {
-    match entry.enumerate_instance_extension_properties() {
+    match entry.enumerate_instance_extension_properties(None) {
         Err(_) => false,
         Ok(extensions) => extensions.iter().any(|extension_properties| {
             let extension_name_slice = &extension_properties.extension_name[..];

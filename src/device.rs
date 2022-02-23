@@ -1,6 +1,5 @@
 use crate::vulkan_raii::Device;
 use crate::{debug_utils, Error, PhysicalDevice};
-use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::{vk, Instance};
 
 pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> Result<Device, Error> {

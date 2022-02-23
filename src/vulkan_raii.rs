@@ -6,7 +6,6 @@
 //! recipe for memory leaks.
 
 use ash::extensions::khr;
-use ash::version::DeviceV1_0;
 use ash::vk;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;

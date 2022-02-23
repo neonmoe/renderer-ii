@@ -6,7 +6,7 @@ pub enum Error {
     #[error("query for the window's required extensions failed")]
     WindowRequiredExtensions(#[source] vk::Result),
     #[error("vulkan instance creation failed")]
-    VulkanInstanceCreation(#[from] ash::InstanceError),
+    VulkanInstanceCreation(#[from] vk::Result),
     #[error("vulkan surface creation failed")]
     VulkanSurfaceCreation(#[source] vk::Result),
     #[error("could not list physical devices")]

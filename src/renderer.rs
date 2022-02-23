@@ -2,7 +2,6 @@ use crate::descriptors::Descriptors;
 use crate::pipeline::PushConstantStruct;
 use crate::vulkan_raii::{CommandPool, Device, Fence, Semaphore};
 use crate::{Camera, Canvas, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
-use ash::version::DeviceV1_0;
 use ash::{vk, Instance};
 use glam::Mat4;
 use std::mem;

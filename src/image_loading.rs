@@ -1,6 +1,5 @@
 use crate::vulkan_raii::{Device, ImageView};
 use crate::{debug_utils, Error, Uploader, VulkanArena};
-use ash::version::DeviceV1_0;
 use ash::vk;
 use std::rc::Rc;
 

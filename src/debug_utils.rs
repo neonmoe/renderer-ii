@@ -60,10 +60,17 @@ fn format_object_name(mut object_name: String) -> String {
 
 #[profiling::function]
 pub(crate) fn create_debug_utils_messenger(entry: &Entry, instance: &Instance) -> Result<vk::DebugUtilsMessengerEXT, vk::Result> {
+    let message_severity = vk::DebugUtilsMessageSeverityFlagsEXT::INFO
+        | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
+        | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+        | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING;
+    let message_type = vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+        | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
+        | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION;
     let debug_utils = DebugUtils::new(entry, instance);
     let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
-        message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::all(),
-        message_type: vk::DebugUtilsMessageTypeFlagsEXT::all(),
+        message_severity,
+        message_type,
         pfn_user_callback: Some(debug_utils_messenger_callback),
         ..Default::default()
     };
