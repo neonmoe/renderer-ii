@@ -1,20 +1,9 @@
-use crate::vulkan_raii::Surface;
 use crate::{debug_utils, Error};
-use ash::extensions::khr;
 use ash::version::{EntryV1_0, InstanceV1_0};
 use ash::{vk, Entry, Instance};
 use raw_window_handle::HasRawWindowHandle;
 use std::ffi::CStr;
 use std::os::raw::c_char;
-
-pub fn create_surface(entry: &Entry, instance: &Instance, window: &dyn HasRawWindowHandle) -> Result<Surface, Error> {
-    let surface = unsafe { ash_window::create_surface(entry, instance, window, None) }.map_err(Error::VulkanSurfaceCreation)?;
-    let surface_ext = khr::Surface::new(entry, instance);
-    Ok(Surface {
-        inner: surface,
-        device: surface_ext,
-    })
-}
 
 /// Holds the Vulkan functions, instance and surface, acting as the
 /// basis for everything else rendering.

@@ -29,17 +29,17 @@ pub use canvas::Canvas;
 mod descriptors;
 pub use descriptors::{Descriptors, Material, PbrDefaults};
 
+mod device;
+pub use device::create_device;
+
 mod driver;
-pub use driver::{create_surface, Driver};
+pub use driver::Driver;
 
 mod error;
 pub use error::Error;
 
 mod gltf;
 pub use gltf::{Gltf, GltfResources, MeshIter};
-
-mod gpu;
-pub use gpu::{FrameIndex, Gpu};
 
 pub mod image_loading;
 
@@ -49,11 +49,32 @@ pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 mod pipeline;
 pub use pipeline::Pipeline;
 
+mod renderer;
+pub use renderer::{FrameIndex, Renderer};
+
 mod scene;
 pub use scene::Scene;
 
 mod uploader;
 pub use uploader::Uploader;
+
+mod surface {
+    use crate::vulkan_raii::Surface;
+    use crate::Error;
+    use ash::extensions::khr;
+    use ash::{Entry, Instance};
+    use raw_window_handle::HasRawWindowHandle;
+
+    pub fn create_surface(entry: &Entry, instance: &Instance, window: &dyn HasRawWindowHandle) -> Result<Surface, Error> {
+        let surface = unsafe { ash_window::create_surface(entry, instance, window, None) }.map_err(Error::VulkanSurfaceCreation)?;
+        let surface_ext = khr::Surface::new(entry, instance);
+        Ok(Surface {
+            inner: surface,
+            device: surface_ext,
+        })
+    }
+}
+pub use surface::create_surface;
 
 // docs modules:
 

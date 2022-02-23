@@ -1,23 +1,17 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::PushConstantStruct;
-use crate::vulkan_raii::{CommandPool, Device};
-use crate::{debug_utils, Camera, Canvas, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
-use ash::version::{DeviceV1_0, InstanceV1_0};
+use crate::vulkan_raii::{CommandPool, Device, Fence, Semaphore};
+use crate::{Camera, Canvas, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
+use ash::version::DeviceV1_0;
 use ash::{vk, Instance};
 use glam::Mat4;
 use std::mem;
 use std::rc::Rc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
 /// Get from [Gpu::wait_frame].
 #[derive(Clone, Copy)]
 pub struct FrameIndex {
-    /// The index of the swapchain image we're rendering to this
-    /// frame. Can be used to index into frame-specific buffers that
-    /// need to make sure they don't overwrite stuff still in use by
-    /// previous frames.
-    pub index: usize,
+    index: usize,
 }
 
 impl FrameIndex {
@@ -25,61 +19,35 @@ impl FrameIndex {
         FrameIndex { index }
     }
 
-    pub fn get_arena(self, arenas: &mut [VulkanArena]) -> &mut VulkanArena {
-        &mut arenas[self.index as usize]
+    /// The index of the swapchain image we're rendering to this
+    /// frame. Can be used to index into frame-specific buffers that
+    /// need to make sure they don't overwrite stuff still in use by
+    /// previous frames.
+    pub fn index(&self) -> usize {
+        self.index
     }
 }
 
-/// Synchronization objects and buffers used during a single frame,
-/// which is only cleaned up after enough frames have passed that the
-/// specific FrameLocal struct is reused. This allows for processing a
-/// frame while the previous one is still being rendered.
-struct FrameLocal {
-    in_use: AtomicBool,
-    ready_for_present_sp: vk::Semaphore,
-    frame_end_fence: vk::Fence,
-    temp_arena: VulkanArena,
-    command_pool: CommandPool,
-}
+type PerFrame<T> = Vec<T>;
 
 /// The main half of the rendering pair, along with [Canvas].
 ///
 /// Each instance of [Gpu] contains a handle to a single physical
 /// device in Vulkan terms, i.e. a GPU, and everything else is built
 /// off of that.
-pub struct Gpu {
-    pub device: Rc<Device>,
+pub struct Renderer {
+    device: Rc<Device>,
+    frame_start_fence: Fence,
+    ready_for_present: PerFrame<Semaphore>,
+    frame_end_fence: PerFrame<Fence>,
+    temp_arena: PerFrame<VulkanArena>,
+    command_pool: PerFrame<CommandPool>,
 
-    pub graphics_queue: vk::Queue,
-    surface_queue: vk::Queue,
-    pub transfer_queue: vk::Queue,
-    frame_start_fence: vk::Fence,
-
-    frame_locals: Vec<FrameLocal>,
+    // Renderer relies on the canvas frame count.
+    _canvas: Rc<Canvas>,
 }
 
-impl Drop for Gpu {
-    #[profiling::function]
-    fn drop(&mut self) {
-        let _ = self.wait_idle();
-
-        {
-            profiling::scope!("destroy frame start fence");
-            unsafe { self.device.destroy_fence(self.frame_start_fence, None) };
-        }
-
-        for frame_local in &self.frame_locals {
-            profiling::scope!("destroy frame locals");
-
-            unsafe {
-                self.device.destroy_semaphore(frame_local.ready_for_present_sp, None);
-                self.device.destroy_fence(frame_local.frame_end_fence, None);
-            }
-        }
-    }
-}
-
-impl Gpu {
+impl Renderer {
     /// Creates a new instance of [Gpu], optionally the specified
     /// one. Only one should exist at a time.
     ///
@@ -90,151 +58,81 @@ impl Gpu {
     /// The inner tuples consist of: whether the gpu is the one picked
     /// in this function call, the display name, and the id passed to
     /// a new [Gpu] when recreating it with a new physical device.
-    pub fn new(instance: &Instance, physical_device: &PhysicalDevice) -> Result<Gpu, Error> {
+    pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice, canvas: &Rc<Canvas>) -> Result<Renderer, Error> {
         profiling::scope!("new_gpu");
 
-        fn create_device_queue_create_infos(queue_family_indices: &[u32], ones: &[f32]) -> Vec<vk::DeviceQueueCreateInfo> {
-            let mut results: Vec<vk::DeviceQueueCreateInfo> = Vec::with_capacity(queue_family_indices.len());
-            'queue_families: for &queue_family_index in queue_family_indices {
-                for create_info in &results {
-                    if create_info.queue_family_index == queue_family_index {
-                        continue 'queue_families;
-                    }
-                }
-                let count = queue_family_indices.iter().filter(|index| **index == queue_family_index).count();
-                let create_info = vk::DeviceQueueCreateInfo::builder()
-                    .queue_family_index(queue_family_index)
-                    .queue_priorities(&ones[..count])
-                    .build();
-                results.push(create_info);
-            }
-            results
-        }
-
-        fn get_device_queues<const N: usize>(device: &Device, family_indices: &[u32; N], queues: &mut [vk::Queue; N]) {
-            let mut picks = Vec::with_capacity(N);
-            for (&queue_family_index, queue) in family_indices.iter().zip(queues.iter_mut()) {
-                let queue_index = picks.iter().filter(|index| **index == queue_family_index).count() as u32;
-                *queue = unsafe { device.get_device_queue(queue_family_index, queue_index) };
-                picks.push(queue_family_index);
-            }
-        }
-
-        // Just to have an array to point at for the queue priorities.
-        let ones = [1.0, 1.0, 1.0];
-        let queue_family_indices = [
-            physical_device.graphics_family_index,
-            physical_device.surface_family_index,
-            physical_device.transfer_family_index,
-        ];
-        let queue_create_infos = create_device_queue_create_infos(&queue_family_indices, &ones);
-        let mut extensions = vec![cstr!("VK_KHR_swapchain").as_ptr()];
-        log::debug!("Device extension: VK_KHR_swapchain");
-        if physical_device.extension_supported("VK_EXT_memory_budget") {
-            extensions.push(cstr!("VK_EXT_memory_budget").as_ptr());
-            log::debug!("Device extension (optional): VK_EXT_memory_budget");
-        }
-
-        let mut physical_device_descriptor_indexing_features =
-            vk::PhysicalDeviceDescriptorIndexingFeatures::builder().descriptor_binding_partially_bound(true);
-        let device_create_info = vk::DeviceCreateInfo::builder()
-            .push_next(&mut physical_device_descriptor_indexing_features)
-            .queue_create_infos(&queue_create_infos)
-            .enabled_features(&physical_device.features)
-            .enabled_extension_names(&extensions);
-        let device = unsafe {
-            instance
-                .create_device(physical_device.inner, &device_create_info, None)
-                .map_err(Error::VulkanDeviceCreation)
-        }?;
-        let device = Rc::new(Device { inner: device });
-
-        let mut queues = [vk::Queue::default(); 3];
-        get_device_queues(&device, &queue_family_indices, &mut queues);
-        let [graphics_queue, surface_queue, transfer_queue] = queues;
-        debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
-        debug_utils::name_vulkan_object(&device, surface_queue, format_args!("present"));
-
-        // TODO: Move frame local stuff to its own module
-        // <frame local stuff>
-        let frame_in_use_count = 3;
-        let frame_locals = (0..frame_in_use_count)
+        let frame_in_use_count = canvas.frame_count;
+        let ready_for_present = (0..frame_in_use_count)
             .map(|_| {
-                let finished_command_buffers_sp = unsafe {
-                    device
-                        .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                        .map_err(Error::VulkanSemaphoreCreation)
-                }?;
+                unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
+                    .map_err(Error::VulkanSemaphoreCreation)
+                    .map(|inner| Semaphore {
+                        inner,
+                        device: device.clone(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let frame_end_fence = (0..frame_in_use_count)
+            .map(|_| {
                 let fence_create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-                let frame_end_fence = unsafe {
-                    device
-                        .create_fence(&fence_create_info, None)
-                        .map_err(Error::VulkanSemaphoreCreation)
-                }?;
+                unsafe { device.create_fence(&fence_create_info, None) }
+                    .map_err(Error::VulkanFenceCreation)
+                    .map(|inner| Fence {
+                        inner,
+                        device: device.clone(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let command_pool = (0..frame_in_use_count)
+            .map(|_| {
                 let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
                     .queue_family_index(physical_device.graphics_family_index)
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);
-                let command_pool =
-                    unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
-                let command_pool = CommandPool {
-                    inner: command_pool,
-                    device: device.clone(),
-                };
-                let temp_arena = VulkanArena::new(
+                unsafe { device.create_command_pool(&command_pool_create_info, None) }
+                    .map_err(Error::VulkanCommandPoolCreation)
+                    .map(|inner| CommandPool {
+                        inner,
+                        device: device.clone(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let temp_arena = (0..frame_in_use_count)
+            .map(|_| {
+                VulkanArena::new(
                     instance,
-                    &device,
+                    device,
                     physical_device.inner,
                     10_000_000,
                     vk::MemoryPropertyFlags::HOST_VISIBLE,
                     vk::MemoryPropertyFlags::HOST_VISIBLE,
                     "frame local arena",
-                )?;
-                Ok(FrameLocal {
-                    in_use: AtomicBool::new(false),
-                    ready_for_present_sp: finished_command_buffers_sp,
-                    frame_end_fence,
-                    command_pool,
-                    temp_arena,
-                })
+                )
             })
-            .collect::<Result<Vec<FrameLocal>, Error>>()?;
-        // </frame local stuff>
+            .collect::<Result<Vec<_>, _>>()?;
 
         let frame_start_fence = unsafe {
             device
                 .create_fence(&vk::FenceCreateInfo::default(), None)
                 .map_err(Error::VulkanSemaphoreCreation)
         }?;
+        let frame_start_fence = Fence {
+            inner: frame_start_fence,
+            device: device.clone(),
+        };
 
-        Ok(Gpu {
-            device,
-            graphics_queue,
-            surface_queue,
-            transfer_queue,
+        Ok(Renderer {
+            device: device.clone(),
             frame_start_fence,
-            frame_locals,
+            ready_for_present,
+            frame_end_fence,
+            temp_arena,
+            command_pool,
+
+            _canvas: canvas.clone(),
         })
-    }
-
-    // TODO: Refactor Gpu to handle just the pub fns, rename to maybe Renderer?
-    // Pub fns meaning the following:
-    // - wait until gpu is idle
-    // - wait for next frame
-    // - render next frame (+ the command buffer recording function, which is kind of a part of this)
-    //
-    // Would be ideal if a Renderer object wouldn't even be
-    // needed. Might be that once everything else is split out, these
-    // could be just their owned functions and everything required
-    // could be passed in. OTOH, one of Gpu's functions is to hold the
-    // vulkan Device. Though maybe it would be more ideal for the user
-    // to hold the Device, it could be passed to various subsystems
-    // more directly.
-
-    /// Wait until the device is idle. Should be called before
-    /// swapchain recreation and after the game loop is over.
-    #[profiling::function]
-    pub fn wait_idle(&self) -> Result<(), Error> {
-        unsafe { self.device.device_wait_idle() }.map_err(Error::VulkanDeviceWaitIdle)
     }
 
     /// Wait until the next frame can start rendering.
@@ -245,16 +143,17 @@ impl Gpu {
     pub fn wait_frame(&mut self, canvas: &Canvas) -> Result<FrameIndex, Error> {
         let (image_index, _) = unsafe {
             profiling::scope!("acquire next image");
+            let fence = self.frame_start_fence.inner;
             canvas
                 .swapchain
                 .device
-                .acquire_next_image(canvas.swapchain.inner, u64::MAX, vk::Semaphore::null(), self.frame_start_fence)
+                .acquire_next_image(canvas.swapchain.inner, u64::MAX, vk::Semaphore::null(), fence)
                 .map_err(Error::VulkanAcquireImage)
         }?;
         let frame_index = FrameIndex::new(image_index as usize);
-        let frame_local = &mut self.frame_locals[frame_index.index];
+        let fi = frame_index.index;
 
-        let fences = [self.frame_start_fence, frame_local.frame_end_fence];
+        let fences = [self.frame_start_fence.inner, self.frame_end_fence[fi].inner];
         unsafe {
             profiling::scope!("wait for the image");
             self.device
@@ -262,7 +161,7 @@ impl Gpu {
                 .map_err(Error::VulkanFenceWait)?;
             self.device.reset_fences(&fences).map_err(Error::VulkanFenceReset)?;
         }
-        frame_local.temp_arena.reset()?;
+        self.temp_arena[fi].reset()?;
 
         Ok(frame_index)
     }
@@ -282,15 +181,13 @@ impl Gpu {
         scene: &Scene,
         debug_value: u32,
     ) -> Result<(), Error> {
-        let frame_local = &mut self.frame_locals[frame_index.index];
-        frame_local.in_use.store(true, Ordering::Relaxed);
-        camera.update(descriptors, canvas, &mut frame_local.temp_arena, frame_index)?;
+        let fi = frame_index.index;
+        camera.update(descriptors, canvas, &mut self.temp_arena[fi], frame_index)?;
 
         let framebuffer = &canvas.framebuffers[frame_index.index];
         let command_buffer = self.record_command_buffer(frame_index, framebuffer.inner, descriptors, canvas, scene, debug_value)?;
 
-        let frame_local = &self.frame_locals[frame_index.index];
-        let signal_semaphores = [frame_local.ready_for_present_sp];
+        let signal_semaphores = [self.ready_for_present[fi].inner];
         let command_buffers = [command_buffer];
         let submit_infos = [vk::SubmitInfo::builder()
             .signal_semaphores(&signal_semaphores)
@@ -299,7 +196,7 @@ impl Gpu {
         unsafe {
             profiling::scope!("queue render");
             self.device
-                .queue_submit(self.graphics_queue, &submit_infos, frame_local.frame_end_fence)
+                .queue_submit(self.device.graphics_queue, &submit_infos, self.frame_end_fence[fi].inner)
                 .map_err(Error::VulkanQueueSubmit)
         }?;
 
@@ -311,7 +208,7 @@ impl Gpu {
             .image_indices(&image_indices);
         let present_result = unsafe {
             profiling::scope!("queue present");
-            canvas.swapchain.device.queue_present(self.surface_queue, &present_info)
+            canvas.swapchain.device.queue_present(self.device.surface_queue, &present_info)
         };
 
         match present_result {
@@ -333,22 +230,23 @@ impl Gpu {
         scene: &Scene,
         debug_value: u32,
     ) -> Result<vk::CommandBuffer, Error> {
-        let frame_local = &mut self.frame_locals[frame_index.index];
-        let temp_arena = &mut frame_local.temp_arena;
+        let fi = frame_index.index;
+        let temp_arena = &mut self.temp_arena[fi];
 
         descriptors.write_descriptors(frame_index);
 
+        let command_pool = self.command_pool[fi].inner;
         unsafe {
             profiling::scope!("allocate command buffer");
             self.device
-                .reset_command_pool(frame_local.command_pool.inner, vk::CommandPoolResetFlags::empty())
+                .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .map_err(Error::VulkanResetCommandPool)
         }?;
 
         let command_buffers = unsafe {
             profiling::scope!("allocate command buffer");
             let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-                .command_pool(frame_local.command_pool.inner)
+                .command_pool(command_pool)
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
             self.device

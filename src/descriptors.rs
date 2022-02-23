@@ -267,10 +267,10 @@ impl Descriptors {
         for (pipeline, material_slots) in self.material_slots_per_pipeline.iter_with_pipeline() {
             for (i, material_slot) in material_slots.iter().enumerate() {
                 if let Some(material) = material_slot.as_ref().and_then(Weak::upgrade) {
-                    let written = self.material_status_per_pipeline.get(pipeline)[i][frame_index.index];
+                    let written = self.material_status_per_pipeline.get(pipeline)[i][frame_index.index()];
                     if !written {
                         self.write_material(frame_index, pipeline, &material);
-                        self.material_status_per_pipeline.get_mut(pipeline)[i][frame_index.index] = true;
+                        self.material_status_per_pipeline.get_mut(pipeline)[i][frame_index.index()] = true;
                     }
                 }
             }
@@ -304,7 +304,7 @@ impl Descriptors {
 
     #[profiling::function]
     pub(crate) fn set_uniform_buffer(&self, frame_index: FrameIndex, pipeline: Pipeline, set: u32, binding: u32, buffer: vk::Buffer) {
-        let frame_idx = frame_index.index;
+        let frame_idx = frame_index.index();
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[frame_idx].get(pipeline).inner[set_idx];
         let descriptor_buffer_info = [vk::DescriptorBufferInfo::builder()
@@ -336,7 +336,7 @@ impl Descriptors {
         image_views: &[&ImageView],
         range: Range<u32>,
     ) {
-        let frame_idx = frame_index.index;
+        let frame_idx = frame_index.index();
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[frame_idx].get(pipeline).inner[set_idx];
         for (i, image_view) in image_views.iter().enumerate() {
@@ -360,6 +360,6 @@ impl Descriptors {
 
     #[profiling::function]
     pub(crate) fn descriptor_sets(&self, frame_index: FrameIndex, pipeline: Pipeline) -> &[vk::DescriptorSet] {
-        &self.descriptor_sets[frame_index.index].get(pipeline).inner
+        &self.descriptor_sets[frame_index.index()].get(pipeline).inner
     }
 }

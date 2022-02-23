@@ -13,6 +13,9 @@ use std::rc::Rc;
 
 pub struct Device {
     pub inner: ash::Device,
+    pub graphics_queue: vk::Queue,
+    pub surface_queue: vk::Queue,
+    pub transfer_queue: vk::Queue,
 }
 impl std::ops::Deref for Device {
     type Target = ash::Device;
@@ -23,6 +26,14 @@ impl std::ops::Deref for Device {
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe { self.inner.destroy_device(None) };
+    }
+}
+impl Device {
+    /// Wait until the device is idle. Should be called before
+    /// swapchain recreation and after the game loop is over.
+    #[profiling::function]
+    pub fn wait_idle(&self) -> Result<(), crate::Error> {
+        unsafe { self.inner.device_wait_idle() }.map_err(crate::Error::VulkanDeviceWaitIdle)
     }
 }
 
