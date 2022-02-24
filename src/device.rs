@@ -1,5 +1,5 @@
 use crate::vulkan_raii::Device;
-use crate::{debug_utils, Error, PhysicalDevice};
+use crate::{debug_utils, physical_device_features, Error, PhysicalDevice};
 use ash::{vk, Instance};
 
 pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> Result<Device, Error> {
@@ -18,18 +18,10 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
         log::debug!("Device extension (optional): VK_EXT_memory_budget");
     }
 
-    let mut physical_device_descriptor_indexing_features =
-        vk::PhysicalDeviceDescriptorIndexingFeatures::builder().descriptor_binding_partially_bound(true);
     let device_create_info = vk::DeviceCreateInfo::builder()
-        .push_next(&mut physical_device_descriptor_indexing_features)
         .queue_create_infos(&queue_create_infos)
-        .enabled_features(&physical_device.features)
         .enabled_extension_names(&extensions);
-    let device = unsafe {
-        instance
-            .create_device(physical_device.inner, &device_create_info, None)
-            .map_err(Error::VulkanDeviceCreation)
-    }?;
+    let device = physical_device_features::create_device_with_feature_requirements(instance, physical_device.inner, device_create_info)?;
 
     let mut queues = [vk::Queue::default(); 3];
     get_device_queues(&device, &queue_family_indices, &mut queues);

@@ -74,7 +74,7 @@ fn fallible_main() -> anyhow::Result<()> {
     )?;
     let pbr_defaults = neonvk::PbrDefaults::new(&device, &mut uploader, &mut assets_arena)?;
     // FIXME: Descriptors should get its frame_count based on the swapchain!
-    let mut descriptors = neonvk::Descriptors::new(&device, &physical_device.properties, &physical_device.features, 3, pbr_defaults)?;
+    let mut descriptors = neonvk::Descriptors::new(&device, &physical_device.properties, 3, pbr_defaults)?;
 
     let mut resources = neonvk::GltfResources::with_path(find_resources_path());
     let sponza_model = neonvk::Gltf::from_gltf(

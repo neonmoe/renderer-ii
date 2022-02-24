@@ -114,7 +114,6 @@ impl Descriptors {
     pub fn new(
         device: &Rc<Device>,
         physical_device_properties: &vk::PhysicalDeviceProperties,
-        physical_device_features: &vk::PhysicalDeviceFeatures,
         frame_count: u32,
         pbr_defaults: PbrDefaults,
     ) -> Result<Descriptors, Error> {
@@ -129,7 +128,7 @@ impl Descriptors {
             .address_mode_u(vk::SamplerAddressMode::REPEAT)
             .address_mode_v(vk::SamplerAddressMode::REPEAT)
             .address_mode_w(vk::SamplerAddressMode::REPEAT)
-            .anisotropy_enable(physical_device_features.sampler_anisotropy == vk::TRUE)
+            .anisotropy_enable(true)
             .max_anisotropy(physical_device_properties.limits.max_sampler_anisotropy);
         let sampler = unsafe { device.create_sampler(&sampler_create_info, None) }.map_err(Error::VulkanSamplerCreation)?;
         let sampler = Rc::new(Sampler {

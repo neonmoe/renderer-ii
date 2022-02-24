@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::{physical_device_features, Error};
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
@@ -12,7 +12,6 @@ pub struct PhysicalDevice {
     pub uuid: GpuId,
     pub inner: vk::PhysicalDevice,
     pub properties: vk::PhysicalDeviceProperties,
-    pub features: vk::PhysicalDeviceFeatures,
     pub graphics_family_index: u32,
     pub surface_family_index: u32,
     pub transfer_family_index: u32,
@@ -68,6 +67,10 @@ fn filter_capable_device(
         return None;
     }
 
+    if !physical_device_features::has_required_features(instance, physical_device) {
+        return None;
+    }
+
     let queue_families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
     let mut graphics_family_index = None;
     let mut surface_family_index = None;
@@ -105,7 +108,6 @@ fn filter_capable_device(
         _ => {}
     }
 
-    let features = unsafe { instance.get_physical_device_features(physical_device) };
     if let (Some(graphics_family_index), Some(surface_family_index), Some(transfer_family_index)) =
         (graphics_family_index, surface_family_index, transfer_family_index)
     {
@@ -125,7 +127,6 @@ fn filter_capable_device(
             uuid,
             inner: physical_device,
             properties,
-            features,
             graphics_family_index,
             surface_family_index,
             transfer_family_index,

@@ -183,8 +183,7 @@ impl Renderer {
         let fi = frame_index.index;
         camera.update(descriptors, canvas, &mut self.temp_arena[fi], frame_index)?;
 
-        let framebuffer = &canvas.framebuffers[frame_index.index];
-        let command_buffer = self.record_command_buffer(frame_index, framebuffer.inner, descriptors, canvas, scene, debug_value)?;
+        let command_buffer = self.record_command_buffer(frame_index, descriptors, canvas, scene, debug_value)?;
 
         let signal_semaphores = [self.ready_for_present[fi].inner];
         let command_buffers = [command_buffer];
@@ -223,7 +222,6 @@ impl Renderer {
     fn record_command_buffer(
         &mut self,
         frame_index: FrameIndex,
-        framebuffer: vk::Framebuffer,
         descriptors: &mut Descriptors,
         canvas: &Canvas,
         scene: &Scene,
@@ -231,6 +229,7 @@ impl Renderer {
     ) -> Result<vk::CommandBuffer, Error> {
         let fi = frame_index.index;
         let temp_arena = &mut self.temp_arena[fi];
+        let framebuffer = &canvas.framebuffers[frame_index.index];
 
         descriptors.write_descriptors(frame_index);
 
@@ -268,7 +267,7 @@ impl Renderer {
         let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
             .render_pass(canvas.final_render_pass.inner)
-            .framebuffer(framebuffer)
+            .framebuffer(framebuffer.inner)
             .render_area(render_area)
             .clear_values(&clear_colors);
         unsafe {

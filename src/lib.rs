@@ -11,6 +11,7 @@ macro_rules! cstr {
 
 mod debug_utils;
 mod mesh;
+mod physical_device_features;
 mod vulkan_raii;
 
 // public-facing modules:
