@@ -64,7 +64,10 @@ impl Canvas {
         profiling::scope!("new_canvas");
         let surface_ext = khr::Surface::new(entry, instance);
         let swapchain_ext = khr::Swapchain::new(instance, &device.inner);
-        let queue_family_indices = [physical_device.graphics_family_index, physical_device.surface_family_index];
+        let queue_family_indices = [
+            physical_device.graphics_queue_family.index,
+            physical_device.surface_queue_family.index,
+        ];
         let (swapchain, swapchain_format, extent, frame_count) = create_swapchain(
             &surface_ext,
             &swapchain_ext,
@@ -81,10 +84,13 @@ impl Canvas {
             },
         )?;
 
-        // TODO: Split Canvas into Swapchain+RenderPass, share fb-arena between resizes?
-        // Alternatively, recreate arena, but size it exactly, and
-        // make sure to free the previous one in advance (to not
-        // require double the memory between resizes).
+        // TODO: Split Canvas:
+        // - Into Pipelines+RenderPass. Pipelines' viewport needs to be made dynamic.
+        //   See: https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkCmdSetViewport.html
+        // - Into Swapchain. (create_swapchain is probably enough.)
+        // - Into Framebuffers.
+        // Only the last two need to be recreated per resize, and framebuffers
+        // should be destroyed before swapchains, and created after.
         let mut framebuffer_arena = VulkanArena::new(
             instance,
             device,

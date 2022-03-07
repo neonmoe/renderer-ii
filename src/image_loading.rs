@@ -104,20 +104,19 @@ pub fn create_pixel(
 ) -> Result<ImageView, Error> {
     let format = kind.convert_format(vk::Format::R8G8B8A8_UNORM);
     let extent = *vk::Extent3D::builder().width(1).height(1).depth(1);
+    let &mut Uploader {
+        graphics_queue_family,
+        transfer_queue_family,
+        ..
+    } = uploader;
 
     let staging_buffer = {
         profiling::scope!("allocate and create 1px staging buffer");
         let buffer_size = pixels.len() as vk::DeviceSize;
         let buffer_create_info = vk::BufferCreateInfo::builder()
             .size(buffer_size)
-            .usage(vk::BufferUsageFlags::TRANSFER_SRC);
-        let buffer_create_info = if uploader.dedicated_transfers() {
-            buffer_create_info
-                .sharing_mode(vk::SharingMode::CONCURRENT)
-                .queue_family_indices(&uploader.queue_family_indices)
-        } else {
-            buffer_create_info.sharing_mode(vk::SharingMode::EXCLUSIVE)
-        };
+            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
         uploader.staging_arena.create_buffer(*buffer_create_info)?
     };
     debug_utils::name_vulkan_object(
@@ -142,14 +141,8 @@ pub fn create_pixel(
             .tiling(vk::ImageTiling::OPTIMAL)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
-            .samples(vk::SampleCountFlags::TYPE_1);
-        let image_info = if uploader.dedicated_transfers() {
-            image_info
-                .sharing_mode(vk::SharingMode::CONCURRENT)
-                .queue_family_indices(&uploader.queue_family_indices)
-        } else {
-            image_info.sharing_mode(vk::SharingMode::EXCLUSIVE)
-        };
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
         arena.create_image(*image_info)?
     };
     debug_utils::name_vulkan_object(device, image_allocation.inner, format_args!("{}", debug_identifier));
@@ -216,9 +209,8 @@ pub fn create_pixel(
             let barrier_from_transfer_dst_to_shader = vk::ImageMemoryBarrier::builder()
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                // TODO: Use exclusive image and buffer resources, move to correct queue family via barriers
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .src_queue_family_index(transfer_queue_family)
+                .dst_queue_family_index(graphics_queue_family)
                 .image(image_allocation.inner)
                 .subresource_range(subresource_range)
                 .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
@@ -278,20 +270,19 @@ pub fn load_ktx(
     } = ktx::decode(bytes)?;
     let format = kind.convert_format(format);
     let extent = *vk::Extent3D::builder().width(width).height(height).depth(1);
+    let &mut Uploader {
+        graphics_queue_family,
+        transfer_queue_family,
+        ..
+    } = uploader;
 
     let staging_buffer = {
         profiling::scope!("allocate and create staging buffer");
         let buffer_size = pixels.len() as vk::DeviceSize;
         let buffer_create_info = vk::BufferCreateInfo::builder()
             .size(buffer_size)
-            .usage(vk::BufferUsageFlags::TRANSFER_SRC);
-        let buffer_create_info = if uploader.dedicated_transfers() {
-            buffer_create_info
-                .sharing_mode(vk::SharingMode::CONCURRENT)
-                .queue_family_indices(&uploader.queue_family_indices)
-        } else {
-            buffer_create_info.sharing_mode(vk::SharingMode::EXCLUSIVE)
-        };
+            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
         uploader.staging_arena.create_buffer(*buffer_create_info)?
     };
     debug_utils::name_vulkan_object(
@@ -316,14 +307,8 @@ pub fn load_ktx(
             .tiling(vk::ImageTiling::OPTIMAL)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
-            .samples(vk::SampleCountFlags::TYPE_1);
-        let image_info = if uploader.dedicated_transfers() {
-            image_info
-                .sharing_mode(vk::SharingMode::CONCURRENT)
-                .queue_family_indices(&uploader.queue_family_indices)
-        } else {
-            image_info.sharing_mode(vk::SharingMode::EXCLUSIVE)
-        };
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
         arena.create_image(*image_info)?
     };
     debug_utils::name_vulkan_object(device, image_allocation.inner, format_args!("{}", debug_identifier));
@@ -411,8 +396,8 @@ pub fn load_ktx(
                 let barrier_from_transfer_dst_to_shader = vk::ImageMemoryBarrier::builder()
                     .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .src_queue_family_index(transfer_queue_family)
+                    .dst_queue_family_index(graphics_queue_family)
                     .image(image_allocation.inner)
                     .subresource_range(subresource_range)
                     .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)

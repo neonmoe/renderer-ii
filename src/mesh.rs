@@ -33,6 +33,12 @@ impl Mesh {
     ) -> Result<Mesh, Error> {
         profiling::scope!("new_mesh");
 
+        let &mut Uploader {
+            graphics_queue_family,
+            transfer_queue_family,
+            ..
+        } = uploader;
+
         // The destination memory is aligned to 16 bytes (size of
         // Vec4), as well as the individual slices in it. Just to make
         // sure that alignment isn't causing problems.
@@ -68,14 +74,8 @@ impl Mesh {
             profiling::scope!("allocate staging buffer");
             let buffer_create_info = vk::BufferCreateInfo::builder()
                 .size(total_size as vk::DeviceSize)
-                .usage(vk::BufferUsageFlags::TRANSFER_SRC);
-            let buffer_create_info = if uploader.dedicated_transfers() {
-                buffer_create_info
-                    .sharing_mode(vk::SharingMode::CONCURRENT)
-                    .queue_family_indices(&uploader.queue_family_indices)
-            } else {
-                buffer_create_info.sharing_mode(vk::SharingMode::EXCLUSIVE)
-            };
+                .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE);
             uploader.staging_arena.create_buffer(*buffer_create_info)?
         };
 
@@ -86,20 +86,16 @@ impl Mesh {
 
         let mesh_buffer = {
             profiling::scope!("allocate gpu buffer");
-            let buffer_create_info = vk::BufferCreateInfo::builder().size(total_size as vk::DeviceSize).usage(
-                // Just prepare for everything for simplicity.
-                vk::BufferUsageFlags::TRANSFER_DST
-                    | vk::BufferUsageFlags::VERTEX_BUFFER
-                    | vk::BufferUsageFlags::INDEX_BUFFER
-                    | vk::BufferUsageFlags::UNIFORM_BUFFER,
-            );
-            let buffer_create_info = if uploader.dedicated_transfers() {
-                buffer_create_info
-                    .sharing_mode(vk::SharingMode::CONCURRENT)
-                    .queue_family_indices(&uploader.queue_family_indices)
-            } else {
-                buffer_create_info.sharing_mode(vk::SharingMode::EXCLUSIVE)
-            };
+            let buffer_create_info = vk::BufferCreateInfo::builder()
+                .size(total_size as vk::DeviceSize)
+                .usage(
+                    // Just prepare for everything for simplicity.
+                    vk::BufferUsageFlags::TRANSFER_DST
+                        | vk::BufferUsageFlags::VERTEX_BUFFER
+                        | vk::BufferUsageFlags::INDEX_BUFFER
+                        | vk::BufferUsageFlags::UNIFORM_BUFFER,
+                )
+                .sharing_mode(vk::SharingMode::EXCLUSIVE);
             arena.create_buffer(*buffer_create_info)?
         };
 
@@ -113,7 +109,29 @@ impl Mesh {
                 let copy_regions = [vk::BufferCopy::builder().size(total_size as vk::DeviceSize).build()];
                 unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
             },
-            |_, _| {},
+            |device, command_buffer| {
+                profiling::scope!("vkCmdPipelineBarrier");
+                let barrier_from_transfer_dst_to_draw = vk::BufferMemoryBarrier::builder()
+                    .buffer(mesh_buffer.buffer.inner)
+                    .offset(0)
+                    .size(vk::WHOLE_SIZE)
+                    .src_queue_family_index(transfer_queue_family)
+                    .dst_queue_family_index(graphics_queue_family)
+                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::VERTEX_ATTRIBUTE_READ)
+                    .build();
+                unsafe {
+                    device.cmd_pipeline_barrier(
+                        command_buffer,
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::PipelineStageFlags::VERTEX_INPUT,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[barrier_from_transfer_dst_to_draw],
+                        &[],
+                    );
+                }
+            },
         )?;
 
         Ok(Mesh {

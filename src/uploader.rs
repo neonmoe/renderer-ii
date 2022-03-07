@@ -7,7 +7,8 @@ use std::time::Duration;
 
 pub struct Uploader {
     pub staging_arena: VulkanArena,
-    pub queue_family_indices: [u32; 2],
+    pub graphics_queue_family: u32,
+    pub transfer_queue_family: u32,
     device: Rc<Device>,
     transfer_queue: vk::Queue,
     transfer_command_pool: CommandPool,
@@ -31,7 +32,7 @@ impl Uploader {
     ) -> Result<Uploader, Error> {
         let transfer_command_pool = {
             let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-                .queue_family_index(physical_device.transfer_family_index)
+                .queue_family_index(physical_device.transfer_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool =
                 unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
@@ -43,7 +44,7 @@ impl Uploader {
 
         let graphics_command_pool = {
             let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-                .queue_family_index(physical_device.graphics_family_index)
+                .queue_family_index(physical_device.graphics_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool =
                 unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
@@ -65,7 +66,8 @@ impl Uploader {
 
         Ok(Uploader {
             staging_arena: staging_memory,
-            queue_family_indices: [physical_device.graphics_family_index, physical_device.transfer_family_index],
+            graphics_queue_family: physical_device.graphics_queue_family.index,
+            transfer_queue_family: physical_device.transfer_queue_family.index,
             device: device.clone(),
             transfer_queue,
             transfer_command_pool,
@@ -77,11 +79,6 @@ impl Uploader {
             transfer_semaphores: Vec::new(),
             free_semaphores: Vec::new(),
         })
-    }
-
-    /// Returns true if the uploads should use concurrent sharing mode.
-    pub(crate) fn dedicated_transfers(&self) -> bool {
-        self.queue_family_indices[0] != self.queue_family_indices[1]
     }
 
     pub fn get_upload_statuses(&self) -> impl Iterator<Item = bool> + '_ {

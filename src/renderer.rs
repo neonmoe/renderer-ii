@@ -87,7 +87,7 @@ impl Renderer {
         let command_pool = (0..frame_in_use_count)
             .map(|_| {
                 let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-                    .queue_family_index(physical_device.graphics_family_index)
+                    .queue_family_index(physical_device.graphics_queue_family.index)
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);
                 unsafe { device.create_command_pool(&command_pool_create_info, None) }
                     .map_err(Error::VulkanCommandPoolCreation)

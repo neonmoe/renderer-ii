@@ -7,14 +7,20 @@ use std::ffi::CStr;
 /// A unique id for every distinct GPU.
 pub struct GpuId([u8; 16]);
 
+#[derive(Clone, Copy, PartialEq)]
+pub struct QueueFamily {
+    pub index: u32,
+    pub max_count: usize,
+}
+
 pub struct PhysicalDevice {
     pub name: String,
     pub uuid: GpuId,
     pub inner: vk::PhysicalDevice,
     pub properties: vk::PhysicalDeviceProperties,
-    pub graphics_family_index: u32,
-    pub surface_family_index: u32,
-    pub transfer_family_index: u32,
+    pub graphics_queue_family: QueueFamily,
+    pub surface_queue_family: QueueFamily,
+    pub transfer_queue_family: QueueFamily,
     pub extensions: Vec<String>,
 }
 
@@ -49,8 +55,8 @@ pub fn get_physical_devices(entry: &Entry, instance: &Instance, surface: vk::Sur
                 0
             }
         };
-        let a_score = type_score(a.properties) + queue_score(a.graphics_family_index, a.surface_family_index);
-        let b_score = type_score(b.properties) + queue_score(b.graphics_family_index, b.surface_family_index);
+        let a_score = type_score(a.properties) + queue_score(a.graphics_queue_family.index, a.surface_queue_family.index);
+        let b_score = type_score(b.properties) + queue_score(b.graphics_queue_family.index, b.surface_queue_family.index);
         b_score.cmp(&a_score)
     });
     Ok(capable_physical_devices)
@@ -72,26 +78,30 @@ fn filter_capable_device(
     }
 
     let queue_families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
-    let mut graphics_family_index = None;
-    let mut surface_family_index = None;
-    let mut transfer_family_index = None;
-    for (index, family_index) in queue_families.into_iter().enumerate() {
+    let mut graphics_queue_family = None;
+    let mut surface_queue_family = None;
+    let mut transfer_queue_family = None;
+    for (index, queue_family_properties) in queue_families.into_iter().enumerate() {
+        let queue_family = QueueFamily {
+            index: index as u32,
+            max_count: queue_family_properties.queue_count as usize,
+        };
         let surface_support = unsafe { surface_ext.get_physical_device_surface_support(physical_device, index as u32, surface) };
-        if graphics_family_index.is_none() || surface_family_index.is_none() || graphics_family_index != surface_family_index {
-            if family_index.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-                graphics_family_index = Some(index as u32);
+        if graphics_queue_family.is_none() || surface_queue_family.is_none() || graphics_queue_family != surface_queue_family {
+            if queue_family_properties.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                graphics_queue_family = Some(queue_family);
             }
             if surface_support == Ok(true) {
-                surface_family_index = Some(index as u32);
+                surface_queue_family = Some(queue_family);
             }
         }
         // Prefer transfer-only queues, as they can probably do
         // transfers without disturbing rendering.
-        let transfer_only = family_index.queue_flags.contains(vk::QueueFlags::TRANSFER)
-            && !family_index.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-            && !family_index.queue_flags.contains(vk::QueueFlags::COMPUTE);
-        if transfer_family_index.is_none() || transfer_only {
-            transfer_family_index = Some(index as u32);
+        let transfer_only = queue_family_properties.queue_flags.contains(vk::QueueFlags::TRANSFER)
+            && !queue_family_properties.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+            && !queue_family_properties.queue_flags.contains(vk::QueueFlags::COMPUTE);
+        if transfer_queue_family.is_none() || transfer_only {
+            transfer_queue_family = Some(queue_family);
         }
     }
 
@@ -108,8 +118,8 @@ fn filter_capable_device(
         _ => {}
     }
 
-    if let (Some(graphics_family_index), Some(surface_family_index), Some(transfer_family_index)) =
-        (graphics_family_index, surface_family_index, transfer_family_index)
+    if let (Some(graphics_queue_family), Some(surface_queue_family), Some(transfer_queue_family)) =
+        (graphics_queue_family, surface_queue_family, transfer_queue_family)
     {
         let name = get_device_name(&properties);
         let pd_type = match properties.device_type {
@@ -127,9 +137,9 @@ fn filter_capable_device(
             uuid,
             inner: physical_device,
             properties,
-            graphics_family_index,
-            surface_family_index,
-            transfer_family_index,
+            graphics_queue_family,
+            surface_queue_family,
+            transfer_queue_family,
             extensions,
         })
     } else {
