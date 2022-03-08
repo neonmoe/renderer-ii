@@ -1,6 +1,6 @@
 use crate::descriptors::Descriptors;
 use crate::pipeline::PushConstantStruct;
-use crate::vulkan_raii::{CommandPool, Device, Fence, Semaphore};
+use crate::vulkan_raii::{CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use crate::{Camera, Canvas, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
 use ash::{vk, Instance};
 use glam::Mat4;
@@ -40,7 +40,9 @@ pub struct Renderer {
     ready_for_present: PerFrame<Semaphore>,
     frame_end_fence: PerFrame<Fence>,
     temp_arena: PerFrame<VulkanArena>,
-    command_pool: PerFrame<CommandPool>,
+    command_pool: PerFrame<Rc<CommandPool>>,
+    command_buffers_in_use: PerFrame<Vec<CommandBuffer>>,
+    command_buffers_unused: PerFrame<Vec<CommandBuffer>>,
 
     // Renderer relies on the canvas frame count.
     _canvas: Rc<Canvas>,
@@ -91,9 +93,11 @@ impl Renderer {
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);
                 unsafe { device.create_command_pool(&command_pool_create_info, None) }
                     .map_err(Error::VulkanCommandPoolCreation)
-                    .map(|inner| CommandPool {
-                        inner,
-                        device: device.clone(),
+                    .map(|inner| {
+                        Rc::new(CommandPool {
+                            inner,
+                            device: device.clone(),
+                        })
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -129,6 +133,8 @@ impl Renderer {
             frame_end_fence,
             temp_arena,
             command_pool,
+            command_buffers_in_use: (0..frame_in_use_count).map(|_| Vec::new()).collect::<Vec<Vec<_>>>(),
+            command_buffers_unused: (0..frame_in_use_count).map(|_| Vec::new()).collect::<Vec<Vec<_>>>(),
 
             _canvas: canvas.clone(),
         })
@@ -233,25 +239,43 @@ impl Renderer {
 
         descriptors.write_descriptors(frame_index);
 
-        let command_pool = self.command_pool[fi].inner;
+        let command_pool_rc = &self.command_pool[fi];
+        let command_pool = command_pool_rc.inner;
         unsafe {
-            profiling::scope!("allocate command buffer");
+            profiling::scope!("reset command pool");
             self.device
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .map_err(Error::VulkanResetCommandPool)
         }?;
+        let unused_cbs = &mut self.command_buffers_unused[fi];
+        let in_use_cbs = &mut self.command_buffers_in_use[fi];
+        unused_cbs.append(in_use_cbs);
 
-        let command_buffers = unsafe {
+        let command_buffer = if let Some(command_buffer) = unused_cbs.pop() {
+            command_buffer
+        } else {
             profiling::scope!("allocate command buffer");
-            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-                .command_pool(command_pool)
-                .level(vk::CommandBufferLevel::PRIMARY)
-                .command_buffer_count(1);
-            self.device
-                .allocate_command_buffers(&command_buffer_allocate_info)
-                .map_err(Error::VulkanCommandBuffersAllocation)
-        }?;
-        let command_buffer = command_buffers[0];
+            unsafe {
+                let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+                    .command_pool(command_pool)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(1);
+                let command_buffers = self
+                    .device
+                    .allocate_command_buffers(&command_buffer_allocate_info)
+                    .map_err(Error::VulkanCommandBuffersAllocation)?;
+                CommandBuffer {
+                    inner: command_buffers[0],
+                    device: self.device.clone(),
+                    command_pool: command_pool_rc.clone(),
+                }
+            }
+        };
+        let command_buffer = {
+            let inner = command_buffer.inner;
+            in_use_cbs.push(command_buffer);
+            inner
+        };
 
         let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {

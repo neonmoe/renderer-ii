@@ -211,6 +211,17 @@ pub struct CommandPool {
 }
 trivial_drop_impl!(CommandPool, destroy_command_pool);
 
+pub struct CommandBuffer {
+    pub inner: vk::CommandBuffer,
+    pub device: Rc<Device>,
+    pub command_pool: Rc<CommandPool>,
+}
+impl Drop for CommandBuffer {
+    fn drop(&mut self) {
+        unsafe { self.device.free_command_buffers(self.command_pool.inner, &[self.inner]) };
+    }
+}
+
 pub struct Semaphore {
     pub inner: vk::Semaphore,
     pub device: Rc<Device>,

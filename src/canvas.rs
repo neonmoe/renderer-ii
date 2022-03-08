@@ -28,7 +28,7 @@ struct SwapchainSettings {
 /// passes, framebuffers, command buffers and so on.
 pub struct Canvas {
     pub extent: vk::Extent2D,
-    pub frame_count: u32,
+    pub frame_count: usize,
 
     pub(crate) swapchain: Rc<Swapchain>,
     pub(crate) framebuffers: Vec<Framebuffer>,
@@ -68,7 +68,7 @@ impl Canvas {
             physical_device.graphics_queue_family.index,
             physical_device.surface_queue_family.index,
         ];
-        let (swapchain, swapchain_format, extent, frame_count) = create_swapchain(
+        let (swapchain, swapchain_format, extent) = create_swapchain(
             &surface_ext,
             &swapchain_ext,
             surface.inner,
@@ -147,6 +147,7 @@ impl Canvas {
         // TODO: Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
         let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
+        let frame_count = swapchain_images.len();
         let swapchain = Rc::new(Swapchain {
             inner: swapchain,
             device: swapchain_ext,
@@ -234,7 +235,7 @@ fn create_swapchain(
     physical_device: vk::PhysicalDevice,
     queue_family_indices: &[u32],
     settings: &SwapchainSettings,
-) -> Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D, u32), Error> {
+) -> Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D), Error> {
     // NOTE: The following combinations should be presented as a config option:
     // - FIFO + 2 (traditional double-buffered vsync)
     //   - no tearing, good latency, bad for perf when running under refresh rate
@@ -311,7 +312,7 @@ fn create_swapchain(
     }
     let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }.map_err(Error::VulkanSwapchainCreation)?;
 
-    Ok((swapchain, image_format, swapchain_create_info.image_extent, min_image_count))
+    Ok((swapchain, image_format, swapchain_create_info.image_extent))
 }
 
 #[profiling::function]
