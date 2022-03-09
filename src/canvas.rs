@@ -108,7 +108,7 @@ impl Canvas {
             630_000_000, // FIXME: too small for very big framebuffers?
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            "framebuffer arena",
+            format_args!("framebuffer arena"),
         )?;
 
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {

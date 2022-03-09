@@ -76,9 +76,9 @@ pub enum Error {
     #[error("could not get fence status")]
     VulkanFenceStatus(#[source] vk::Result),
     #[error("could not allocate memory (id: {1}, requested size: {2})")]
-    VulkanAllocate(#[source] vk::Result, &'static str, vk::DeviceSize),
+    VulkanAllocate(#[source] vk::Result, String, vk::DeviceSize),
     #[error("no heap with the required flags (id: {0}, flags: {1:?})")]
-    VulkanNoMatchingHeap(&'static str, vk::MemoryPropertyFlags),
+    VulkanNoMatchingHeap(String, vk::MemoryPropertyFlags),
     #[error("could not create buffer")]
     VulkanBufferCreation(#[source] vk::Result),
     #[error("could not bind buffer to allocated memory")]
@@ -137,7 +137,7 @@ pub enum Error {
     UnsupportedKtxFeature(&'static str),
     #[error("arena {identifier} ({used}/{total} bytes used) cannot fit {required} bytes")]
     ArenaOutOfMemory {
-        identifier: &'static str,
+        identifier: String,
         used: vk::DeviceSize,
         total: vk::DeviceSize,
         required: vk::DeviceSize,

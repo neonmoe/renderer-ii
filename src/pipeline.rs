@@ -18,7 +18,7 @@ unsafe impl bytemuck::Pod for PushConstantStruct {}
 
 const ALL_PIPELINES: [Pipeline; Pipeline::Count as usize] = [Pipeline::Gltf];
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pipeline {
     Gltf,
     #[doc(hidden)]

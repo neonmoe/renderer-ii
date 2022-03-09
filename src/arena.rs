@@ -4,6 +4,7 @@ use crate::error::Error;
 use crate::vulkan_raii::{Buffer, Device, DeviceMemory, Image};
 use ash::vk;
 use ash::Instance;
+use std::fmt::Arguments;
 use std::ptr;
 use std::rc::Rc;
 
@@ -71,7 +72,7 @@ pub struct VulkanArena {
     buffer_image_granularity: vk::DeviceSize,
     previous_allocation_was_image: bool,
     pinned_buffers: Vec<Buffer>,
-    debug_identifier: &'static str,
+    debug_identifier: String,
 }
 
 impl VulkanArena {
@@ -82,16 +83,17 @@ impl VulkanArena {
         size: vk::DeviceSize,
         optimal_flags: vk::MemoryPropertyFlags,
         fallback_flags: vk::MemoryPropertyFlags,
-        debug_identifier: &'static str,
+        debug_identifier_args: Arguments,
     ) -> Result<VulkanArena, Error> {
+        let debug_identifier = format!("{}", debug_identifier_args);
         let memory_type_index = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
-            .ok_or(Error::VulkanNoMatchingHeap(debug_identifier, fallback_flags))?;
+            .ok_or_else(|| Error::VulkanNoMatchingHeap(debug_identifier.clone(), fallback_flags))?;
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
             .memory_type_index(memory_type_index);
-        let memory =
-            unsafe { device.allocate_memory(&alloc_info, None) }.map_err(|err| Error::VulkanAllocate(err, debug_identifier, size))?;
-        debug_utils::name_vulkan_object(device, memory, format_args!("{}", debug_identifier));
+        let memory = unsafe { device.allocate_memory(&alloc_info, None) }
+            .map_err(|err| Error::VulkanAllocate(err, debug_identifier.clone(), size))?;
+        debug_utils::name_vulkan_object(device, memory, debug_identifier_args);
 
         let physical_device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
         let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;
@@ -129,7 +131,7 @@ impl VulkanArena {
         if self.total_size - offset < size {
             unsafe { self.device.destroy_buffer(buffer, None) };
             return Err(Error::ArenaOutOfMemory {
-                identifier: self.debug_identifier,
+                identifier: self.debug_identifier.clone(),
                 used: offset,
                 total: self.total_size,
                 required: size,
@@ -170,7 +172,7 @@ impl VulkanArena {
         if self.total_size - offset < size {
             unsafe { self.device.destroy_image(image, None) };
             return Err(Error::ArenaOutOfMemory {
-                identifier: self.debug_identifier,
+                identifier: self.debug_identifier.clone(),
                 used: offset,
                 total: self.total_size,
                 required: size,

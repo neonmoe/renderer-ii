@@ -31,12 +31,15 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
     debug_utils::name_vulkan_object(&device, surface_queue, format_args!("present"));
     debug_utils::name_vulkan_object(&device, transfer_queue, format_args!("transfer"));
 
-    Ok(Device {
+    let device = Device {
         inner: device,
         graphics_queue,
         surface_queue,
         transfer_queue,
-    })
+    };
+    debug_utils::name_vulkan_object(&device, device.inner.handle(), format_args!("{}", physical_device.name));
+
+    Ok(device)
 }
 
 fn create_device_queue_create_infos(queue_families: &[QueueFamily], ones: &[f32]) -> Vec<vk::DeviceQueueCreateInfo> {

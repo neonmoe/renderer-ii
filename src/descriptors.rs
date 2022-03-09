@@ -1,7 +1,9 @@
 use crate::image_loading::{self, TextureKind};
-use crate::pipeline::{DescriptorSetLayoutParams, Pipeline, PipelineMap, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS};
+use crate::pipeline::{
+    DescriptorSetLayoutParams, Pipeline, PipelineMap, PipelineParameters, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS,
+};
 use crate::vulkan_raii::{DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
-use crate::{Error, FrameIndex, Uploader, VulkanArena};
+use crate::{debug_utils, Error, FrameIndex, Uploader, VulkanArena};
 use ash::vk;
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -176,18 +178,20 @@ impl Descriptors {
             .anisotropy_enable(true)
             .max_anisotropy(physical_device_properties.limits.max_sampler_anisotropy);
         let sampler = unsafe { device.create_sampler(&sampler_create_info, None) }.map_err(Error::VulkanSamplerCreation)?;
+        debug_utils::name_vulkan_object(device, sampler, format_args!("immutable default sampler"));
         let sampler = Rc::new(Sampler {
             inner: sampler,
             device: device.clone(),
         });
 
-        let create_descriptor_set_layouts = |sets: &[&[DescriptorSetLayoutParams]]| -> Result<DescriptorSetLayouts, Error> {
+        let create_descriptor_set_layouts = |pl: Pipeline, sets: &[&[DescriptorSetLayoutParams]]| -> Result<DescriptorSetLayouts, Error> {
             let samplers_vk = [sampler.inner];
             let samplers_rc = vec![sampler.clone()];
 
             let descriptor_set_layouts = sets
                 .iter()
-                .map(|bindings| {
+                .enumerate()
+                .map(|(i, bindings)| {
                     let binding_flags = bindings
                         .iter()
                         .map(|params| params.binding_flags)
@@ -210,7 +214,10 @@ impl Descriptors {
                     let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
                         .push_next(&mut binding_flags)
                         .bindings(&bindings);
-                    unsafe { device.create_descriptor_set_layout(&create_info, None) }.map_err(Error::VulkanDescriptorSetLayoutCreation)
+                    let dsl = unsafe { device.create_descriptor_set_layout(&create_info, None) }
+                        .map_err(Error::VulkanDescriptorSetLayoutCreation)?;
+                    debug_utils::name_vulkan_object(device, dsl, format_args!("set {i} for pipeline {pl:?}"));
+                    Ok(dsl)
                 })
                 .collect::<Result<Vec<vk::DescriptorSetLayout>, Error>>()?;
 
@@ -223,8 +230,8 @@ impl Descriptors {
 
         let pipeline_layouts = pipeline_layouts.map(Ok).unwrap_or_else(|| {
             PipelineMap::new::<Error, _>(|pipeline| {
-                let pipeline = PIPELINE_PARAMETERS.get(pipeline);
-                let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline.descriptor_sets)?);
+                let PipelineParameters { descriptor_sets, .. } = PIPELINE_PARAMETERS.get(pipeline);
+                let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline, descriptor_sets)?);
                 let push_constant_ranges = [vk::PushConstantRange::builder()
                     .offset(0)
                     .size(mem::size_of::<PushConstantStruct>() as u32)
@@ -238,6 +245,7 @@ impl Descriptors {
                         .create_pipeline_layout(&pipeline_layout_create_info, None)
                         .map_err(Error::VulkanPipelineLayoutCreation)
                 }?;
+                debug_utils::name_vulkan_object(device, pipeline_layout, format_args!("for pipeline {pipeline:?}"));
                 let pipeline_layout = PipelineLayout {
                     inner: pipeline_layout,
                     device: device.clone(),
@@ -267,21 +275,29 @@ impl Descriptors {
                 .create_descriptor_pool(&descriptor_pool_create_info, None)
                 .map_err(Error::VulkanDescriptorPoolCreation)
         }?;
+        debug_utils::name_vulkan_object(device, descriptor_pool, format_args!("main pool ({frame_count} frames)"));
         let descriptor_pool = Rc::new(DescriptorPool {
             inner: descriptor_pool,
             device: device.clone(),
         });
 
-        let descriptor_sets = (0..frame_count)
-            .map(|_| {
+        let descriptor_sets = (1..frame_count + 1)
+            .map(|nth| {
                 let mut descriptor_set_layouts_per_pipeline = pipeline_layouts.iter().map(|pl| &pl.descriptor_set_layouts);
-                let pipeline_map = PipelineMap::new::<Error, _>(|_| {
+                let pipeline_map = PipelineMap::new::<Error, _>(|pl| {
                     let descriptor_set_layouts = descriptor_set_layouts_per_pipeline.next().unwrap();
                     let create_info = vk::DescriptorSetAllocateInfo::builder()
                         .descriptor_pool(descriptor_pool.inner)
                         .set_layouts(&descriptor_set_layouts.inner);
                     let descriptor_sets =
                         unsafe { device.allocate_descriptor_sets(&create_info) }.map_err(Error::VulkanAllocateDescriptorSets)?;
+                    for (i, descriptor_set) in descriptor_sets.iter().enumerate() {
+                        debug_utils::name_vulkan_object(
+                            device,
+                            *descriptor_set,
+                            format_args!("set {i} for pipeline {pl:?} (frame {nth}/{frame_count})"),
+                        );
+                    }
                     Ok(DescriptorSets {
                         inner: descriptor_sets,
                         device: device.clone(),

@@ -1,3 +1,4 @@
+use crate::debug_utils;
 use crate::descriptors::Descriptors;
 use crate::pipeline::PushConstantStruct;
 use crate::vulkan_raii::{CommandBuffer, CommandPool, Device, Fence, Semaphore};
@@ -62,48 +63,48 @@ impl Renderer {
     pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice, canvas: &Rc<Canvas>) -> Result<Renderer, Error> {
         profiling::scope!("new_gpu");
 
-        let frame_in_use_count = canvas.frame_count;
-        let ready_for_present = (0..frame_in_use_count)
-            .map(|_| {
-                unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
-                    .map_err(Error::VulkanSemaphoreCreation)
-                    .map(|inner| Semaphore {
-                        inner,
-                        device: device.clone(),
-                    })
+        let frames = canvas.frame_count;
+        let ready_for_present = (1..frames + 1)
+            .map(|nth| {
+                let semaphore = unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
+                    .map_err(Error::VulkanSemaphoreCreation)?;
+                debug_utils::name_vulkan_object(device, semaphore, format_args!("render finish semaphore ({nth}/{frames})"));
+                Ok(Semaphore {
+                    inner: semaphore,
+                    device: device.clone(),
+                })
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, Error>>()?;
 
-        let frame_end_fence = (0..frame_in_use_count)
-            .map(|_| {
+        let frame_end_fence = (1..frames + 1)
+            .map(|nth| {
                 let fence_create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-                unsafe { device.create_fence(&fence_create_info, None) }
-                    .map_err(Error::VulkanFenceCreation)
-                    .map(|inner| Fence {
-                        inner,
-                        device: device.clone(),
-                    })
+                let fence = unsafe { device.create_fence(&fence_create_info, None) }.map_err(Error::VulkanFenceCreation)?;
+                debug_utils::name_vulkan_object(device, fence, format_args!("frame end fence ({nth}/{frames})"));
+                Ok(Fence {
+                    inner: fence,
+                    device: device.clone(),
+                })
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, Error>>()?;
 
-        let command_pool = (0..frame_in_use_count)
-            .map(|_| {
+        let command_pool = (1..frames + 1)
+            .map(|nth| {
                 let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
                     .queue_family_index(physical_device.graphics_queue_family.index)
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);
-                unsafe { device.create_command_pool(&command_pool_create_info, None) }
-                    .map_err(Error::VulkanCommandPoolCreation)
-                    .map(|inner| {
-                        Rc::new(CommandPool {
-                            inner,
-                            device: device.clone(),
-                        })
-                    })
+                let command_pool =
+                    unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
+                debug_utils::name_vulkan_object(device, command_pool, format_args!("rendering cmds per frame ({nth}/{frames})"));
+                Ok(Rc::new(CommandPool {
+                    inner: command_pool,
+                    device: device.clone(),
+                }))
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, Error>>()?;
 
-        let temp_arena = (0..frame_in_use_count)
-            .map(|_| {
+        let temp_arena = (1..frames + 1)
+            .map(|nth| {
                 VulkanArena::new(
                     instance,
                     device,
@@ -111,7 +112,7 @@ impl Renderer {
                     10_000_000,
                     vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::DEVICE_LOCAL,
                     vk::MemoryPropertyFlags::HOST_VISIBLE,
-                    "frame local arena",
+                    format_args!("frame local arena ({nth}/{frames})"),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -121,6 +122,7 @@ impl Renderer {
                 .create_fence(&vk::FenceCreateInfo::default(), None)
                 .map_err(Error::VulkanSemaphoreCreation)
         }?;
+        debug_utils::name_vulkan_object(device, frame_start_fence, format_args!("wait_frame fence"));
         let frame_start_fence = Fence {
             inner: frame_start_fence,
             device: device.clone(),
@@ -133,8 +135,8 @@ impl Renderer {
             frame_end_fence,
             temp_arena,
             command_pool,
-            command_buffers_in_use: (0..frame_in_use_count).map(|_| Vec::new()).collect::<Vec<Vec<_>>>(),
-            command_buffers_unused: (0..frame_in_use_count).map(|_| Vec::new()).collect::<Vec<Vec<_>>>(),
+            command_buffers_in_use: (0..frames).map(|_| Vec::new()).collect::<Vec<Vec<_>>>(),
+            command_buffers_unused: (0..frames).map(|_| Vec::new()).collect::<Vec<Vec<_>>>(),
 
             _canvas: canvas.clone(),
         })

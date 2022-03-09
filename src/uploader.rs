@@ -61,7 +61,7 @@ impl Uploader {
             staging_buffer_size,
             vk::MemoryPropertyFlags::HOST_VISIBLE,
             vk::MemoryPropertyFlags::HOST_VISIBLE,
-            "uploader staging memory",
+            format_args!("uploader staging memory"),
         )?;
 
         Ok(Uploader {
