@@ -86,13 +86,12 @@ impl Driver {
 
         let instance = unsafe { entry.create_instance(&create_info, None) }.map_err(Error::VulkanInstanceCreation)?;
 
-        let debug_utils_messenger;
-        if debug_utils_available {
+        let debug_utils_messenger = if debug_utils_available {
             debug_utils::init_debug_utils(&entry, &instance);
-            debug_utils_messenger = debug_utils::create_debug_utils_messenger(&entry, &instance).ok();
+            debug_utils::create_debug_utils_messenger(&entry, &instance).ok()
         } else {
-            debug_utils_messenger = None;
-        }
+            None
+        };
 
         Ok(Driver {
             entry,

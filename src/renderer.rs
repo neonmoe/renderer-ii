@@ -109,7 +109,7 @@ impl Renderer {
                     device,
                     physical_device.inner,
                     10_000_000,
-                    vk::MemoryPropertyFlags::HOST_VISIBLE,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::DEVICE_LOCAL,
                     vk::MemoryPropertyFlags::HOST_VISIBLE,
                     "frame local arena",
                 )

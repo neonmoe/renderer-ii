@@ -1,13 +1,10 @@
 use crate::arena::VulkanArena;
 use crate::pipeline::{PipelineMap, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, AnyImage, Device, Framebuffer, ImageView, PipelineLayout, RenderPass, Surface, Swapchain};
-use crate::Descriptors;
-use crate::{Error, PhysicalDevice};
+use crate::{Descriptors, Error, PhysicalDevice};
 use ash::extensions::khr;
 use ash::{vk, Entry, Instance};
 use std::rc::Rc;
-
-pub const SWAPCHAIN_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
 
 // According to vulkan.gpuinfo.org, this is the most supported depth
 // attachment format by a large margin at 99.94%. If the accuracy is
@@ -16,6 +13,19 @@ pub const SWAPCHAIN_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
 const DEPTH_FORMAT: vk::Format = vk::Format::D16_UNORM;
 
 const SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::TYPE_8;
+
+fn is_uncompressed_srgb(format: vk::Format) -> bool {
+    matches!(
+        format,
+        vk::Format::R8_SRGB
+            | vk::Format::R8G8_SRGB
+            | vk::Format::R8G8B8_SRGB
+            | vk::Format::R8G8B8A8_SRGB
+            | vk::Format::B8G8R8_SRGB
+            | vk::Format::B8G8R8A8_SRGB
+            | vk::Format::A8B8G8R8_SRGB_PACK32
+    )
+}
 
 struct SwapchainSettings {
     extent: vk::Extent2D,
@@ -28,7 +38,7 @@ struct SwapchainSettings {
 /// passes, framebuffers, command buffers and so on.
 pub struct Canvas {
     pub extent: vk::Extent2D,
-    pub frame_count: usize,
+    pub frame_count: u32,
 
     pub(crate) swapchain: Rc<Swapchain>,
     pub(crate) framebuffers: Vec<Framebuffer>,
@@ -147,7 +157,7 @@ impl Canvas {
         // TODO: Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
         let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
-        let frame_count = swapchain_images.len();
+        let frame_count = swapchain_images.len() as u32;
         let swapchain = Rc::new(Swapchain {
             inner: swapchain,
             device: swapchain_ext,
@@ -160,12 +170,12 @@ impl Canvas {
             .collect::<Result<Vec<_>, _>>()?;
 
         let color_images = (0..swapchain_image_views.len())
-            .map(|_| create_image(SWAPCHAIN_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT))
+            .map(|_| create_image(swapchain_format, vk::ImageUsageFlags::COLOR_ATTACHMENT))
             .collect::<Result<Vec<_>, Error>>()?;
         let color_image_views = color_images
             .into_iter()
             .map(AnyImage::from)
-            .map(create_image_view(vk::ImageAspectFlags::COLOR, SWAPCHAIN_FORMAT))
+            .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain_format))
             .collect::<Result<Vec<_>, _>>()?;
 
         let depth_images = (0..swapchain_image_views.len())
@@ -177,7 +187,7 @@ impl Canvas {
             .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let final_render_pass = create_render_pass(device)?;
+        let final_render_pass = create_render_pass(device, swapchain_format)?;
         let final_render_pass = Rc::new(RenderPass {
             inner: final_render_pass,
             device: device.clone(),
@@ -236,22 +246,17 @@ fn create_swapchain(
     queue_family_indices: &[u32],
     settings: &SwapchainSettings,
 ) -> Result<(vk::SwapchainKHR, vk::Format, vk::Extent2D), Error> {
-    // NOTE: The following combinations should be presented as a config option:
-    // - FIFO + 2 (traditional double-buffered vsync)
-    //   - no tearing, good latency, bad for perf when running under refresh rate
-    // - FIFO + 3 (like double-buffering, but longer queue)
-    //   - no tearing, bad latency, no perf issues when running under refresh rate
-    // - MAILBOX + 3 (render-constantly, discard frames when waiting for vsync)
-    //   - no tearing, great latency, optimal choice when available
-    // - IMMEDIATE + 2 (render-constantly, ignore vsync (probably causes tearing))
-    //   - possible tearing, best latency
-    // With the non-available ones grayed out, of course.
-    let present_mode = if settings.immediate_present {
-        vk::PresentModeKHR::IMMEDIATE
-    } else {
-        vk::PresentModeKHR::FIFO
-    };
-    let min_image_count = 3;
+    let present_modes = unsafe { surface_ext.get_physical_device_surface_present_modes(physical_device, surface) }
+        .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)?;
+    let mut present_mode = vk::PresentModeKHR::FIFO;
+    if settings.immediate_present {
+        // TODO: Remove immediate present, use proper gpu profiling instead.
+        if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
+            present_mode = vk::PresentModeKHR::MAILBOX;
+        } else if present_modes.contains(&vk::PresentModeKHR::IMMEDIATE) {
+            present_mode = vk::PresentModeKHR::IMMEDIATE;
+        }
+    }
 
     let (image_format, image_color_space) = {
         let surface_formats = unsafe {
@@ -259,34 +264,32 @@ fn create_swapchain(
                 .get_physical_device_surface_formats(physical_device, surface)
                 .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
         }?;
-        let color_space = if let Some(format) = surface_formats
-            .iter()
-            .find(|format| format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
-        {
-            format.color_space
+        if let Some(format) = surface_formats.iter().find(|format| is_uncompressed_srgb(format.format)) {
+            (format.format, format.color_space)
         } else {
-            surface_formats[0].color_space
-        };
-        (SWAPCHAIN_FORMAT, color_space)
+            log::warn!("No SRGB format found for swapchain. The image may look too dark.");
+            (surface_formats[0].format, surface_formats[0].color_space)
+        }
     };
 
-    let get_image_extent = || -> Result<vk::Extent2D, Error> {
-        let surface_capabilities = unsafe {
-            surface_ext
-                .get_physical_device_surface_capabilities(physical_device, surface)
-                .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
-        }?;
-        let unset_extent = vk::Extent2D {
-            width: u32::MAX,
-            height: u32::MAX,
-        };
-        let image_extent = if surface_capabilities.current_extent != unset_extent {
-            surface_capabilities.current_extent
-        } else {
-            settings.extent
-        };
-        Ok(image_extent)
+    let surface_capabilities = unsafe {
+        surface_ext
+            .get_physical_device_surface_capabilities(physical_device, surface)
+            .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
+    }?;
+    let unset_extent = vk::Extent2D {
+        width: u32::MAX,
+        height: u32::MAX,
     };
+    let image_extent = if surface_capabilities.current_extent != unset_extent {
+        surface_capabilities.current_extent
+    } else {
+        settings.extent
+    };
+    let mut min_image_count = 2.max(surface_capabilities.min_image_count);
+    if surface_capabilities.max_image_count > 0 {
+        min_image_count = min_image_count.min(surface_capabilities.max_image_count)
+    }
 
     let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
         .surface(surface)
@@ -299,7 +302,7 @@ fn create_swapchain(
         .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
         .present_mode(present_mode)
         .clipped(true)
-        .image_extent(get_image_extent()?);
+        .image_extent(image_extent);
     if queue_family_indices[0] != queue_family_indices[1] {
         swapchain_create_info = swapchain_create_info
             .image_sharing_mode(vk::SharingMode::CONCURRENT)
@@ -316,9 +319,9 @@ fn create_swapchain(
 }
 
 #[profiling::function]
-fn create_render_pass(device: &Device) -> Result<vk::RenderPass, Error> {
+fn create_render_pass(device: &Device, swapchain_format: vk::Format) -> Result<vk::RenderPass, Error> {
     let color_attachment = vk::AttachmentDescription::builder()
-        .format(SWAPCHAIN_FORMAT)
+        .format(swapchain_format)
         .samples(SAMPLE_COUNT)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::DONT_CARE)
@@ -336,7 +339,7 @@ fn create_render_pass(device: &Device) -> Result<vk::RenderPass, Error> {
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
     let resolve_attachment = vk::AttachmentDescription::builder()
-        .format(SWAPCHAIN_FORMAT)
+        .format(swapchain_format)
         .samples(vk::SampleCountFlags::TYPE_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)

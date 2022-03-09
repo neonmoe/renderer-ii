@@ -73,8 +73,7 @@ fn fallible_main() -> anyhow::Result<()> {
         "sandbox asset arena",
     )?;
     let pbr_defaults = neonvk::PbrDefaults::new(&device, &mut uploader, &mut assets_arena)?;
-    // FIXME: Descriptors should get its frame_count based on the swapchain!
-    let mut descriptors = neonvk::Descriptors::new(&device, &physical_device.properties, 3, pbr_defaults)?;
+    let mut descriptors = neonvk::Descriptors::new(&device, physical_device.properties, pbr_defaults, 1)?;
 
     let mut resources = neonvk::GltfResources::with_path(find_resources_path());
     let sponza_model = neonvk::Gltf::from_gltf(
@@ -105,6 +104,7 @@ fn fallible_main() -> anyhow::Result<()> {
         false,
     )?);
     let mut renderer = neonvk::Renderer::new(&driver.instance, &device, physical_device, &canvas)?;
+    descriptors = neonvk::Descriptors::from_existing(descriptors, canvas.frame_count)?;
     let camera = neonvk::Camera::default();
 
     let mut frame_instants = Vec::with_capacity(10_000);
@@ -171,6 +171,9 @@ fn fallible_main() -> anyhow::Result<()> {
             drop(renderer);
             assert_last_drop(old_canvas);
             renderer = neonvk::Renderer::new(&driver.instance, &device, physical_device, &canvas)?;
+            if canvas.frame_count != descriptors.frame_count {
+                descriptors = neonvk::Descriptors::from_existing(descriptors, canvas.frame_count)?;
+            }
             size_changed = false;
         }
 

@@ -16,6 +16,7 @@ pub struct Material {
     data: PipelineSpecificData,
 }
 
+#[derive(Clone)]
 pub enum PipelineSpecificData {
     Gltf {
         base_color: Option<Rc<ImageView>>,
@@ -102,20 +103,64 @@ impl PbrDefaults {
 }
 
 pub struct Descriptors {
+    pub frame_count: u32,
     pub(crate) pipeline_layouts: PipelineMap<PipelineLayout>,
     descriptor_sets: Vec<PipelineMap<DescriptorSets>>,
     device: Rc<Device>,
     material_slots_per_pipeline: PipelineMap<MaterialSlotArray>,
     material_status_per_pipeline: PipelineMap<MaterialStatusArray>,
     pbr_defaults: PbrDefaults,
+    physical_device_properties: vk::PhysicalDeviceProperties,
 }
 
 impl Descriptors {
     pub fn new(
         device: &Rc<Device>,
-        physical_device_properties: &vk::PhysicalDeviceProperties,
-        frame_count: u32,
+        physical_device_properties: vk::PhysicalDeviceProperties,
         pbr_defaults: PbrDefaults,
+        frame_count: u32,
+    ) -> Result<Descriptors, Error> {
+        Descriptors::new_(device, physical_device_properties, pbr_defaults, None, frame_count)
+    }
+
+    pub fn from_existing(old_descriptors: Descriptors, frame_count: u32) -> Result<Descriptors, Error> {
+        let Descriptors {
+            pipeline_layouts,
+            device,
+            physical_device_properties,
+            pbr_defaults,
+            material_slots_per_pipeline,
+            descriptor_sets,
+            ..
+        } = old_descriptors;
+        drop(descriptor_sets);
+        let mut new_descriptors = Descriptors::new_(
+            &device,
+            physical_device_properties,
+            pbr_defaults,
+            Some(pipeline_layouts),
+            frame_count,
+        )?;
+        for (pipeline, material_slots) in material_slots_per_pipeline.iter_with_pipeline() {
+            for (i, material_slot) in material_slots.iter().enumerate() {
+                if material_slot.is_none() || material_slot.as_ref().unwrap().strong_count() == 0 {
+                    continue;
+                }
+                for status in &mut new_descriptors.material_status_per_pipeline.get_mut(pipeline)[i] {
+                    *status = false;
+                }
+            }
+        }
+        new_descriptors.material_slots_per_pipeline = material_slots_per_pipeline;
+        Ok(new_descriptors)
+    }
+
+    fn new_(
+        device: &Rc<Device>,
+        physical_device_properties: vk::PhysicalDeviceProperties,
+        pbr_defaults: PbrDefaults,
+        pipeline_layouts: Option<PipelineMap<PipelineLayout>>,
+        frame_count: u32,
     ) -> Result<Descriptors, Error> {
         profiling::scope!("new_descriptors");
         let sampler_create_info = vk::SamplerCreateInfo::builder()
@@ -176,30 +221,30 @@ impl Descriptors {
             })
         };
 
-        let mut descriptor_set_layouts_per_pipeline = Vec::new();
-        let pipeline_layouts = PipelineMap::new::<Error, _>(|pipeline| {
-            let pipeline = PIPELINE_PARAMETERS.get(pipeline);
-            let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline.descriptor_sets)?);
-            let push_constant_ranges = [vk::PushConstantRange::builder()
-                .offset(0)
-                .size(mem::size_of::<PushConstantStruct>() as u32)
-                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                .build()];
-            let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder()
-                .set_layouts(&descriptor_set_layouts.inner)
-                .push_constant_ranges(&push_constant_ranges);
-            let pipeline_layout = unsafe {
-                device
-                    .create_pipeline_layout(&pipeline_layout_create_info, None)
-                    .map_err(Error::VulkanPipelineLayoutCreation)
-            }?;
-            let pipeline_layout = PipelineLayout {
-                inner: pipeline_layout,
-                device: device.clone(),
-                descriptor_set_layouts: descriptor_set_layouts.clone(),
-            };
-            descriptor_set_layouts_per_pipeline.push(descriptor_set_layouts);
-            Ok(pipeline_layout)
+        let pipeline_layouts = pipeline_layouts.map(Ok).unwrap_or_else(|| {
+            PipelineMap::new::<Error, _>(|pipeline| {
+                let pipeline = PIPELINE_PARAMETERS.get(pipeline);
+                let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline.descriptor_sets)?);
+                let push_constant_ranges = [vk::PushConstantRange::builder()
+                    .offset(0)
+                    .size(mem::size_of::<PushConstantStruct>() as u32)
+                    .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                    .build()];
+                let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder()
+                    .set_layouts(&descriptor_set_layouts.inner)
+                    .push_constant_ranges(&push_constant_ranges);
+                let pipeline_layout = unsafe {
+                    device
+                        .create_pipeline_layout(&pipeline_layout_create_info, None)
+                        .map_err(Error::VulkanPipelineLayoutCreation)
+                }?;
+                let pipeline_layout = PipelineLayout {
+                    inner: pipeline_layout,
+                    device: device.clone(),
+                    descriptor_set_layouts: descriptor_set_layouts.clone(),
+                };
+                Ok(pipeline_layout)
+            })
         })?;
 
         let pool_sizes = PIPELINE_PARAMETERS
@@ -213,7 +258,7 @@ impl Descriptors {
                     .build()
             })
             .collect::<Vec<vk::DescriptorPoolSize>>();
-        let descriptor_sets_per_frame = descriptor_set_layouts_per_pipeline.iter().map(|dsl| &dsl.inner).flatten().count() as u32;
+        let descriptor_sets_per_frame = pipeline_layouts.iter().flat_map(|pl| &pl.descriptor_set_layouts.inner).count() as u32;
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
             .max_sets(frame_count * descriptor_sets_per_frame)
             .pool_sizes(&pool_sizes);
@@ -229,7 +274,7 @@ impl Descriptors {
 
         let descriptor_sets = (0..frame_count)
             .map(|_| {
-                let mut descriptor_set_layouts_per_pipeline = descriptor_set_layouts_per_pipeline.iter();
+                let mut descriptor_set_layouts_per_pipeline = pipeline_layouts.iter().map(|pl| &pl.descriptor_set_layouts);
                 let pipeline_map = PipelineMap::new::<Error, _>(|_| {
                     let descriptor_set_layouts = descriptor_set_layouts_per_pipeline.next().unwrap();
                     let create_info = vk::DescriptorSetAllocateInfo::builder()
@@ -252,12 +297,14 @@ impl Descriptors {
             PipelineMap::new::<Error, _>(|_| Ok(vec![vec![true; frame_count as usize]; MAX_TEXTURE_COUNT as usize]))?;
 
         Ok(Descriptors {
+            frame_count,
             pipeline_layouts,
             descriptor_sets,
             device: device.clone(),
             material_slots_per_pipeline,
             material_status_per_pipeline,
             pbr_defaults,
+            physical_device_properties,
         })
     }
 
