@@ -75,7 +75,9 @@ pub(crate) struct DescriptorSetLayoutParams {
 
 pub(crate) struct PipelineParameters {
     pub vertex_shader: &'static [u32],
+    pub vertex_shader_name: &'static str,
     pub fragment_shader: &'static [u32],
+    pub fragment_shader_name: &'static str,
     pub bindings: &'static [vk::VertexInputBindingDescription],
     pub attributes: &'static [vk::VertexInputAttributeDescription],
     pub descriptor_sets: &'static [&'static [DescriptorSetLayoutParams]],
@@ -131,7 +133,9 @@ static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescri
 pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = PipelineMap {
     buffer: [Some(PipelineParameters {
         vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
+        vertex_shader_name: "shaders/textured.vert",
         fragment_shader: shaders::include_spirv!("shaders/textured.frag"),
+        fragment_shader_name: "shaders/textured.frag",
         bindings: &[
             INSTANCED_TRANSFORM_BINDING_0,
             vk::VertexInputBindingDescription {

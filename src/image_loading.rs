@@ -117,13 +117,10 @@ pub fn create_pixel(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        uploader.staging_arena.create_buffer(*buffer_create_info)?
+        uploader
+            .staging_arena
+            .create_buffer(*buffer_create_info, format_args!("staging buffer for {}", debug_identifier))?
     };
-    debug_utils::name_vulkan_object(
-        device,
-        staging_buffer.buffer.inner,
-        format_args!("staging buffer: {}", debug_identifier),
-    );
 
     {
         profiling::scope!("write to 1px staging buffer");
@@ -143,9 +140,8 @@ pub fn create_pixel(
             .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
             .samples(vk::SampleCountFlags::TYPE_1)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        arena.create_image(*image_info)?
+        arena.create_image(*image_info, format_args!("{}", debug_identifier))?
     };
-    debug_utils::name_vulkan_object(device, image_allocation.inner, format_args!("{}", debug_identifier));
 
     let subresource_range = vk::ImageSubresourceRange::builder()
         .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -283,13 +279,10 @@ pub fn load_ktx(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        uploader.staging_arena.create_buffer(*buffer_create_info)?
+        uploader
+            .staging_arena
+            .create_buffer(*buffer_create_info, format_args!("staging buffer for {}", debug_identifier))?
     };
-    debug_utils::name_vulkan_object(
-        device,
-        staging_buffer.buffer.inner,
-        format_args!("staging buffer: {}", debug_identifier),
-    );
 
     {
         profiling::scope!("write to staging buffer");
@@ -309,9 +302,8 @@ pub fn load_ktx(
             .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
             .samples(vk::SampleCountFlags::TYPE_1)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        arena.create_image(*image_info)?
+        arena.create_image(*image_info, format_args!("{}", debug_identifier))?
     };
-    debug_utils::name_vulkan_object(device, image_allocation.inner, format_args!("{}", debug_identifier));
 
     uploader.start_upload(
         vk::PipelineStageFlags::FRAGMENT_SHADER,

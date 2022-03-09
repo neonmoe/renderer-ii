@@ -7,6 +7,7 @@ use crate::{Descriptors, Error, Material, Pipeline, Uploader};
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt::Arguments;
 use std::rc::Rc;
 
 mod gltf_json;
@@ -176,11 +177,20 @@ fn create_gltf(
         profiling::scope!("meshes");
         gltf.meshes
             .iter()
-            .map(|mesh| {
+            .enumerate()
+            .map(|(i, mesh)| {
                 mesh.primitives
                     .iter()
-                    .map(|primitive| {
-                        let mesh = create_primitive(uploader, arena, &gltf, &buffers, primitive)?;
+                    .enumerate()
+                    .map(|(j, primitive)| {
+                        let mesh = create_primitive(
+                            uploader,
+                            arena,
+                            &gltf,
+                            &buffers,
+                            primitive,
+                            format_args!("primitive {j} of mesh {i}"),
+                        )?;
                         let material_index = primitive.material.ok_or(Error::GltfMisc("material missing"))?;
                         Ok((mesh, material_index))
                     })
@@ -387,6 +397,7 @@ fn create_primitive(
     gltf: &gltf_json::GltfJson,
     buffers: &[Rc<Cow<'_, [u8]>>],
     primitive: &gltf_json::Primitive,
+    name: Arguments,
 ) -> Result<Mesh, Error> {
     let index_accessor = primitive.indices.ok_or(Error::GltfMisc("missing indices"))?;
     let index_buffer = get_slice_from_accessor(gltf, buffers, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
@@ -421,6 +432,7 @@ fn create_primitive(
         &[pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
         index_buffer,
         Pipeline::Gltf,
+        name,
     )?;
 
     Ok(mesh)

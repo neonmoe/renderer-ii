@@ -1,4 +1,5 @@
 use crate::arena::VulkanArena;
+use crate::debug_utils;
 use crate::pipeline::{PipelineMap, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, AnyImage, Device, Framebuffer, ImageView, PipelineLayout, RenderPass, Surface, Swapchain};
 use crate::{Descriptors, Error, PhysicalDevice};
@@ -93,6 +94,19 @@ impl Canvas {
                 immediate_present,
             },
         )?;
+        let vk::Extent2D { width, height } = extent;
+        let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
+        let frame_count = swapchain_images.len() as u32;
+        debug_utils::name_vulkan_object(
+            device,
+            swapchain,
+            format_args!("{width}x{height}, {swapchain_format:?}, {frame_count} frames"),
+        );
+        let swapchain = Rc::new(Swapchain {
+            inner: swapchain,
+            device: swapchain_ext,
+            surface: surface.clone(),
+        });
 
         // TODO: Split Canvas:
         // - Into Pipelines+RenderPass. Pipelines' viewport needs to be made dynamic.
@@ -105,10 +119,10 @@ impl Canvas {
             instance,
             device,
             physical_device.inner,
-            630_000_000, // FIXME: too small for very big framebuffers?
+            1_000_000_000, // FIXME: query framebuffer memory requirements for arena
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            format_args!("framebuffer arena"),
+            format_args!("framebuffer arena ({width}x{height}, {swapchain_format:?}, {frame_count} frames)"),
         )?;
 
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
@@ -141,28 +155,17 @@ impl Canvas {
             let image_create_info = vk::ImageCreateInfo::builder()
                 .image_type(vk::ImageType::TYPE_2D)
                 .format(format)
-                .extent(vk::Extent3D {
-                    width: extent.width,
-                    height: extent.height,
-                    depth: 1,
-                })
+                .extent(vk::Extent3D { width, height, depth: 1 })
                 .mip_levels(1)
                 .array_layers(1)
                 .samples(SAMPLE_COUNT)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(usage);
-            framebuffer_arena.create_image(*image_create_info)
+            framebuffer_arena.create_image(*image_create_info, format_args!("tbd"))
         };
 
         // TODO: Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
-        let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain) }.map_err(Error::VulkanGetSwapchainImages)?;
-        let frame_count = swapchain_images.len() as u32;
-        let swapchain = Rc::new(Swapchain {
-            inner: swapchain,
-            device: swapchain_ext,
-            surface: surface.clone(),
-        });
         let swapchain_image_views = swapchain_images
             .into_iter()
             .map(|image| AnyImage::Swapchain(image, swapchain.clone()))
@@ -187,16 +190,34 @@ impl Canvas {
             .map(create_image_view(vk::ImageAspectFlags::DEPTH, DEPTH_FORMAT))
             .collect::<Result<Vec<_>, _>>()?;
 
+        for (((i, sc), color), depth) in swapchain_image_views
+            .iter()
+            .enumerate()
+            .zip(color_image_views.iter())
+            .zip(depth_image_views.iter())
+        {
+            let nth = i + 1;
+            debug_utils::name_vulkan_object(device, sc.inner, format_args!("swapchain (frame {nth}/{frame_count})"));
+            debug_utils::name_vulkan_object(device, sc.image.inner(), format_args!("swapchain (frame {nth}/{frame_count})"));
+            debug_utils::name_vulkan_object(device, color.inner, format_args!("color fb (frame {nth}/{frame_count})"));
+            debug_utils::name_vulkan_object(device, color.image.inner(), format_args!("color fb (frame {nth}/{frame_count})"));
+            debug_utils::name_vulkan_object(device, depth.inner, format_args!("depth fb (frame {nth}/{frame_count})"));
+            debug_utils::name_vulkan_object(device, depth.image.inner(), format_args!("depth fb (frame {nth}/{frame_count})"));
+        }
+
         let final_render_pass = create_render_pass(device, swapchain_format)?;
+        debug_utils::name_vulkan_object(device, final_render_pass, format_args!("main render pass"));
         let final_render_pass = Rc::new(RenderPass {
             inner: final_render_pass,
             device: device.clone(),
         });
 
         let mut vk_pipelines = create_pipelines(device, final_render_pass.inner, extent, &descriptors.pipeline_layouts)?.into_iter();
-        let pipelines = PipelineMap::new::<Error, _>(|_| {
+        let pipelines = PipelineMap::new::<Error, _>(|name| {
+            let pipeline = vk_pipelines.next().unwrap();
+            debug_utils::name_vulkan_object(device, pipeline, format_args!("{name:?}"));
             Ok(vulkan_raii::Pipeline {
-                inner: vk_pipelines.next().unwrap(),
+                inner: pipeline,
                 device: device.clone(),
                 render_pass: final_render_pass.clone(),
             })
@@ -204,9 +225,10 @@ impl Canvas {
 
         let framebuffers = color_image_views
             .into_iter()
+            .enumerate()
             .zip(depth_image_views.into_iter())
             .zip(swapchain_image_views.into_iter())
-            .map(|((color_image_view, depth_image_view), swapchain_image_view)| {
+            .map(|(((i, color_image_view), depth_image_view), swapchain_image_view)| {
                 let attachments = [color_image_view.inner, depth_image_view.inner, swapchain_image_view.inner];
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(final_render_pass.inner)
@@ -216,6 +238,7 @@ impl Canvas {
                     .layers(1);
                 let framebuffer =
                     unsafe { device.create_framebuffer(&framebuffer_create_info, None) }.map_err(Error::VulkanFramebufferCreation)?;
+                debug_utils::name_vulkan_object(device, framebuffer, format_args!("main fb {}/{frame_count}", i + 1));
                 Ok(Framebuffer {
                     inner: framebuffer,
                     device: device.clone(),
@@ -379,9 +402,10 @@ fn create_pipelines(
     pipeline_layouts: &PipelineMap<PipelineLayout>,
 ) -> Result<Vec<vk::Pipeline>, Error> {
     let mut all_shader_modules = Vec::with_capacity(PIPELINE_PARAMETERS.len() * 2);
-    let mut create_shader_module = |spirv: &'static [u32]| -> Result<vk::ShaderModule, Error> {
+    let mut create_shader_module = |filename: &'static str, spirv: &'static [u32]| -> Result<vk::ShaderModule, Error> {
         let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
         let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(Error::VulkanShaderModuleCreation)?;
+        debug_utils::name_vulkan_object(device, shader_module, format_args!("{}", filename));
         all_shader_modules.push(shader_module);
         Ok(shader_module)
     };
@@ -391,11 +415,11 @@ fn create_pipelines(
         .map(|params| {
             let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
                 .stage(vk::ShaderStageFlags::VERTEX)
-                .module(create_shader_module(params.vertex_shader)?)
+                .module(create_shader_module(params.vertex_shader_name, params.vertex_shader)?)
                 .name(cstr!("main"));
             let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
                 .stage(vk::ShaderStageFlags::FRAGMENT)
-                .module(create_shader_module(params.fragment_shader)?)
+                .module(create_shader_module(params.fragment_shader_name, params.fragment_shader)?)
                 .name(cstr!("main"));
             Ok([vert_shader_stage_create_info.build(), frag_shader_stage_create_info.build()])
         })

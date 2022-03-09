@@ -44,25 +44,25 @@ impl Camera {
         temp_arena: &mut VulkanArena,
         frame_index: FrameIndex,
     ) -> Result<(), Error> {
-        let buffer_allocation = {
+        let temp_buffer = {
             profiling::scope!("create uniform buffer");
             let buffer_size = mem::size_of::<GlobalTransforms>() as vk::DeviceSize;
             let buffer_create_info = vk::BufferCreateInfo::builder()
                 .size(buffer_size)
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            temp_arena.create_buffer(*buffer_create_info)?
+            temp_arena.create_buffer(*buffer_create_info, format_args!("uniform (view+proj matrices)"))?
         };
 
         {
             profiling::scope!("write uniform buffer");
             let src = &[GlobalTransforms::new(canvas)];
-            unsafe { buffer_allocation.write(src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
+            unsafe { temp_buffer.write(src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
         }
 
         let pipeline = Pipeline::SHARED_DESCRIPTOR_PIPELINE;
-        descriptors.set_uniform_buffer(frame_index, pipeline, 0, 0, buffer_allocation.buffer.inner);
-        temp_arena.add_buffer(buffer_allocation.buffer);
+        descriptors.set_uniform_buffer(frame_index, pipeline, 0, 0, temp_buffer.buffer.inner);
+        temp_arena.add_buffer(temp_buffer.buffer);
         Ok(())
     }
 }

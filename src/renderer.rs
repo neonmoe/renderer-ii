@@ -254,6 +254,7 @@ impl Renderer {
         unused_cbs.append(in_use_cbs);
 
         let command_buffer = if let Some(command_buffer) = unused_cbs.pop() {
+            debug_utils::name_vulkan_object(&self.device, command_buffer.inner, format_args!("frame rendering cmds"));
             command_buffer
         } else {
             profiling::scope!("allocate command buffer");
@@ -266,6 +267,7 @@ impl Renderer {
                     .device
                     .allocate_command_buffers(&command_buffer_allocate_info)
                     .map_err(Error::VulkanCommandBuffersAllocation)?;
+                debug_utils::name_vulkan_object(&self.device, command_buffers[0], format_args!("frame rendering cmds"));
                 CommandBuffer {
                     inner: command_buffers[0],
                     device: self.device.clone(),
@@ -342,7 +344,7 @@ impl Renderer {
                 };
             }
 
-            for (&(mesh, material), transforms) in meshes {
+            for (i, (&(mesh, material), transforms)) in meshes.iter().enumerate() {
                 profiling::scope!("mesh");
                 let transform_buffer = {
                     profiling::scope!("create transform buffer");
@@ -351,7 +353,10 @@ impl Renderer {
                         .size(buffer_size)
                         .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                    temp_arena.create_buffer(*buffer_create_info)?
+                    temp_arena.create_buffer(
+                        *buffer_create_info,
+                        format_args!("{}. transform buffer of pipeline {pipeline:?}", i + 1),
+                    )?
                 };
 
                 {

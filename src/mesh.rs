@@ -2,6 +2,7 @@ use crate::arena::{BufferAllocation, VulkanArena};
 use crate::{Error, Pipeline, Uploader};
 use ash::vk;
 use glam::Vec4;
+use std::fmt::Arguments;
 use std::{mem, ptr};
 
 #[derive(PartialEq, Eq, Hash)]
@@ -30,6 +31,7 @@ impl Mesh {
         vertices: &[&[u8]],
         indices: &[u8],
         pipeline: Pipeline,
+        name: Arguments,
     ) -> Result<Mesh, Error> {
         profiling::scope!("new_mesh");
 
@@ -76,7 +78,9 @@ impl Mesh {
                 .size(total_size as vk::DeviceSize)
                 .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            uploader.staging_arena.create_buffer(*buffer_create_info)?
+            uploader
+                .staging_arena
+                .create_buffer(*buffer_create_info, format_args!("staging buffer for {}", name))?
         };
 
         {
@@ -96,7 +100,7 @@ impl Mesh {
                         | vk::BufferUsageFlags::UNIFORM_BUFFER,
                 )
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            arena.create_buffer(*buffer_create_info)?
+            arena.create_buffer(*buffer_create_info, name)?
         };
 
         uploader.start_upload(

@@ -115,7 +115,7 @@ impl VulkanArena {
         })
     }
 
-    pub fn create_buffer(&mut self, buffer_create_info: vk::BufferCreateInfo) -> Result<BufferAllocation, Error> {
+    pub fn create_buffer(&mut self, buffer_create_info: vk::BufferCreateInfo, name: Arguments) -> Result<BufferAllocation, Error> {
         let buffer = unsafe { self.device.create_buffer(&buffer_create_info, None) }.map_err(Error::VulkanBufferCreation)?;
         let buffer_memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         let alignment = buffer_memory_requirements.alignment;
@@ -146,6 +146,8 @@ impl VulkanArena {
             }
         }
 
+        debug_utils::name_vulkan_object(&self.device, buffer, name);
+
         self.offset = offset + size;
         self.previous_allocation_was_image = false;
         Ok(BufferAllocation {
@@ -161,7 +163,7 @@ impl VulkanArena {
         })
     }
 
-    pub fn create_image(&mut self, image_create_info: vk::ImageCreateInfo) -> Result<Image, Error> {
+    pub fn create_image(&mut self, image_create_info: vk::ImageCreateInfo, name: Arguments) -> Result<Image, Error> {
         let image = unsafe { self.device.create_image(&image_create_info, None) }.map_err(Error::VulkanImageCreation)?;
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
         let alignment = image_memory_requirements.alignment.max(self.buffer_image_granularity);
@@ -186,6 +188,8 @@ impl VulkanArena {
                 return Err(err);
             }
         }
+
+        debug_utils::name_vulkan_object(&self.device, image, name);
 
         self.offset = offset + size;
         self.previous_allocation_was_image = true;

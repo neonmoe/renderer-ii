@@ -27,9 +27,19 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
     let mut queues = [vk::Queue::default(); 3];
     get_device_queues(&device, &queue_families, &mut queues);
     let [graphics_queue, transfer_queue, surface_queue] = queues;
-    debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
-    debug_utils::name_vulkan_object(&device, surface_queue, format_args!("present"));
-    debug_utils::name_vulkan_object(&device, transfer_queue, format_args!("transfer"));
+    if graphics_queue == surface_queue && graphics_queue == transfer_queue {
+        debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics+surface+transfer"));
+    } else if graphics_queue == surface_queue {
+        debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics+surface"));
+        debug_utils::name_vulkan_object(&device, transfer_queue, format_args!("transfer"));
+    } else if surface_queue == transfer_queue {
+        debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
+        debug_utils::name_vulkan_object(&device, surface_queue, format_args!("surface+transfer"));
+    } else {
+        debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
+        debug_utils::name_vulkan_object(&device, surface_queue, format_args!("surface"));
+        debug_utils::name_vulkan_object(&device, transfer_queue, format_args!("transfer"));
+    }
 
     let device = Device {
         inner: device,
@@ -38,6 +48,7 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
         transfer_queue,
     };
     debug_utils::name_vulkan_object(&device, device.inner.handle(), format_args!("{}", physical_device.name));
+    debug_utils::name_vulkan_object(&device, physical_device.inner, format_args!("{}", physical_device.name));
 
     Ok(device)
 }
