@@ -1,6 +1,7 @@
 use ash::vk;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use std::mem;
+use std::mem::MaybeUninit;
 
 pub const MAX_TEXTURE_COUNT: u32 = 128; // Keep in sync with shaders/constants.glsl.
 
@@ -33,14 +34,22 @@ impl Pipeline {
 
 /// Maps every pipeline to a T.
 pub struct PipelineMap<T> {
-    buffer: [Option<T>; Pipeline::Count as usize],
+    buffer: [MaybeUninit<T>; Pipeline::Count as usize],
+}
+
+impl<T> Drop for PipelineMap<T> {
+    fn drop(&mut self) {
+        for buffer in &mut self.buffer {
+            unsafe { buffer.as_mut_ptr().drop_in_place() };
+        }
+    }
 }
 
 impl<T> PipelineMap<T> {
     pub fn new<E, F: FnMut(Pipeline) -> Result<T, E>>(mut f: F) -> Result<PipelineMap<T>, E> {
-        let mut buffer = [None; Pipeline::Count as usize];
+        let mut buffer = [MaybeUninit::uninit(); Pipeline::Count as usize];
         for (value, pipeline) in buffer.iter_mut().zip(ALL_PIPELINES) {
-            *value = Some(f(pipeline)?);
+            value.write(f(pipeline)?);
         }
         Ok(PipelineMap { buffer })
     }
@@ -48,18 +57,22 @@ impl<T> PipelineMap<T> {
         Pipeline::Count as usize
     }
     pub fn get(&self, pipeline: Pipeline) -> &T {
-        self.buffer[pipeline as usize].as_ref().unwrap()
+        // Safety: initialized in PipelineMap::new
+        unsafe { self.buffer[pipeline as usize].assume_init_ref() }
     }
     pub fn get_mut(&mut self, pipeline: Pipeline) -> &mut T {
-        self.buffer[pipeline as usize].as_mut().unwrap()
+        // Safety: initialized in PipelineMap::new
+        unsafe { self.buffer[pipeline as usize].assume_init_mut() }
     }
     pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.buffer.iter().map(|o| o.as_ref().unwrap())
+        // Safety: initialized in PipelineMap::new
+        self.buffer.iter().map(|o| unsafe { o.assume_init_ref() })
     }
     pub fn iter_with_pipeline(&self) -> impl Iterator<Item = (Pipeline, &T)> {
         self.buffer
             .iter()
-            .map(|o| o.as_ref().unwrap())
+            // Safety: initialized in PipelineMap::new
+            .map(|o| unsafe { o.assume_init_ref() })
             .zip(ALL_PIPELINES)
             .map(|(t, pl)| (pl, t))
     }
@@ -131,7 +144,7 @@ static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescri
 ];
 
 pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = PipelineMap {
-    buffer: [Some(PipelineParameters {
+    buffer: [MaybeUninit::new(PipelineParameters {
         vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
         vertex_shader_name: "shaders/textured.vert",
         fragment_shader: shaders::include_spirv!("shaders/textured.frag"),

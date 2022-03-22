@@ -321,7 +321,7 @@ impl Renderer {
             }
         }
 
-        for (&pipeline, meshes) in &scene.pipeline_map {
+        for (pipeline, meshes) in scene.pipeline_map.iter_with_pipeline() {
             profiling::scope!("pipeline");
             if meshes.is_empty() {
                 continue;
