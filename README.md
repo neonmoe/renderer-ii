@@ -1,4 +1,4 @@
-TODO: write a proper readme
+TODO(cleanup): write a proper readme
 
 ## Building
 

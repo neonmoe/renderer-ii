@@ -19,6 +19,9 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
         log::debug!("Device extension (optional): VK_EXT_memory_budget");
     }
 
+    // Features in core Vulkan, provided by the target api version:
+    // - VK_KHR_dynamic_rendering (Vulkan 1.3)
+
     let device_create_info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queue_create_infos)
         .enabled_extension_names(&extensions);

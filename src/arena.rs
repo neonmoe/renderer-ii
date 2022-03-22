@@ -229,7 +229,7 @@ fn get_memory_type_index(
     fallback_flags: vk::MemoryPropertyFlags,
     size: vk::DeviceSize,
 ) -> Option<u32> {
-    // TODO: Use VK_EXT_memory_budget to pick a heap that can fit the size, it's already enabled (if available)
+    // TODO(low): Use VK_EXT_memory_budget to pick a heap that can fit the size, it's already enabled (if available)
     let memory_properties = unsafe { instance.get_physical_device_memory_properties(physical_device) };
     let types = &memory_properties.memory_types[..memory_properties.memory_type_count as usize];
     let heaps = &memory_properties.memory_heaps[..memory_properties.memory_heap_count as usize];

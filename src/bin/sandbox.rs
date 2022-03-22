@@ -36,8 +36,6 @@ fn fallible_main() -> anyhow::Result<()> {
     let sdl_context = sdl2::init().map_err(SandboxError::Sdl)?;
     let video_subsystem = sdl_context.video().map_err(SandboxError::Sdl)?;
 
-    // TODO: Another window for a loading splash screen?
-
     let mut window = video_subsystem
         .window("neonvk sandbox", 640, 480)
         .position_centered()
@@ -203,7 +201,7 @@ fn fallible_main() -> anyhow::Result<()> {
             })
             .sum();
         if let Some(avg_interval) = interval_sum.checked_div(interval_count as u32) {
-            // TODO: VRAM stats
+            // TODO(med): VRAM stats
             // NOTE: Remove the dead_code annotation from display_bytes when fixing this
             let _ = window.set_title(&format!(
                 "{} ({:.2} ms frame interval ({:.0} fps), {} of VRAM in use, {} allocated)",

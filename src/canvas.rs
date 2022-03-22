@@ -108,7 +108,7 @@ impl Canvas {
             surface: surface.clone(),
         });
 
-        // TODO: Split Canvas:
+        // TODO(high): Split Canvas:
         // - Into Pipelines+RenderPass. Pipelines' viewport needs to be made dynamic.
         //   See: https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkCmdSetViewport.html
         // - Into Swapchain. (create_swapchain is probably enough.)
@@ -164,7 +164,7 @@ impl Canvas {
             framebuffer_arena.create_image(*image_create_info, format_args!("tbd"))
         };
 
-        // TODO: Add another set of images to render to, to allow for post processing
+        // TODO(med): Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
         let swapchain_image_views = swapchain_images
             .into_iter()
@@ -273,7 +273,7 @@ fn create_swapchain(
         .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)?;
     let mut present_mode = vk::PresentModeKHR::FIFO;
     if settings.immediate_present {
-        // TODO: Remove immediate present, use proper gpu profiling instead.
+        // TODO(med): Remove immediate present, use proper gpu profiling instead.
         if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
             present_mode = vk::PresentModeKHR::MAILBOX;
         } else if present_modes.contains(&vk::PresentModeKHR::IMMEDIATE) {

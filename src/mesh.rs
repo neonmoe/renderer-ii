@@ -24,7 +24,7 @@ impl Mesh {
     /// The `vertices` slice should contain a slice for each
     /// attribute, containing the values for that attribute tightly
     /// packed.
-    // TODO: Meshes that refer to existing buffers, instead of owning them themselves
+    // TODO(high): Meshes that refer to existing buffers, instead of owning them themselves
     pub fn new<I: IndexType>(
         uploader: &mut Uploader,
         arena: &mut VulkanArena,

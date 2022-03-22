@@ -33,16 +33,22 @@ impl Drop for Driver {
 impl Driver {
     pub fn new(window: &dyn HasRawWindowHandle) -> Result<Driver, Error> {
         profiling::scope!("new_driver");
-        // TODO: Missing Vulkan is not gracefully handled.
+        // TODO(low): Missing Vulkan is not gracefully handled.
         let entry = unsafe { Entry::load().unwrap() };
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))
             .application_version(make_api_version(0, 0, 1, 0))
-            .api_version(vk::API_VERSION_1_2);
+            .api_version(vk::API_VERSION_1_3);
 
         let mut layers = Vec::with_capacity(1);
-        if cfg!(feature = "vulkan-validation") && is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
-            layers.push(cstr!("VK_LAYER_KHRONOS_validation").as_ptr());
+        let mut validation_layer_enabled = false;
+        if cfg!(feature = "vulkan-validation") {
+            if is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
+                layers.push(cstr!("VK_LAYER_KHRONOS_validation").as_ptr());
+                validation_layer_enabled = true;
+            } else {
+                log::error!("vulkan-validation feature is enabled, but VK_LAYER_KHRONOS_validation is not available on this system");
+            }
         }
 
         let mut extensions = ash_window::enumerate_required_extensions(window)
@@ -60,10 +66,9 @@ impl Driver {
             extensions.push(cstr!("VK_EXT_debug_utils").as_ptr());
             log::debug!("Instance extension (optional): VK_EXT_debug_utils");
         }
-        if is_extension_supported(&entry, "VK_KHR_get_physical_device_properties2") {
-            extensions.push(cstr!("VK_KHR_get_physical_device_properties2").as_ptr());
-            log::debug!("Instance extension (optional): VK_KHR_get_physical_device_properties2");
-        }
+
+        // Features in core Vulkan, provided by the target api version:
+        // - VK_KHR_get_physical_device_properties2 (Vulkan 1.1)
 
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
@@ -78,7 +83,7 @@ impl Driver {
         ];
         let mut validation_features = vk::ValidationFeaturesEXT::builder().enabled_validation_features(&enabled_validation_features);
 
-        let create_info = if cfg!(feature = "vulkan-validation") {
+        let create_info = if validation_layer_enabled {
             create_info.push_next(&mut validation_features)
         } else {
             create_info

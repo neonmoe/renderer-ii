@@ -17,7 +17,7 @@ bytemuck = { version = "1.7" }
 typed-arena = { version = "2.0" }
 once_cell = { version = "1.9" }
 
-# TODO: Move anyhow, sdl2, profiling/profile-with-tracy to dev deps
+# TODO(cleanup): Move anyhow, sdl2 to dev deps
 # Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.
 sdl2 = { version = "0.34", features = ["raw-window-handle"] }
 anyhow = { version = "1.0" }

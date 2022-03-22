@@ -41,22 +41,16 @@ pub fn get_physical_devices(entry: &Entry, instance: &Instance, surface: vk::Sur
         .filter_map(|physical_device| filter_capable_device(instance, &surface_ext, surface, physical_device))
         .collect::<Vec<_>>();
     capable_physical_devices.sort_by(|a, b| {
-        let type_score = |properties: vk::PhysicalDeviceProperties| match properties.device_type {
+        let type_score = |properties: &vk::PhysicalDeviceProperties| match properties.device_type {
             vk::PhysicalDeviceType::DISCRETE_GPU => 30,
             vk::PhysicalDeviceType::INTEGRATED_GPU => 20,
             vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
             vk::PhysicalDeviceType::CPU => 0,
             _ => 0,
         };
-        let queue_score = |graphics_queue, surface_queue| {
-            if graphics_queue == surface_queue {
-                1
-            } else {
-                0
-            }
-        };
-        let a_score = type_score(a.properties) + queue_score(a.graphics_queue_family.index, a.surface_queue_family.index);
-        let b_score = type_score(b.properties) + queue_score(b.graphics_queue_family.index, b.surface_queue_family.index);
+        let queue_score = |gfx, surf| if gfx == surf { 1 } else { 0 };
+        let a_score = type_score(&a.properties) + queue_score(a.graphics_queue_family.index, a.surface_queue_family.index);
+        let b_score = type_score(&b.properties) + queue_score(b.graphics_queue_family.index, b.surface_queue_family.index);
         b_score.cmp(&a_score)
     });
     Ok(capable_physical_devices)
@@ -106,13 +100,13 @@ fn filter_capable_device(
     }
 
     let properties = unsafe { instance.get_physical_device_properties(physical_device) };
+    if properties.api_version < vk::API_VERSION_1_3 {
+        return None;
+    }
+
     let format_properties = unsafe { instance.get_physical_device_format_properties(physical_device, vk::Format::R8G8B8A8_SRGB) };
     match format_properties.optimal_tiling_features {
         features if !features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR) => {
-            log::warn!(
-                "physical device '{}' does not have SAMPLED_IMAGE_FILTER_LINEAR for optimal tiling 32-bit srgb images",
-                get_device_name(&properties)
-            );
             return None;
         }
         _ => {}

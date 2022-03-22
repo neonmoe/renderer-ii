@@ -1,6 +1,8 @@
 use ash::vk;
 use thiserror::Error;
 
+// TODO(cleanup): Separate error type for Vulkan errors + specific errors with the vulkan err as source
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("query for the window's required extensions failed")]
