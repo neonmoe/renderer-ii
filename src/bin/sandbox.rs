@@ -184,12 +184,7 @@ fn fallible_main() -> anyhow::Result<()> {
         match renderer.render_frame(frame_index, &mut descriptors, &canvas, &camera, &scene, debug_value) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
-            Err(err) => {
-                log::error!("Error during regular frame rendering: {}", err);
-                // The GPU may be having a moment: let's not stress it further
-                // by running all the drop code, just bail out asap.
-                std::process::exit(1);
-            }
+            Err(err) => log::warn!("Error during regular frame rendering: {}", err),
         }
 
         frame_instants.push(Instant::now());
