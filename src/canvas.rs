@@ -1,7 +1,7 @@
 use crate::arena::VulkanArena;
 use crate::debug_utils;
 use crate::pipeline::{PipelineMap, PIPELINE_PARAMETERS};
-use crate::vulkan_raii::{self, AnyImage, Device, ImageView, PipelineLayout, Surface, Swapchain};
+use crate::vulkan_raii::{self, AnyImage, Device, Framebuffer, ImageView, PipelineLayout, RenderPass, Surface, Swapchain};
 use crate::{Descriptors, Error, PhysicalDevice};
 use ash::extensions::khr;
 use ash::{vk, Entry, Instance};
@@ -40,11 +40,10 @@ struct SwapchainSettings {
 pub struct Canvas {
     pub extent: vk::Extent2D,
     pub frame_count: u32,
-    pub swapchain_image_views: Vec<ImageView>,
-    pub color_image_views: Vec<ImageView>,
-    pub depth_image_views: Vec<ImageView>,
 
     pub(crate) swapchain: Rc<Swapchain>,
+    pub(crate) framebuffers: Vec<Framebuffer>,
+    pub(crate) final_render_pass: Rc<RenderPass>,
     pub(crate) pipelines: PipelineMap<vulkan_raii::Pipeline>,
 }
 
@@ -206,23 +205,55 @@ impl Canvas {
             debug_utils::name_vulkan_object(device, depth.image.inner(), format_args!("depth fb (frame {nth}/{frame_count})"));
         }
 
-        let mut vk_pipelines = create_pipelines(device, &[swapchain_format], DEPTH_FORMAT, &descriptors.pipeline_layouts)?.into_iter();
+        let final_render_pass = create_render_pass(device, swapchain_format)?;
+        debug_utils::name_vulkan_object(device, final_render_pass, format_args!("main render pass"));
+        let final_render_pass = Rc::new(RenderPass {
+            inner: final_render_pass,
+            device: device.clone(),
+        });
+
+        let mut vk_pipelines = create_pipelines(device, final_render_pass.inner, &descriptors.pipeline_layouts)?.into_iter();
         let pipelines = PipelineMap::new::<Error, _>(|name| {
             let pipeline = vk_pipelines.next().unwrap();
             debug_utils::name_vulkan_object(device, pipeline, format_args!("{name:?}"));
             Ok(vulkan_raii::Pipeline {
                 inner: pipeline,
                 device: device.clone(),
+                render_pass: final_render_pass.clone(),
             })
         })?;
+
+        let framebuffers = color_image_views
+            .into_iter()
+            .enumerate()
+            .zip(depth_image_views.into_iter())
+            .zip(swapchain_image_views.into_iter())
+            .map(|(((i, color_image_view), depth_image_view), swapchain_image_view)| {
+                let attachments = [color_image_view.inner, depth_image_view.inner, swapchain_image_view.inner];
+                let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
+                    .render_pass(final_render_pass.inner)
+                    .attachments(&attachments)
+                    .width(extent.width)
+                    .height(extent.height)
+                    .layers(1);
+                let framebuffer =
+                    unsafe { device.create_framebuffer(&framebuffer_create_info, None) }.map_err(Error::VulkanFramebufferCreation)?;
+                debug_utils::name_vulkan_object(device, framebuffer, format_args!("main fb {}/{frame_count}", i + 1));
+                Ok(Framebuffer {
+                    inner: framebuffer,
+                    device: device.clone(),
+                    render_pass: final_render_pass.clone(),
+                    attachments: vec![color_image_view, depth_image_view, swapchain_image_view],
+                })
+            })
+            .collect::<Result<Vec<Framebuffer>, Error>>()?;
 
         Ok(Canvas {
             extent,
             frame_count,
-            color_image_views,
-            depth_image_views,
-            swapchain_image_views,
             swapchain,
+            framebuffers,
+            final_render_pass,
             pipelines,
         })
     }
@@ -311,10 +342,62 @@ fn create_swapchain(
 }
 
 #[profiling::function]
+fn create_render_pass(device: &Device, swapchain_format: vk::Format) -> Result<vk::RenderPass, Error> {
+    let color_attachment = vk::AttachmentDescription::builder()
+        .format(swapchain_format)
+        .samples(SAMPLE_COUNT)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    let depth_attachment = vk::AttachmentDescription::builder()
+        .format(DEPTH_FORMAT)
+        .samples(SAMPLE_COUNT)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    let resolve_attachment = vk::AttachmentDescription::builder()
+        .format(swapchain_format)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+    let attachments = [color_attachment.build(), depth_attachment.build(), resolve_attachment.build()];
+
+    let color_attachment_reference = vk::AttachmentReference::builder()
+        .attachment(0)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    let color_attachment_references = [color_attachment_reference.build()];
+    let resolve_attachment_reference = vk::AttachmentReference::builder()
+        .attachment(2)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    let resolve_attachment_references = [resolve_attachment_reference.build()];
+    let depth_attachment_reference = vk::AttachmentReference::builder()
+        .attachment(1)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    let subpass = vk::SubpassDescription::builder()
+        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+        .color_attachments(&color_attachment_references)
+        .resolve_attachments(&resolve_attachment_references)
+        .depth_stencil_attachment(&depth_attachment_reference);
+    let subpasses = [subpass.build()];
+
+    let render_pass_create_info = vk::RenderPassCreateInfo::builder().attachments(&attachments).subpasses(&subpasses);
+    unsafe { device.create_render_pass(&render_pass_create_info, None) }.map_err(Error::VulkanRenderPassCreation)
+}
+
+#[profiling::function]
 fn create_pipelines(
     device: &Device,
-    color_attachment_formats: &[vk::Format],
-    depth_attachment_format: vk::Format,
+    render_pass: vk::RenderPass,
     pipeline_layouts: &PipelineMap<PipelineLayout>,
 ) -> Result<Vec<vk::Pipeline>, Error> {
     let mut all_shader_modules = Vec::with_capacity(PIPELINE_PARAMETERS.len() * 2);
@@ -385,18 +468,12 @@ fn create_pipelines(
         let dynamic_states = [vk::DynamicState::VIEWPORT_WITH_COUNT, vk::DynamicState::SCISSOR_WITH_COUNT];
         let dynamic_state_create_info = vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
 
-        let mut rendering_create_info = vk::PipelineRenderingCreateInfo::builder()
-            .view_mask(0)
-            .color_attachment_formats(color_attachment_formats)
-            .depth_attachment_format(depth_attachment_format);
-
         let pipeline_create_infos = shader_stages_per_pipeline
             .iter()
             .zip(vertex_input_per_pipeline.iter())
             .zip(pipeline_layouts.iter())
             .map(|((shader_stages, vertex_input), pipeline_layout)| {
                 vk::GraphicsPipelineCreateInfo::builder()
-                    .push_next(&mut rendering_create_info)
                     .stages(&shader_stages[..])
                     .vertex_input_state(vertex_input)
                     .input_assembly_state(&input_assembly_create_info)
@@ -407,6 +484,7 @@ fn create_pipelines(
                     .color_blend_state(&color_blend_create_info)
                     .dynamic_state(&dynamic_state_create_info)
                     .layout(pipeline_layout.inner)
+                    .render_pass(render_pass)
                     .subpass(0)
                     .build()
             })

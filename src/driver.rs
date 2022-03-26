@@ -76,9 +76,7 @@ impl Driver {
             .enabled_extension_names(&extensions);
 
         let enabled_validation_features = [
-            // FIXME: Re-enable BEST_PRACTICES validation
-            // Seems to cause a crash atm because the validation layer doesn't support VK_KHR_dynamic_rendering.
-            //vk::ValidationFeatureEnableEXT::BEST_PRACTICES,
+            vk::ValidationFeatureEnableEXT::BEST_PRACTICES,
             vk::ValidationFeatureEnableEXT::GPU_ASSISTED,
             vk::ValidationFeatureEnableEXT::GPU_ASSISTED_RESERVE_BINDING_SLOT,
             vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION,

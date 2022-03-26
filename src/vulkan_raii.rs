@@ -140,9 +140,26 @@ trivial_drop_impl!(ImageView, destroy_image_view);
 inner_and_device_based_eq_impl!(ImageView);
 inner_and_device_based_hash_impl!(ImageView);
 
+pub struct RenderPass {
+    pub inner: vk::RenderPass,
+    pub device: Rc<Device>,
+}
+trivial_drop_impl!(RenderPass, destroy_render_pass);
+
+pub struct Framebuffer {
+    pub inner: vk::Framebuffer,
+    pub device: Rc<Device>,
+    pub render_pass: Rc<RenderPass>,
+    // NOTE: Not an Rc because every attachment image view probably
+    // maps to just one framebuffer.
+    pub attachments: Vec<ImageView>,
+}
+trivial_drop_impl!(Framebuffer, destroy_framebuffer);
+
 pub struct Pipeline {
     pub inner: vk::Pipeline,
     pub device: Rc<Device>,
+    pub render_pass: Rc<RenderPass>,
 }
 trivial_drop_impl!(Pipeline, destroy_pipeline);
 
