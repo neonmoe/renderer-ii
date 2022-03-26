@@ -21,6 +21,7 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
 
     // Features in core Vulkan, provided by the target api version:
     // - VK_KHR_dynamic_rendering (Vulkan 1.3)
+    // - VK_EXT_extended_dynamic_state (Vulkan 1.3)
 
     let device_create_info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queue_create_infos)

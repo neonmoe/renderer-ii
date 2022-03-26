@@ -212,7 +212,7 @@ impl Canvas {
             device: device.clone(),
         });
 
-        let mut vk_pipelines = create_pipelines(device, final_render_pass.inner, extent, &descriptors.pipeline_layouts)?.into_iter();
+        let mut vk_pipelines = create_pipelines(device, final_render_pass.inner, &descriptors.pipeline_layouts)?.into_iter();
         let pipelines = PipelineMap::new::<Error, _>(|name| {
             let pipeline = vk_pipelines.next().unwrap();
             debug_utils::name_vulkan_object(device, pipeline, format_args!("{name:?}"));
@@ -398,7 +398,6 @@ fn create_render_pass(device: &Device, swapchain_format: vk::Format) -> Result<v
 fn create_pipelines(
     device: &Device,
     render_pass: vk::RenderPass,
-    extent: vk::Extent2D,
     pipeline_layouts: &PipelineMap<PipelineLayout>,
 ) -> Result<Vec<vk::Pipeline>, Error> {
     let mut all_shader_modules = Vec::with_capacity(PIPELINE_PARAMETERS.len() * 2);
@@ -440,17 +439,6 @@ fn create_pipelines(
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
             .primitive_restart_enable(false);
 
-        let viewports = [vk::Viewport::builder()
-            .width(extent.width as f32)
-            .height(extent.height as f32)
-            .min_depth(0.0)
-            .max_depth(1.0)
-            .build()];
-        let scissors = [vk::Rect2D::builder().extent(extent).build()];
-        let viewport_create_info = vk::PipelineViewportStateCreateInfo::builder()
-            .viewports(&viewports)
-            .scissors(&scissors);
-
         let rasterization_create_info = vk::PipelineRasterizationStateCreateInfo::builder()
             .polygon_mode(vk::PolygonMode::FILL)
             .cull_mode(vk::CullModeFlags::BACK)
@@ -476,6 +464,10 @@ fn create_pipelines(
             .logic_op_enable(false)
             .attachments(&color_blend_attachment_states);
 
+        let viewport_create_info = vk::PipelineViewportStateCreateInfo::default();
+        let dynamic_states = [vk::DynamicState::VIEWPORT_WITH_COUNT, vk::DynamicState::SCISSOR_WITH_COUNT];
+        let dynamic_state_create_info = vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
+
         let pipeline_create_infos = shader_stages_per_pipeline
             .iter()
             .zip(vertex_input_per_pipeline.iter())
@@ -490,6 +482,7 @@ fn create_pipelines(
                     .multisample_state(&multisample_create_info)
                     .depth_stencil_state(&pipeline_depth_stencil_create_info)
                     .color_blend_state(&color_blend_create_info)
+                    .dynamic_state(&dynamic_state_create_info)
                     .layout(pipeline_layout.inner)
                     .render_pass(render_pass)
                     .subpass(0)

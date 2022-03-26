@@ -289,6 +289,16 @@ impl Renderer {
                 .map_err(Error::VulkanBeginCommandBuffer)?;
         }
 
+        let viewports = [vk::Viewport::builder()
+            .width(canvas.extent.width as f32)
+            .height(canvas.extent.height as f32)
+            .min_depth(0.0)
+            .max_depth(1.0)
+            .build()];
+        let scissors = [vk::Rect2D::builder().extent(canvas.extent).build()];
+        unsafe { self.device.cmd_set_viewport_with_count(command_buffer, &viewports) };
+        unsafe { self.device.cmd_set_scissor_with_count(command_buffer, &scissors) };
+
         let render_area = vk::Rect2D::builder().extent(canvas.extent).build();
         let mut depth_clear_value = vk::ClearValue::default();
         depth_clear_value.depth_stencil.depth = 0.0;
