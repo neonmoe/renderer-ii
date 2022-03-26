@@ -237,7 +237,6 @@ impl Renderer {
     ) -> Result<vk::CommandBuffer, Error> {
         let fi = frame_index.index;
         let temp_arena = &mut self.temp_arena[fi];
-        let framebuffer = &canvas.framebuffers[frame_index.index];
 
         descriptors.write_descriptors(frame_index);
 
@@ -302,16 +301,61 @@ impl Renderer {
         let render_area = vk::Rect2D::builder().extent(canvas.extent).build();
         let mut depth_clear_value = vk::ClearValue::default();
         depth_clear_value.depth_stencil.depth = 0.0;
-        let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];
-        let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
-            .render_pass(canvas.final_render_pass.inner)
-            .framebuffer(framebuffer.inner)
+        let color_attachments = [vk::RenderingAttachmentInfo::builder()
+            .image_view(canvas.color_image_views[fi].inner)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+            .resolve_image_view(canvas.swapchain_image_views[fi].inner)
+            .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .clear_value(vk::ClearValue::default())
+            .build()];
+        let depth_attachment = vk::RenderingAttachmentInfo::builder()
+            .image_view(canvas.depth_image_views[fi].inner)
+            .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .clear_value(depth_clear_value);
+        let rendering_info = vk::RenderingInfo::builder()
             .render_area(render_area)
-            .clear_values(&clear_colors);
+            .layer_count(1)
+            .view_mask(0)
+            .color_attachments(&color_attachments)
+            .depth_attachment(&depth_attachment);
+        // TODO: Record draw calls on multiple threads into secondary command buffers
+        // Will also require adding VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT
+        // to the vk::RenderingInfo flags.
         unsafe {
             profiling::scope!("begin render pass");
-            self.device
-                .cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
+            self.device.cmd_begin_rendering(command_buffer, &rendering_info);
+        }
+
+        unsafe {
+            profiling::scope!("prepare swapchain image for rendering");
+            let subresource_range = vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1)
+                .build();
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[vk::ImageMemoryBarrier::builder()
+                    .src_access_mask(vk::AccessFlags::NONE)
+                    .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .image(canvas.swapchain_image_views[fi].image.inner())
+                    .subresource_range(subresource_range)
+                    .build()],
+            );
         }
 
         // Bind the shared descriptor set
@@ -406,8 +450,35 @@ impl Renderer {
         }
 
         unsafe {
+            profiling::scope!("prepare swapchain image for present");
+            let subresource_range = vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1)
+                .build();
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[vk::ImageMemoryBarrier::builder()
+                    .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                    .dst_access_mask(vk::AccessFlags::NONE)
+                    .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                    .image(canvas.swapchain_image_views[fi].image.inner())
+                    .subresource_range(subresource_range)
+                    .build()],
+            );
+        }
+
+        unsafe {
             profiling::scope!("end render pass");
-            self.device.cmd_end_render_pass(command_buffer);
+            self.device.cmd_end_rendering(command_buffer);
         }
 
         unsafe {
