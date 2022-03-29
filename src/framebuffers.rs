@@ -24,11 +24,44 @@ impl Framebuffers {
         let frame_count = swapchain.frame_count();
         let vk::Extent2D { width, height } = swapchain.extent;
 
+        let create_image_info = |format: vk::Format, usage: vk::ImageUsageFlags| {
+            vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(format)
+                .extent(vk::Extent3D { width, height, depth: 1 })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(pipelines.attachment_sample_count)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(usage)
+                .build()
+        };
+
+        let color_image_infos = (0..frame_count)
+            .map(|_| create_image_info(swapchain_format, vk::ImageUsageFlags::COLOR_ATTACHMENT))
+            .collect::<Vec<_>>();
+        let depth_image_infos = (0..frame_count)
+            .map(|_| create_image_info(physical_device.depth_format, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT))
+            .collect::<Vec<_>>();
+
+        let mut framebuffer_size = 0;
+        for framebuffer_image_info in color_image_infos.iter().chain(depth_image_infos.iter()) {
+            let image = unsafe { device.create_image(framebuffer_image_info, None) }.map_err(Error::VulkanImageCreation)?;
+            debug_utils::name_vulkan_object(device, image, format_args!("memory requirement querying temp img"));
+            let reqs = unsafe { device.get_image_memory_requirements(image) };
+            let size_mod = framebuffer_size % reqs.alignment;
+            if size_mod != 0 {
+                framebuffer_size += reqs.alignment - size_mod;
+            }
+            framebuffer_size += reqs.size;
+            unsafe { device.destroy_image(image, None) };
+        }
+
         let mut framebuffer_arena = VulkanArena::new(
             instance,
             device,
             physical_device.inner,
-            1_000_000_000, // FIXME: query framebuffer memory requirements for arena
+            framebuffer_size,
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
             format_args!("framebuffer arena ({width}x{height}, {swapchain_format:?}, {frame_count} frames)"),
@@ -60,20 +93,6 @@ impl Framebuffers {
             }
         };
 
-        let mut create_image = |format: vk::Format, usage: vk::ImageUsageFlags| {
-            let image_create_info = vk::ImageCreateInfo::builder()
-                .image_type(vk::ImageType::TYPE_2D)
-                .format(format)
-                .extent(vk::Extent3D { width, height, depth: 1 })
-                .mip_levels(1)
-                .array_layers(1)
-                .samples(pipelines.attachment_sample_count)
-                .tiling(vk::ImageTiling::OPTIMAL)
-                .usage(usage);
-            // "tbd" is changed to the real name right before framebuffer creation.
-            framebuffer_arena.create_image(*image_create_info, format_args!("tbd"))
-        };
-
         // TODO(med): Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
         let swapchain_image_views = swapchain
@@ -83,8 +102,9 @@ impl Framebuffers {
             .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain_format))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let color_images = (0..swapchain_image_views.len())
-            .map(|_| create_image(swapchain_format, vk::ImageUsageFlags::COLOR_ATTACHMENT))
+        let color_images = color_image_infos
+            .into_iter()
+            .map(|create_info| framebuffer_arena.create_image(create_info, format_args!("")))
             .collect::<Result<Vec<_>, Error>>()?;
         let color_image_views = color_images
             .into_iter()
@@ -92,8 +112,9 @@ impl Framebuffers {
             .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain_format))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let depth_images = (0..swapchain_image_views.len())
-            .map(|_| create_image(physical_device.depth_format, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT))
+        let depth_images = depth_image_infos
+            .into_iter()
+            .map(|create_info| framebuffer_arena.create_image(create_info, format_args!("")))
             .collect::<Result<Vec<_>, Error>>()?;
         let depth_image_views = depth_images
             .into_iter()
