@@ -2,7 +2,7 @@ use crate::debug_utils;
 use crate::descriptors::Descriptors;
 use crate::pipeline_parameters::PushConstantStruct;
 use crate::vulkan_raii::{CommandBuffer, CommandPool, Device, Fence, Semaphore};
-use crate::{Camera, Canvas, Error, PhysicalDevice, PipelineIndex, Pipelines, Scene, VulkanArena};
+use crate::{Error, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
 use ash::{vk, Instance};
 use glam::Mat4;
 use std::mem;
@@ -44,9 +44,6 @@ pub struct Renderer {
     command_pool: PerFrame<Rc<CommandPool>>,
     command_buffers_in_use: PerFrame<Vec<CommandBuffer>>,
     command_buffers_unused: PerFrame<Vec<CommandBuffer>>,
-
-    // Renderer relies on the canvas frame count.
-    _canvas: Rc<Canvas>,
 }
 
 impl Renderer {
@@ -60,10 +57,9 @@ impl Renderer {
     /// The inner tuples consist of: whether the gpu is the one picked
     /// in this function call, the display name, and the id passed to
     /// a new [Gpu] when recreating it with a new physical device.
-    pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice, canvas: &Rc<Canvas>) -> Result<Renderer, Error> {
+    pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice, frames: u32) -> Result<Renderer, Error> {
         profiling::scope!("new_gpu");
 
-        let frames = canvas.frame_count;
         let ready_for_present = (1..frames + 1)
             .map(|nth| {
                 let semaphore = unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
@@ -137,8 +133,6 @@ impl Renderer {
             command_pool,
             command_buffers_in_use: (0..frames).map(|_| Vec::new()).collect::<Vec<Vec<_>>>(),
             command_buffers_unused: (0..frames).map(|_| Vec::new()).collect::<Vec<Vec<_>>>(),
-
-            _canvas: canvas.clone(),
         })
     }
 
@@ -147,14 +141,13 @@ impl Renderer {
     /// After ensuring that the next frame can be rendered, this also
     /// frees the resources that can now be freed up.
     #[profiling::function]
-    pub fn wait_frame(&mut self, canvas: &Canvas) -> Result<FrameIndex, Error> {
+    pub fn wait_frame(&mut self, swapchain: &Swapchain) -> Result<FrameIndex, Error> {
         let (image_index, _) = unsafe {
             profiling::scope!("acquire next image");
             let fence = self.frame_start_fence.inner;
-            canvas
-                .swapchain
-                .device
-                .acquire_next_image(canvas.swapchain.inner, u64::MAX, vk::Semaphore::null(), fence)
+            swapchain
+                .device()
+                .acquire_next_image(swapchain.inner(), u64::MAX, vk::Semaphore::null(), fence)
                 .map_err(Error::VulkanAcquireImage)
         }?;
         let frame_index = FrameIndex::new(image_index as usize);
@@ -173,24 +166,21 @@ impl Renderer {
         Ok(frame_index)
     }
 
-    /// Queue up all the rendering commands.
-    ///
-    /// The rendered frame will appear on the screen some time in the
-    /// future. Use [Gpu::wait_frame] to block until that
-    /// happens.
     #[profiling::function]
     pub fn render_frame(
         &mut self,
         frame_index: FrameIndex,
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
-        canvas: &Canvas,
-        camera: &Camera,
+        canvas: &Framebuffers,
         scene: &Scene,
         debug_value: u32,
     ) -> Result<(), Error> {
         let fi = frame_index.index;
-        camera.update(descriptors, canvas, &mut self.temp_arena[fi], frame_index)?;
+        let vk::Extent2D { width, height } = canvas.extent;
+        scene
+            .camera
+            .upload(descriptors, width as f32, height as f32, &mut self.temp_arena[fi], frame_index)?;
 
         let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, canvas, scene, debug_value)?;
 
@@ -205,17 +195,22 @@ impl Renderer {
             self.device
                 .queue_submit(self.device.graphics_queue, &submit_infos, self.frame_end_fence[fi].inner)
                 .map_err(Error::VulkanQueueSubmit)
-        }?;
+        }
+    }
 
-        let swapchains = [canvas.swapchain.inner];
+    #[profiling::function]
+    pub fn present_frame(&mut self, frame_index: FrameIndex, swapchain: &Swapchain) -> Result<(), Error> {
+        let fi = frame_index.index;
+        let wait_semaphores = [self.ready_for_present[fi].inner];
+        let swapchains = [swapchain.inner()];
         let image_indices = [frame_index.index as u32];
         let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(&signal_semaphores)
+            .wait_semaphores(&wait_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
         let present_result = unsafe {
             profiling::scope!("queue present");
-            canvas.swapchain.device.queue_present(self.device.surface_queue, &present_info)
+            swapchain.device().queue_present(self.device.surface_queue, &present_info)
         };
 
         match present_result {
@@ -233,13 +228,13 @@ impl Renderer {
         frame_index: FrameIndex,
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
-        canvas: &Canvas,
+        framebuffers: &Framebuffers,
         scene: &Scene,
         debug_value: u32,
     ) -> Result<vk::CommandBuffer, Error> {
         let fi = frame_index.index;
         let temp_arena = &mut self.temp_arena[fi];
-        let framebuffer = &canvas.framebuffers[frame_index.index];
+        let framebuffer = &framebuffers.inner[frame_index.index];
 
         descriptors.write_descriptors(frame_index);
 
@@ -292,16 +287,16 @@ impl Renderer {
         }
 
         let viewports = [vk::Viewport::builder()
-            .width(canvas.extent.width as f32)
-            .height(canvas.extent.height as f32)
+            .width(framebuffers.extent.width as f32)
+            .height(framebuffers.extent.height as f32)
             .min_depth(0.0)
             .max_depth(1.0)
             .build()];
-        let scissors = [vk::Rect2D::builder().extent(canvas.extent).build()];
+        let scissors = [vk::Rect2D::builder().extent(framebuffers.extent).build()];
         unsafe { self.device.cmd_set_viewport_with_count(command_buffer, &viewports) };
         unsafe { self.device.cmd_set_scissor_with_count(command_buffer, &scissors) };
 
-        let render_area = vk::Rect2D::builder().extent(canvas.extent).build();
+        let render_area = vk::Rect2D::builder().extent(framebuffers.extent).build();
         let mut depth_clear_value = vk::ClearValue::default();
         depth_clear_value.depth_stencil.depth = 0.0;
         let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];

@@ -1,0 +1,160 @@
+use crate::debug_utils;
+use crate::vulkan_raii::{self, AnyImage, Device, Surface};
+use crate::{Error, PhysicalDevice};
+use ash::extensions::khr;
+use ash::{vk, Entry, Instance};
+use std::rc::Rc;
+
+pub struct SwapchainSettings {
+    pub extent: vk::Extent2D,
+    pub immediate_present: bool,
+}
+
+pub struct Swapchain {
+    pub extent: vk::Extent2D,
+    pub(crate) images: Vec<Rc<AnyImage>>,
+    inner: Rc<vulkan_raii::Swapchain>,
+}
+
+impl Swapchain {
+    pub fn new(
+        entry: &Entry,
+        instance: &Instance,
+        surface: &Rc<Surface>,
+        device: &Rc<Device>,
+        physical_device: &PhysicalDevice,
+        old_swapchain: Option<&Swapchain>,
+        settings: &SwapchainSettings,
+    ) -> Result<Swapchain, Error> {
+        let surface_ext = khr::Surface::new(entry, instance);
+        let swapchain_ext = khr::Swapchain::new(instance, &device.inner);
+        let queue_family_indices = [
+            physical_device.graphics_queue_family.index,
+            physical_device.surface_queue_family.index,
+        ];
+        let (swapchain, extent) = create_swapchain(
+            &surface_ext,
+            &swapchain_ext,
+            surface.inner,
+            old_swapchain.map(|r| r.inner.inner),
+            physical_device,
+            &queue_family_indices,
+            settings,
+        )?;
+        let swapchain = Rc::new(vulkan_raii::Swapchain {
+            inner: swapchain,
+            device: swapchain_ext.clone(),
+            surface: surface.clone(),
+        });
+
+        let swapchain_format = physical_device.swapchain_format;
+        let vk::Extent2D { width, height } = extent;
+        let images = unsafe { swapchain_ext.get_swapchain_images(swapchain.inner) }
+            .map_err(Error::VulkanGetSwapchainImages)?
+            .into_iter()
+            .map(|image| Rc::new(AnyImage::Swapchain(image, swapchain.clone())))
+            .collect::<Vec<_>>();
+        let frame_count = images.len() as u32;
+        debug_utils::name_vulkan_object(
+            device,
+            swapchain.inner,
+            format_args!("{width}x{height}, {swapchain_format:?}, {frame_count} frames"),
+        );
+
+        Ok(Swapchain {
+            extent,
+            images,
+            inner: swapchain,
+        })
+    }
+
+    pub fn frame_count(&self) -> u32 {
+        self.images.len() as u32
+    }
+
+    /// Returns true if all the Rc's owned by this Swapchain would be dropped if
+    /// this Swapchain was dropped. This should be asserted before dropping when
+    /// the swapchain is supposed to be properly disposed of.
+    ///
+    /// Generally, this will return false if the Framebuffers created from this
+    /// Swapchain are not dropped yet.
+    pub fn no_external_refs(&self) -> bool {
+        Rc::strong_count(&self.inner) == self.images.len() + 1 && self.images.iter().all(|image| Rc::strong_count(image) == 1)
+    }
+
+    pub(crate) fn inner(&self) -> vk::SwapchainKHR {
+        self.inner.inner
+    }
+
+    pub(crate) fn device(&self) -> &khr::Swapchain {
+        &self.inner.device
+    }
+}
+
+#[profiling::function]
+fn create_swapchain(
+    surface_ext: &khr::Surface,
+    swapchain_ext: &khr::Swapchain,
+    surface: vk::SurfaceKHR,
+    old_swapchain: Option<vk::SwapchainKHR>,
+    physical_device: &PhysicalDevice,
+    queue_family_indices: &[u32],
+    settings: &SwapchainSettings,
+) -> Result<(vk::SwapchainKHR, vk::Extent2D), Error> {
+    let present_modes = unsafe { surface_ext.get_physical_device_surface_present_modes(physical_device.inner, surface) }
+        .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)?;
+    let mut present_mode = vk::PresentModeKHR::FIFO;
+    if settings.immediate_present {
+        // TODO(med): Remove immediate present, use proper gpu profiling instead.
+        if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
+            present_mode = vk::PresentModeKHR::MAILBOX;
+        } else if present_modes.contains(&vk::PresentModeKHR::IMMEDIATE) {
+            present_mode = vk::PresentModeKHR::IMMEDIATE;
+        }
+    }
+
+    let surface_capabilities = unsafe {
+        surface_ext
+            .get_physical_device_surface_capabilities(physical_device.inner, surface)
+            .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
+    }?;
+    let unset_extent = vk::Extent2D {
+        width: u32::MAX,
+        height: u32::MAX,
+    };
+    let image_extent = if surface_capabilities.current_extent != unset_extent {
+        surface_capabilities.current_extent
+    } else {
+        settings.extent
+    };
+    let mut min_image_count = 2.max(surface_capabilities.min_image_count);
+    if surface_capabilities.max_image_count > 0 {
+        min_image_count = min_image_count.min(surface_capabilities.max_image_count)
+    }
+
+    let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+        .surface(surface)
+        .min_image_count(min_image_count)
+        .image_format(physical_device.swapchain_format)
+        .image_color_space(physical_device.swapchain_color_space)
+        .image_array_layers(1)
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+        .pre_transform(vk::SurfaceTransformFlagsKHR::IDENTITY)
+        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+        .present_mode(present_mode)
+        .clipped(true)
+        .image_extent(image_extent);
+    if queue_family_indices[0] != queue_family_indices[1] {
+        swapchain_create_info = swapchain_create_info
+            .image_sharing_mode(vk::SharingMode::CONCURRENT)
+            .queue_family_indices(queue_family_indices);
+    } else {
+        swapchain_create_info = swapchain_create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
+    }
+    if let Some(old_swapchain) = old_swapchain {
+        swapchain_create_info = swapchain_create_info.old_swapchain(old_swapchain);
+    }
+    let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }.map_err(Error::VulkanSwapchainCreation)?;
+
+    Ok((swapchain, swapchain_create_info.image_extent))
+}

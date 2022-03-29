@@ -4,27 +4,28 @@ use crate::Material;
 use glam::Mat4;
 use std::collections::HashMap;
 
+mod camera;
+pub use camera::Camera;
+
 type MeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
 
 /// A container for the meshes rendered during a particular frame, and
 /// the transforms those meshes are rendered with.
 pub struct Scene<'a> {
+    pub camera: Camera,
     pub pipeline_map: PipelineMap<MeshMap<'a>>,
 }
 
-impl<'a> Default for Scene<'a> {
-    fn default() -> Scene<'a> {
-        Scene::new()
+impl Default for Scene<'_> {
+    fn default() -> Self {
+        Scene {
+            camera: Camera::default(),
+            pipeline_map: PipelineMap::new::<(), _>(|_| Ok(HashMap::new())).unwrap(),
+        }
     }
 }
 
 impl<'a> Scene<'a> {
-    pub fn new() -> Scene<'a> {
-        Scene {
-            pipeline_map: PipelineMap::new::<(), _>(|_| Ok(HashMap::new())).unwrap(),
-        }
-    }
-
     #[profiling::function]
     pub fn queue(&mut self, mesh: &'a Mesh, material: &'a Material, transform: Mat4) {
         let mesh_map = self.pipeline_map.get_mut(mesh.pipeline);

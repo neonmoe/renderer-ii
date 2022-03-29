@@ -90,21 +90,22 @@ fn fallible_main() -> anyhow::Result<()> {
     drop(resources);
 
     let pipelines = neonvk::Pipelines::new(&device, physical_device, &descriptors)?;
-    let mut canvas = Rc::new(neonvk::Canvas::new(
+    let mut swapchain_settings = neonvk::SwapchainSettings {
+        extent: neonvk::vk::Extent2D { width, height },
+        immediate_present: false,
+    };
+    let mut swapchain = neonvk::Swapchain::new(
         &instance.entry,
         &instance.inner,
         &surface,
         &device,
         physical_device,
-        &pipelines,
         None,
-        width,
-        height,
-        false,
-    )?);
-    let mut renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, &canvas)?;
-    descriptors = neonvk::Descriptors::from_existing(descriptors, canvas.frame_count)?;
-    let camera = neonvk::Camera::default();
+        &swapchain_settings,
+    )?;
+    let mut framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, physical_device, &pipelines, &swapchain)?;
+    let mut renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, swapchain.frame_count())?;
+    descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain.frame_count())?;
 
     let mut frame_instants = Vec::with_capacity(10_000);
     frame_instants.push(Instant::now());
@@ -112,7 +113,6 @@ fn fallible_main() -> anyhow::Result<()> {
     window.show();
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut size_changed = false;
-    let mut immediate_present = false;
     let mut debug_value = 0;
     'running: loop {
         profiling::finish_frame!();
@@ -128,7 +128,7 @@ fn fallible_main() -> anyhow::Result<()> {
                 Event::KeyDown {
                     keycode: Some(Keycode::I), ..
                 } => {
-                    immediate_present = !immediate_present;
+                    swapchain_settings.immediate_present = !swapchain_settings.immediate_present;
                     size_changed = true;
                 }
 
@@ -154,38 +154,43 @@ fn fallible_main() -> anyhow::Result<()> {
         if size_changed {
             device.wait_idle()?;
             let (width, height) = window.vulkan_drawable_size();
-            let old_canvas = canvas;
-            canvas = Rc::new(neonvk::Canvas::new(
+            drop(renderer);
+            drop(framebuffers);
+            let old_swapchain = swapchain;
+            swapchain_settings.extent = neonvk::vk::Extent2D { width, height };
+            swapchain = neonvk::Swapchain::new(
                 &instance.entry,
                 &instance.inner,
                 &surface,
                 &device,
                 physical_device,
-                &pipelines,
-                Some(&old_canvas),
-                width,
-                height,
-                immediate_present,
-            )?);
-            drop(renderer);
-            assert_last_drop(old_canvas);
-            renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, &canvas)?;
-            if canvas.frame_count != descriptors.frame_count {
-                descriptors = neonvk::Descriptors::from_existing(descriptors, canvas.frame_count)?;
+                Some(&old_swapchain),
+                &swapchain_settings,
+            )?;
+            assert!(old_swapchain.no_external_refs());
+            drop(old_swapchain);
+            framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, physical_device, &pipelines, &swapchain)?;
+            renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, swapchain.frame_count())?;
+            if swapchain.frame_count() != descriptors.frame_count {
+                descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain.frame_count())?;
             }
             size_changed = false;
         }
 
-        let mut scene = neonvk::Scene::new();
+        let mut scene = neonvk::Scene::default();
         for (mesh, material, transform) in sponza_model.mesh_iter() {
             scene.queue(mesh, material, transform);
         }
 
-        let frame_index = renderer.wait_frame(&canvas)?;
-        match renderer.render_frame(frame_index, &mut descriptors, &pipelines, &canvas, &camera, &scene, debug_value) {
+        let frame_index = renderer.wait_frame(&swapchain)?;
+        match renderer.render_frame(frame_index, &mut descriptors, &pipelines, &framebuffers, &scene, debug_value) {
+            Ok(_) => {}
+            Err(err) => log::warn!("Error during regular frame rendering: {}", err),
+        }
+        match renderer.present_frame(frame_index, &swapchain) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
-            Err(err) => log::warn!("Error during regular frame rendering: {}", err),
+            Err(err) => log::warn!("Error during regular frame present: {}", err),
         }
 
         frame_instants.push(Instant::now());
@@ -219,7 +224,8 @@ fn fallible_main() -> anyhow::Result<()> {
 
     // Per-resize objects.
     drop(renderer);
-    assert_last_drop(canvas);
+    drop(framebuffers);
+    drop(swapchain);
     drop(pipelines);
 
     // Per-device-objects.

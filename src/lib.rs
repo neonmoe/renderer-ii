@@ -21,11 +21,8 @@ pub use arena::VulkanArena;
 
 pub use ash::vk;
 
-mod camera;
-pub use camera::Camera;
-
-mod canvas;
-pub use canvas::Canvas;
+mod framebuffers;
+pub use framebuffers::Framebuffers;
 
 mod descriptors;
 pub use descriptors::{Descriptors, Material, PbrDefaults};
@@ -58,6 +55,9 @@ pub use renderer::{FrameIndex, Renderer};
 
 mod scene;
 pub use scene::Scene;
+
+mod swapchain;
+pub use swapchain::{Swapchain, SwapchainSettings};
 
 mod uploader;
 pub use uploader::Uploader;

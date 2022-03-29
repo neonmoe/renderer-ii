@@ -1,4 +1,4 @@
-use crate::{Canvas, Descriptors, Error, FrameIndex, PipelineIndex, VulkanArena};
+use crate::{Descriptors, Error, FrameIndex, PipelineIndex, VulkanArena};
 use ash::vk;
 use glam::{Mat4, Quat, Vec3};
 use std::mem;
@@ -10,9 +10,9 @@ struct GlobalTransforms {
 }
 
 impl GlobalTransforms {
-    fn new(canvas: &Canvas) -> GlobalTransforms {
+    fn new(width: f32, height: f32) -> GlobalTransforms {
         let fov = 74f32.to_radians();
-        let aspect_ratio = canvas.extent.width as f32 / canvas.extent.height as f32;
+        let aspect_ratio = width / height;
         // Lower values seem to cause Z-fighting in the sponza scene.
         // Might be better to use two projection matrixes for e.g. 0.1->5, 5->inf.
         let near = 0.5;
@@ -37,10 +37,11 @@ impl Camera {
     /// Updates Vulkan buffers with the current state of the
     /// [Camera] and [Canvas].
     #[profiling::function]
-    pub(crate) fn update(
+    pub(crate) fn upload(
         &self,
         descriptors: &Descriptors,
-        canvas: &Canvas,
+        width: f32,
+        height: f32,
         temp_arena: &mut VulkanArena,
         frame_index: FrameIndex,
     ) -> Result<(), Error> {
@@ -56,7 +57,7 @@ impl Camera {
 
         {
             profiling::scope!("write uniform buffer");
-            let src = &[GlobalTransforms::new(canvas)];
+            let src = &[GlobalTransforms::new(width, height)];
             unsafe { temp_buffer.write(src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
         }
 
