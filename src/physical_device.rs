@@ -21,6 +21,9 @@ pub struct PhysicalDevice {
     pub graphics_queue_family: QueueFamily,
     pub surface_queue_family: QueueFamily,
     pub transfer_queue_family: QueueFamily,
+    pub swapchain_format: vk::Format,
+    pub swapchain_color_space: vk::ColorSpaceKHR,
+    pub depth_format: vk::Format,
     pub extensions: Vec<String>,
 }
 
@@ -39,7 +42,7 @@ pub fn get_physical_devices(entry: &Entry, instance: &Instance, surface: vk::Sur
         .map_err(Error::VulkanEnumeratePhysicalDevices)?
         .into_iter()
         .filter_map(|physical_device| filter_capable_device(instance, &surface_ext, surface, physical_device))
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, Error>>()?;
     capable_physical_devices.sort_by(|a, b| {
         let type_score = |properties: &vk::PhysicalDeviceProperties| match properties.device_type {
             vk::PhysicalDeviceType::DISCRETE_GPU => 30,
@@ -61,7 +64,7 @@ fn filter_capable_device(
     surface_ext: &khr::Surface,
     surface: vk::SurfaceKHR,
     physical_device: vk::PhysicalDevice,
-) -> Option<PhysicalDevice> {
+) -> Option<Result<PhysicalDevice, Error>> {
     let extensions = get_extensions(instance, physical_device);
     if extensions.iter().all(|s| s != "VK_KHR_swapchain") {
         return None;
@@ -104,13 +107,42 @@ fn filter_capable_device(
         return None;
     }
 
-    let format_properties = unsafe { instance.get_physical_device_format_properties(physical_device, vk::Format::R8G8B8A8_SRGB) };
-    match format_properties.optimal_tiling_features {
-        features if !features.contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR) => {
-            return None;
-        }
-        _ => {}
+    let has_feature = |format: vk::Format, feature: vk::FormatFeatureFlags| -> bool {
+        let format_properties = unsafe { instance.get_physical_device_format_properties(physical_device, format) };
+        format_properties.optimal_tiling_features.contains(feature)
+    };
+
+    if !has_feature(vk::Format::R8G8B8A8_SRGB, vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR) {
+        return None;
     }
+
+    // From the spec:
+    // VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT feature...
+    // ...must be supported for at least one of VK_FORMAT_D24_UNORM_S8_UINT and VK_FORMAT_D32_SFLOAT_S8_UINT.
+    let depth_format = if has_feature(vk::Format::D24_UNORM_S8_UINT, vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT) {
+        vk::Format::D24_UNORM_S8_UINT
+    } else if has_feature(vk::Format::D32_SFLOAT_S8_UINT, vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT) {
+        vk::Format::D32_SFLOAT_S8_UINT
+    } else {
+        return None;
+    };
+
+    let (swapchain_format, swapchain_color_space) = {
+        let surface_formats = match unsafe {
+            surface_ext
+                .get_physical_device_surface_formats(physical_device, surface)
+                .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
+        } {
+            Ok(formats) => formats,
+            Err(err) => return Some(Err(err)),
+        };
+        if let Some(format) = surface_formats.iter().find(|format| is_uncompressed_srgb(format.format)) {
+            (format.format, format.color_space)
+        } else {
+            log::warn!("No SRGB format found for swapchain. The image may look too dark.");
+            (surface_formats[0].format, surface_formats[0].color_space)
+        }
+    };
 
     if let (Some(graphics_queue_family), Some(surface_queue_family), Some(transfer_queue_family)) =
         (graphics_queue_family, surface_queue_family, transfer_queue_family)
@@ -126,7 +158,7 @@ fn filter_capable_device(
         let name = format!("{}{}", name, pd_type);
         let uuid = GpuId(properties.pipeline_cache_uuid);
 
-        Some(PhysicalDevice {
+        Some(Ok(PhysicalDevice {
             name,
             uuid,
             inner: physical_device,
@@ -134,8 +166,11 @@ fn filter_capable_device(
             graphics_queue_family,
             surface_queue_family,
             transfer_queue_family,
+            swapchain_format,
+            swapchain_color_space,
+            depth_format,
             extensions,
-        })
+        }))
     } else {
         None
     }
@@ -159,4 +194,17 @@ fn get_extensions(instance: &Instance, physical_device: vk::PhysicalDevice) -> V
 
 fn get_device_name(properties: &vk::PhysicalDeviceProperties) -> std::borrow::Cow<'_, str> {
     unsafe { CStr::from_ptr((&properties.device_name[..]).as_ptr()) }.to_string_lossy()
+}
+
+fn is_uncompressed_srgb(format: vk::Format) -> bool {
+    matches!(
+        format,
+        vk::Format::R8_SRGB
+            | vk::Format::R8G8_SRGB
+            | vk::Format::R8G8B8_SRGB
+            | vk::Format::R8G8B8A8_SRGB
+            | vk::Format::B8G8R8_SRGB
+            | vk::Format::B8G8R8A8_SRGB
+            | vk::Format::A8B8G8R8_SRGB_PACK32
+    )
 }

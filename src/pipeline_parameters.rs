@@ -17,24 +17,24 @@ pub struct PushConstantStruct {
 unsafe impl bytemuck::Zeroable for PushConstantStruct {}
 unsafe impl bytemuck::Pod for PushConstantStruct {}
 
-const ALL_PIPELINES: [Pipeline; Pipeline::Count as usize] = [Pipeline::Gltf];
+const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [PipelineIndex::Gltf];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Pipeline {
+pub enum PipelineIndex {
     Gltf,
     #[doc(hidden)]
     Count,
 }
 
-impl Pipeline {
+impl PipelineIndex {
     /// A pipeline whose first descriptor set is written to and read
     /// from, where the shared descriptor set is concerned.
-    pub const SHARED_DESCRIPTOR_PIPELINE: Pipeline = Pipeline::Gltf;
+    pub const SHARED_DESCRIPTOR_PIPELINE: PipelineIndex = PipelineIndex::Gltf;
 }
 
-/// Maps every pipeline to a T.
+/// Maps every PipelineIndex to a T.
 pub struct PipelineMap<T> {
-    buffer: [MaybeUninit<T>; Pipeline::Count as usize],
+    buffer: [MaybeUninit<T>; PipelineIndex::Count as usize],
 }
 
 impl<T> Drop for PipelineMap<T> {
@@ -46,21 +46,21 @@ impl<T> Drop for PipelineMap<T> {
 }
 
 impl<T> PipelineMap<T> {
-    pub fn new<E, F: FnMut(Pipeline) -> Result<T, E>>(mut f: F) -> Result<PipelineMap<T>, E> {
-        let mut buffer = [MaybeUninit::uninit(); Pipeline::Count as usize];
+    pub fn new<E, F: FnMut(PipelineIndex) -> Result<T, E>>(mut f: F) -> Result<PipelineMap<T>, E> {
+        let mut buffer = [MaybeUninit::uninit(); PipelineIndex::Count as usize];
         for (value, pipeline) in buffer.iter_mut().zip(ALL_PIPELINES) {
             value.write(f(pipeline)?);
         }
         Ok(PipelineMap { buffer })
     }
     pub const fn len(&self) -> usize {
-        Pipeline::Count as usize
+        PipelineIndex::Count as usize
     }
-    pub fn get(&self, pipeline: Pipeline) -> &T {
+    pub fn get(&self, pipeline: PipelineIndex) -> &T {
         // Safety: initialized in PipelineMap::new
         unsafe { self.buffer[pipeline as usize].assume_init_ref() }
     }
-    pub fn get_mut(&mut self, pipeline: Pipeline) -> &mut T {
+    pub fn get_mut(&mut self, pipeline: PipelineIndex) -> &mut T {
         // Safety: initialized in PipelineMap::new
         unsafe { self.buffer[pipeline as usize].assume_init_mut() }
     }
@@ -68,7 +68,7 @@ impl<T> PipelineMap<T> {
         // Safety: initialized in PipelineMap::new
         self.buffer.iter().map(|o| unsafe { o.assume_init_ref() })
     }
-    pub fn iter_with_pipeline(&self) -> impl Iterator<Item = (Pipeline, &T)> {
+    pub fn iter_with_pipeline(&self) -> impl Iterator<Item = (PipelineIndex, &T)> {
         self.buffer
             .iter()
             // Safety: initialized in PipelineMap::new

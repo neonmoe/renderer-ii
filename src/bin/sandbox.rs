@@ -47,14 +47,14 @@ fn fallible_main() -> anyhow::Result<()> {
 
     let (width, height) = window.vulkan_drawable_size();
 
-    let driver = neonvk::Driver::new(&window)?;
-    let surface = Rc::new(neonvk::create_surface(&driver.entry, &driver.instance, &window)?);
-    let physical_devices = neonvk::get_physical_devices(&driver.entry, &driver.instance, surface.inner)?;
+    let instance = neonvk::Instance::new(&window)?;
+    let surface = Rc::new(neonvk::create_surface(&instance.entry, &instance.inner, &window)?);
+    let physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner)?;
     let physical_device = &physical_devices[0];
-    let device = Rc::new(neonvk::create_device(&driver.instance, physical_device)?);
+    let device = Rc::new(neonvk::create_device(&instance.inner, physical_device)?);
 
     let mut uploader = neonvk::Uploader::new(
-        &driver.instance,
+        &instance.inner,
         &device,
         device.graphics_queue,
         device.transfer_queue,
@@ -62,7 +62,7 @@ fn fallible_main() -> anyhow::Result<()> {
         300_000_000,
     )?;
     let mut assets_arena = neonvk::VulkanArena::new(
-        &driver.instance,
+        &instance.inner,
         &device,
         physical_device.inner,
         500_000_000,
@@ -89,19 +89,20 @@ fn fallible_main() -> anyhow::Result<()> {
     drop(uploader);
     drop(resources);
 
+    let pipelines = neonvk::Pipelines::new(&device, physical_device, &descriptors)?;
     let mut canvas = Rc::new(neonvk::Canvas::new(
-        &driver.entry,
-        &driver.instance,
+        &instance.entry,
+        &instance.inner,
         &surface,
         &device,
         physical_device,
-        &descriptors,
+        &pipelines,
         None,
         width,
         height,
         false,
     )?);
-    let mut renderer = neonvk::Renderer::new(&driver.instance, &device, physical_device, &canvas)?;
+    let mut renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, &canvas)?;
     descriptors = neonvk::Descriptors::from_existing(descriptors, canvas.frame_count)?;
     let camera = neonvk::Camera::default();
 
@@ -155,12 +156,12 @@ fn fallible_main() -> anyhow::Result<()> {
             let (width, height) = window.vulkan_drawable_size();
             let old_canvas = canvas;
             canvas = Rc::new(neonvk::Canvas::new(
-                &driver.entry,
-                &driver.instance,
+                &instance.entry,
+                &instance.inner,
                 &surface,
                 &device,
                 physical_device,
-                &descriptors,
+                &pipelines,
                 Some(&old_canvas),
                 width,
                 height,
@@ -168,7 +169,7 @@ fn fallible_main() -> anyhow::Result<()> {
             )?);
             drop(renderer);
             assert_last_drop(old_canvas);
-            renderer = neonvk::Renderer::new(&driver.instance, &device, physical_device, &canvas)?;
+            renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, &canvas)?;
             if canvas.frame_count != descriptors.frame_count {
                 descriptors = neonvk::Descriptors::from_existing(descriptors, canvas.frame_count)?;
             }
@@ -181,7 +182,7 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         let frame_index = renderer.wait_frame(&canvas)?;
-        match renderer.render_frame(frame_index, &mut descriptors, &canvas, &camera, &scene, debug_value) {
+        match renderer.render_frame(frame_index, &mut descriptors, &pipelines, &canvas, &camera, &scene, debug_value) {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
@@ -219,6 +220,7 @@ fn fallible_main() -> anyhow::Result<()> {
     // Per-resize objects.
     drop(renderer);
     assert_last_drop(canvas);
+    drop(pipelines);
 
     // Per-device-objects.
     drop(sponza_model);

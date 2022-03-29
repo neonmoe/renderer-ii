@@ -3,7 +3,7 @@ use crate::descriptors::PipelineSpecificData;
 use crate::image_loading::{self, TextureKind};
 use crate::mesh::Mesh;
 use crate::vulkan_raii::{Device, ImageView};
-use crate::{Descriptors, Error, Material, Pipeline, Uploader};
+use crate::{Descriptors, Error, Material, PipelineIndex, Uploader};
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -350,7 +350,7 @@ fn create_gltf(
                 let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
                 Material::new(
                     descriptors,
-                    Pipeline::Gltf,
+                    PipelineIndex::Gltf,
                     PipelineSpecificData::Gltf {
                         base_color,
                         metallic_roughness,
@@ -431,7 +431,7 @@ fn create_primitive(
         arena,
         &[pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
         index_buffer,
-        Pipeline::Gltf,
+        PipelineIndex::Gltf,
         name,
     )?;
 

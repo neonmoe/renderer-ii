@@ -1,5 +1,5 @@
 use crate::mesh::Mesh;
-use crate::pipeline::PipelineMap;
+use crate::pipeline_parameters::PipelineMap;
 use crate::Material;
 use glam::Mat4;
 use std::collections::HashMap;

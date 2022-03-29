@@ -1,37 +1,32 @@
 use crate::{debug_utils, Error};
-use ash::{vk, Entry, Instance};
+use ash::{vk, Entry};
 use raw_window_handle::HasRawWindowHandle;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
-/// Holds the Vulkan functions, instance and surface, acting as the
-/// basis for everything else rendering.
-///
-/// The name comes from the struct being the way to access the
-/// graphics driver.
-pub struct Driver {
+pub struct Instance {
     pub entry: Entry,
-    pub instance: Instance,
+    pub inner: ash::Instance,
     pub debug_utils_available: bool,
     debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
 
-impl Drop for Driver {
+impl Drop for Instance {
     #[profiling::function]
     fn drop(&mut self) {
         if let Some(debug_utils_messenger) = self.debug_utils_messenger.take() {
-            debug_utils::destroy_debug_utils_messenger(&self.entry, &self.instance, debug_utils_messenger);
+            debug_utils::destroy_debug_utils_messenger(&self.entry, &self.inner, debug_utils_messenger);
         }
 
         {
             profiling::scope!("destroy vulkan instance");
-            unsafe { self.instance.destroy_instance(None) };
+            unsafe { self.inner.destroy_instance(None) };
         }
     }
 }
 
-impl Driver {
-    pub fn new(window: &dyn HasRawWindowHandle) -> Result<Driver, Error> {
+impl Instance {
+    pub fn new(window: &dyn HasRawWindowHandle) -> Result<Instance, Error> {
         profiling::scope!("new_driver");
         // TODO(low): Missing Vulkan is not gracefully handled.
         let entry = unsafe { Entry::load().unwrap() };
@@ -98,9 +93,9 @@ impl Driver {
             None
         };
 
-        Ok(Driver {
+        Ok(Instance {
             entry,
-            instance,
+            inner: instance,
             debug_utils_available,
             debug_utils_messenger,
         })

@@ -1,5 +1,5 @@
 use crate::arena::{BufferAllocation, VulkanArena};
-use crate::{Error, Pipeline, Uploader};
+use crate::{Error, PipelineIndex, Uploader};
 use ash::vk;
 use glam::Vec4;
 use std::fmt::Arguments;
@@ -10,7 +10,7 @@ pub struct Mesh {
     /// Contains the vertices and indices.
     pub(crate) mesh_buffer: BufferAllocation,
 
-    pub pipeline: Pipeline,
+    pub pipeline: PipelineIndex,
     pub(crate) index_count: u32,
     pub(crate) indices_offset: vk::DeviceSize,
     pub(crate) index_type: vk::IndexType,
@@ -30,7 +30,7 @@ impl Mesh {
         arena: &mut VulkanArena,
         vertices: &[&[u8]],
         indices: &[u8],
-        pipeline: Pipeline,
+        pipeline: PipelineIndex,
         name: Arguments,
     ) -> Result<Mesh, Error> {
         profiling::scope!("new_mesh");

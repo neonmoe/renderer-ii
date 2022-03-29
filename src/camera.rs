@@ -1,4 +1,4 @@
-use crate::{Canvas, Descriptors, Error, FrameIndex, Pipeline, VulkanArena};
+use crate::{Canvas, Descriptors, Error, FrameIndex, PipelineIndex, VulkanArena};
 use ash::vk;
 use glam::{Mat4, Quat, Vec3};
 use std::mem;
@@ -60,7 +60,7 @@ impl Camera {
             unsafe { temp_buffer.write(src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
         }
 
-        let pipeline = Pipeline::SHARED_DESCRIPTOR_PIPELINE;
+        let pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
         descriptors.set_uniform_buffer(frame_index, pipeline, 0, 0, temp_buffer.buffer.inner);
         temp_arena.add_buffer(temp_buffer.buffer);
         Ok(())

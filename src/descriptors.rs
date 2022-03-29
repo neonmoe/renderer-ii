@@ -1,6 +1,6 @@
 use crate::image_loading::{self, TextureKind};
-use crate::pipeline::{
-    DescriptorSetLayoutParams, Pipeline, PipelineMap, PipelineParameters, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS,
+use crate::pipeline_parameters::{
+    DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS,
 };
 use crate::vulkan_raii::{DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 use crate::{debug_utils, Error, FrameIndex, Uploader, VulkanArena};
@@ -14,7 +14,7 @@ use std::rc::{Rc, Weak};
 /// this is held by [Descriptors], [Rc] by [Material](crate::Material).
 pub struct Material {
     pub array_index: u32,
-    pipeline: Pipeline,
+    pipeline: PipelineIndex,
     data: PipelineSpecificData,
 }
 
@@ -45,7 +45,7 @@ impl Hash for Material {
 }
 
 impl Material {
-    pub fn new(descriptors: &mut Descriptors, pipeline: Pipeline, data: PipelineSpecificData) -> Result<Rc<Material>, Error> {
+    pub fn new(descriptors: &mut Descriptors, pipeline: PipelineIndex, data: PipelineSpecificData) -> Result<Rc<Material>, Error> {
         let material_slot_array = descriptors.material_slots_per_pipeline.get_mut(pipeline);
         if let Some((i, slot)) = material_slot_array.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
             let material = Rc::new(Material {
@@ -184,49 +184,50 @@ impl Descriptors {
             device: device.clone(),
         });
 
-        let create_descriptor_set_layouts = |pl: Pipeline, sets: &[&[DescriptorSetLayoutParams]]| -> Result<DescriptorSetLayouts, Error> {
-            let samplers_vk = [sampler.inner];
-            let samplers_rc = vec![sampler.clone()];
+        let create_descriptor_set_layouts =
+            |pl: PipelineIndex, sets: &[&[DescriptorSetLayoutParams]]| -> Result<DescriptorSetLayouts, Error> {
+                let samplers_vk = [sampler.inner];
+                let samplers_rc = vec![sampler.clone()];
 
-            let descriptor_set_layouts = sets
-                .iter()
-                .enumerate()
-                .map(|(i, bindings)| {
-                    let binding_flags = bindings
-                        .iter()
-                        .map(|params| params.binding_flags)
-                        .collect::<Vec<vk::DescriptorBindingFlags>>();
-                    let bindings = bindings
-                        .iter()
-                        .map(|params| {
-                            let mut builder = vk::DescriptorSetLayoutBinding::builder()
-                                .descriptor_type(params.descriptor_type)
-                                .descriptor_count(params.descriptor_count)
-                                .stage_flags(params.stage_flags)
-                                .binding(params.binding);
-                            if params.descriptor_type == vk::DescriptorType::SAMPLER {
-                                builder = builder.immutable_samplers(&samplers_vk);
-                            }
-                            builder.build()
-                        })
-                        .collect::<Vec<vk::DescriptorSetLayoutBinding>>();
-                    let mut binding_flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&binding_flags);
-                    let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
-                        .push_next(&mut binding_flags)
-                        .bindings(&bindings);
-                    let dsl = unsafe { device.create_descriptor_set_layout(&create_info, None) }
-                        .map_err(Error::VulkanDescriptorSetLayoutCreation)?;
-                    debug_utils::name_vulkan_object(device, dsl, format_args!("set {i} for pipeline {pl:?}"));
-                    Ok(dsl)
+                let descriptor_set_layouts = sets
+                    .iter()
+                    .enumerate()
+                    .map(|(i, bindings)| {
+                        let binding_flags = bindings
+                            .iter()
+                            .map(|params| params.binding_flags)
+                            .collect::<Vec<vk::DescriptorBindingFlags>>();
+                        let bindings = bindings
+                            .iter()
+                            .map(|params| {
+                                let mut builder = vk::DescriptorSetLayoutBinding::builder()
+                                    .descriptor_type(params.descriptor_type)
+                                    .descriptor_count(params.descriptor_count)
+                                    .stage_flags(params.stage_flags)
+                                    .binding(params.binding);
+                                if params.descriptor_type == vk::DescriptorType::SAMPLER {
+                                    builder = builder.immutable_samplers(&samplers_vk);
+                                }
+                                builder.build()
+                            })
+                            .collect::<Vec<vk::DescriptorSetLayoutBinding>>();
+                        let mut binding_flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&binding_flags);
+                        let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
+                            .push_next(&mut binding_flags)
+                            .bindings(&bindings);
+                        let dsl = unsafe { device.create_descriptor_set_layout(&create_info, None) }
+                            .map_err(Error::VulkanDescriptorSetLayoutCreation)?;
+                        debug_utils::name_vulkan_object(device, dsl, format_args!("set {i} for pipeline {pl:?}"));
+                        Ok(dsl)
+                    })
+                    .collect::<Result<Vec<vk::DescriptorSetLayout>, Error>>()?;
+
+                Ok(DescriptorSetLayouts {
+                    inner: descriptor_set_layouts,
+                    device: device.clone(),
+                    immutable_samplers: samplers_rc,
                 })
-                .collect::<Result<Vec<vk::DescriptorSetLayout>, Error>>()?;
-
-            Ok(DescriptorSetLayouts {
-                inner: descriptor_set_layouts,
-                device: device.clone(),
-                immutable_samplers: samplers_rc,
-            })
-        };
+            };
 
         let pipeline_layouts = pipeline_layouts.map(Ok).unwrap_or_else(|| {
             PipelineMap::new::<Error, _>(|pipeline| {
@@ -338,7 +339,7 @@ impl Descriptors {
         }
     }
 
-    fn write_material(&self, frame_index: FrameIndex, pipeline: Pipeline, material: &Material) {
+    fn write_material(&self, frame_index: FrameIndex, pipeline: PipelineIndex, material: &Material) {
         match &material.data {
             PipelineSpecificData::Gltf {
                 base_color,
@@ -364,7 +365,7 @@ impl Descriptors {
     }
 
     #[profiling::function]
-    pub(crate) fn set_uniform_buffer(&self, frame_index: FrameIndex, pipeline: Pipeline, set: u32, binding: u32, buffer: vk::Buffer) {
+    pub(crate) fn set_uniform_buffer(&self, frame_index: FrameIndex, pipeline: PipelineIndex, set: u32, binding: u32, buffer: vk::Buffer) {
         let frame_idx = frame_index.index();
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[frame_idx].get(pipeline).inner[set_idx];
@@ -391,7 +392,7 @@ impl Descriptors {
     fn set_uniform_images(
         &self,
         frame_index: FrameIndex,
-        pipeline: Pipeline,
+        pipeline: PipelineIndex,
         set: u32,
         first_binding: u32,
         image_views: &[&ImageView],
@@ -420,7 +421,7 @@ impl Descriptors {
     }
 
     #[profiling::function]
-    pub(crate) fn descriptor_sets(&self, frame_index: FrameIndex, pipeline: Pipeline) -> &[vk::DescriptorSet] {
+    pub(crate) fn descriptor_sets(&self, frame_index: FrameIndex, pipeline: PipelineIndex) -> &[vk::DescriptorSet] {
         &self.descriptor_sets[frame_index.index()].get(pipeline).inner
     }
 }

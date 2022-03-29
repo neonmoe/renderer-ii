@@ -33,8 +33,8 @@ pub use descriptors::{Descriptors, Material, PbrDefaults};
 mod device;
 pub use device::create_device;
 
-mod driver;
-pub use driver::Driver;
+mod instance;
+pub use instance::Instance;
 
 mod error;
 pub use error::Error;
@@ -47,8 +47,11 @@ pub mod image_loading;
 mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 
-mod pipeline;
-pub use pipeline::Pipeline;
+mod pipelines;
+pub use pipelines::Pipelines;
+
+mod pipeline_parameters;
+pub use pipeline_parameters::PipelineIndex;
 
 mod renderer;
 pub use renderer::{FrameIndex, Renderer};

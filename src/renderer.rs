@@ -1,8 +1,8 @@
 use crate::debug_utils;
 use crate::descriptors::Descriptors;
-use crate::pipeline::PushConstantStruct;
+use crate::pipeline_parameters::PushConstantStruct;
 use crate::vulkan_raii::{CommandBuffer, CommandPool, Device, Fence, Semaphore};
-use crate::{Camera, Canvas, Error, PhysicalDevice, Pipeline, Scene, VulkanArena};
+use crate::{Camera, Canvas, Error, PhysicalDevice, PipelineIndex, Pipelines, Scene, VulkanArena};
 use ash::{vk, Instance};
 use glam::Mat4;
 use std::mem;
@@ -183,6 +183,7 @@ impl Renderer {
         &mut self,
         frame_index: FrameIndex,
         descriptors: &mut Descriptors,
+        pipelines: &Pipelines,
         canvas: &Canvas,
         camera: &Camera,
         scene: &Scene,
@@ -191,7 +192,7 @@ impl Renderer {
         let fi = frame_index.index;
         camera.update(descriptors, canvas, &mut self.temp_arena[fi], frame_index)?;
 
-        let command_buffer = self.record_command_buffer(frame_index, descriptors, canvas, scene, debug_value)?;
+        let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, canvas, scene, debug_value)?;
 
         let signal_semaphores = [self.ready_for_present[fi].inner];
         let command_buffers = [command_buffer];
@@ -231,6 +232,7 @@ impl Renderer {
         &mut self,
         frame_index: FrameIndex,
         descriptors: &mut Descriptors,
+        pipelines: &Pipelines,
         canvas: &Canvas,
         scene: &Scene,
         debug_value: u32,
@@ -304,7 +306,7 @@ impl Renderer {
         depth_clear_value.depth_stencil.depth = 0.0;
         let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
-            .render_pass(canvas.final_render_pass.inner)
+            .render_pass(pipelines.render_pass.inner)
             .framebuffer(framebuffer.inner)
             .render_area(render_area)
             .clear_values(&clear_colors);
@@ -316,7 +318,7 @@ impl Renderer {
 
         // Bind the shared descriptor set
         {
-            let pipeline = Pipeline::SHARED_DESCRIPTOR_PIPELINE;
+            let pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
             let shared_descriptor_set = descriptors.descriptor_sets(frame_index, pipeline)[0];
             unsafe {
                 profiling::scope!("bind shared descriptor set");
@@ -331,7 +333,7 @@ impl Renderer {
             }
         }
 
-        for (pipeline, meshes) in scene.pipeline_map.iter_with_pipeline() {
+        for (pl_index, meshes) in scene.pipeline_map.iter_with_pipeline() {
             profiling::scope!("pipeline");
             if meshes.is_empty() {
                 continue;
@@ -341,12 +343,12 @@ impl Renderer {
                 self.device.cmd_bind_pipeline(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
-                    canvas.pipelines.get(pipeline).inner,
+                    pipelines.pipelines.get(pl_index).inner,
                 )
             };
             let bind_point = vk::PipelineBindPoint::GRAPHICS;
-            let layout = descriptors.pipeline_layouts.get(pipeline).inner;
-            let descriptor_sets = descriptors.descriptor_sets(frame_index, pipeline);
+            let layout = descriptors.pipeline_layouts.get(pl_index).inner;
+            let descriptor_sets = descriptors.descriptor_sets(frame_index, pl_index);
             if descriptor_sets.len() > 1 {
                 unsafe {
                     self.device
@@ -365,7 +367,7 @@ impl Renderer {
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
                     temp_arena.create_buffer(
                         *buffer_create_info,
-                        format_args!("{}. transform buffer of pipeline {pipeline:?}", i + 1),
+                        format_args!("{}. transform buffer of pipeline {pl_index:?}", i + 1),
                     )?
                 };
 
