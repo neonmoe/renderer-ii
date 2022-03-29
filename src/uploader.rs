@@ -1,7 +1,9 @@
+use crate::debug_utils;
 use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
 use crate::{Error, PhysicalDevice, VulkanArena};
 use ash::vk;
 use ash::Instance;
+use std::fmt::Arguments;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -19,6 +21,7 @@ pub struct Uploader {
     free_fences: Vec<Fence>,
     transfer_semaphores: Vec<Semaphore>,
     free_semaphores: Vec<Semaphore>,
+    debug_identifier: &'static str,
 }
 
 impl Uploader {
@@ -29,6 +32,7 @@ impl Uploader {
         transfer_queue: vk::Queue,
         physical_device: &PhysicalDevice,
         staging_buffer_size: vk::DeviceSize,
+        debug_identifier: &'static str,
     ) -> Result<Uploader, Error> {
         let transfer_command_pool = {
             let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
@@ -36,6 +40,7 @@ impl Uploader {
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool =
                 unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
+            debug_utils::name_vulkan_object(device, command_pool, format_args!("upload cmds (T) for {}", debug_identifier));
             CommandPool {
                 inner: command_pool,
                 device: device.clone(),
@@ -48,6 +53,7 @@ impl Uploader {
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool =
                 unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
+            debug_utils::name_vulkan_object(device, command_pool, format_args!("upload cmds (G) for {}", debug_identifier));
             CommandPool {
                 inner: command_pool,
                 device: device.clone(),
@@ -78,6 +84,7 @@ impl Uploader {
             free_fences: Vec::new(),
             transfer_semaphores: Vec::new(),
             free_semaphores: Vec::new(),
+            debug_identifier,
         })
     }
 
@@ -110,6 +117,7 @@ impl Uploader {
         // later point, for intra-frame-upload-waiting.
         #[allow(unused_variables)] wait_stage: vk::PipelineStageFlags,
         staging_buffer: Buffer,
+        debug_identifier: Arguments,
         queue_transfer_commands: F,
         queue_graphics_commands: G,
     ) -> Result<(), Error>
@@ -134,6 +142,16 @@ impl Uploader {
                 unsafe { self.device.allocate_command_buffers(&graphics) }.map_err(Error::VulkanCommandBuffersAllocation)?;
             [transfer_buffers[0], graphics_buffers[0]]
         };
+        debug_utils::name_vulkan_object(
+            &self.device,
+            transfer_cmdbuf,
+            format_args!("upload cmds (T) for {}: {}", self.debug_identifier, debug_identifier),
+        );
+        debug_utils::name_vulkan_object(
+            &self.device,
+            graphics_cmdbuf,
+            format_args!("upload cmds (G) for {}: {}", self.debug_identifier, debug_identifier),
+        );
 
         let upload_fence = if let Some(fence) = self.free_fences.pop() {
             let fences = [fence.inner];
@@ -147,6 +165,11 @@ impl Uploader {
                 device: self.device.clone(),
             }
         };
+        debug_utils::name_vulkan_object(
+            &self.device,
+            upload_fence.inner,
+            format_args!("upload fence for {}: {}", self.debug_identifier, debug_identifier),
+        );
 
         let transfer_signal_semaphore = if let Some(semaphore) = self.free_semaphores.pop() {
             // Cannot be reset manually, but semaphores get unsignaled
@@ -162,6 +185,11 @@ impl Uploader {
                 device: self.device.clone(),
             }
         };
+        debug_utils::name_vulkan_object(
+            &self.device,
+            transfer_signal_semaphore.inner,
+            format_args!("T->G signal for {}: {}", self.debug_identifier, debug_identifier),
+        );
 
         {
             profiling::scope!("record commands for transfer queue");

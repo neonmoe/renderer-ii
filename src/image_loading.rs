@@ -154,6 +154,7 @@ pub fn create_pixel(
     uploader.start_upload(
         vk::PipelineStageFlags::FRAGMENT_SHADER,
         staging_buffer.buffer,
+        format_args!("{}", debug_identifier),
         |device, staging_buffer, command_buffer| {
             profiling::scope!(&format!("record vkCmdCopyBufferToImage for {}", debug_identifier));
             let barrier_from_undefined_to_transfer_dst = vk::ImageMemoryBarrier::builder()
@@ -308,6 +309,7 @@ pub fn load_ktx(
     uploader.start_upload(
         vk::PipelineStageFlags::FRAGMENT_SHADER,
         staging_buffer.buffer,
+        format_args!("{}", debug_identifier),
         |device, staging_buffer, command_buffer| {
             let mut current_mip_level_extent = extent;
             for (mip_level, mip_range) in mip_ranges.iter().enumerate() {

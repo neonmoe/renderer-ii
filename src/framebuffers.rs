@@ -70,6 +70,7 @@ impl Framebuffers {
                 .samples(pipelines.attachment_sample_count)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(usage);
+            // "tbd" is changed to the real name right before framebuffer creation.
             framebuffer_arena.create_image(*image_create_info, format_args!("tbd"))
         };
 

@@ -106,6 +106,7 @@ impl Mesh {
         uploader.start_upload(
             vk::PipelineStageFlags::VERTEX_INPUT,
             staging_buffer.buffer,
+            name,
             |device, staging_buffer, command_buffer| {
                 profiling::scope!("vkCmdCopyBuffer");
                 let src = staging_buffer.inner;

@@ -60,6 +60,7 @@ fn fallible_main() -> anyhow::Result<()> {
         device.transfer_queue,
         physical_device,
         300_000_000,
+        "sandbox assets",
     )?;
     let mut assets_arena = neonvk::VulkanArena::new(
         &instance.inner,
@@ -68,7 +69,7 @@ fn fallible_main() -> anyhow::Result<()> {
         500_000_000,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        format_args!("sandbox asset arena"),
+        format_args!("sandbox assets"),
     )?;
     let pbr_defaults = neonvk::PbrDefaults::new(&device, &mut uploader, &mut assets_arena)?;
     let mut descriptors = neonvk::Descriptors::new(&device, physical_device.properties, pbr_defaults, 1)?;
