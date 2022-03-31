@@ -12,7 +12,7 @@ use std::rc::Rc;
 #[derive(PartialEq, Eq, Hash)]
 pub struct BufferAllocation {
     pub buffer: Buffer,
-    offset: vk::DeviceSize,
+    ptr: *mut u8,
     size: vk::DeviceSize,
     non_coherent_atom_size: vk::DeviceSize,
     backing_memory_size: vk::DeviceSize,
@@ -25,32 +25,13 @@ impl BufferAllocation {
     /// == VK_WHOLE_SIZE`, the entire buffer will be written, reading
     /// from `src`.
     pub unsafe fn write(&self, src: *const u8, offset: vk::DeviceSize, size: vk::DeviceSize) -> Result<(), Error> {
-        let offset = (self.offset + offset).min(self.offset + self.size);
-        let aligned_offset = align_down(offset, self.non_coherent_atom_size);
-        let size = size.min(self.size);
-        let aligned_size = align_up(size, self.non_coherent_atom_size).min(self.backing_memory_size - aligned_offset);
-
-        // NOTE: The mapped range is aligned to satisfy vkMappedMemoryRange requirements later.
-        let dst = self
-            .buffer
-            .device
-            .map_memory(self.buffer.memory.inner, aligned_offset, aligned_size, vk::MemoryMapFlags::empty())
-            .map_err(Error::VulkanMapMemory)? as *mut u8;
-        let dst = dst.offset((offset - aligned_offset) as isize);
+        if self.ptr.is_null() {
+            return Err(Error::ArenaNotWritable);
+        }
+        let offset = offset.min(self.size);
+        let size = size.min(self.size - offset);
+        let dst = self.ptr.offset(offset as isize);
         ptr::copy_nonoverlapping(src, dst, size as usize);
-
-        // NOTE: VkMappedMemoryRanges have notable alignment requirements, and they have been taken into account.
-        let ranges = [vk::MappedMemoryRange::builder()
-            .memory(self.buffer.memory.inner)
-            .offset(aligned_offset)
-            .size(aligned_size)
-            .build()];
-        self.buffer
-            .device
-            .flush_mapped_memory_ranges(&ranges)
-            .map_err(Error::VulkanFlushMapped)?;
-        self.buffer.device.unmap_memory(self.buffer.memory.inner);
-
         Ok(())
     }
 }
@@ -58,6 +39,7 @@ impl BufferAllocation {
 pub struct VulkanArena {
     device: Rc<Device>,
     memory: Rc<DeviceMemory>,
+    mapped_memory_ptr: *mut u8,
     total_size: vk::DeviceSize,
     /// The location where the available memory starts. Gets set to 0
     /// when the arena is reset, bumped when allocating.
@@ -75,6 +57,14 @@ pub struct VulkanArena {
     debug_identifier: String,
 }
 
+impl Drop for VulkanArena {
+    fn drop(&mut self) {
+        if !self.mapped_memory_ptr.is_null() {
+            unsafe { self.device.unmap_memory(self.memory.inner) };
+        }
+    }
+}
+
 impl VulkanArena {
     pub fn new(
         instance: &Instance,
@@ -86,7 +76,7 @@ impl VulkanArena {
         debug_identifier_args: Arguments,
     ) -> Result<VulkanArena, Error> {
         let debug_identifier = format!("{}", debug_identifier_args);
-        let memory_type_index = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
+        let (memory_type_index, memory_flags) = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
             .ok_or_else(|| Error::VulkanNoMatchingHeap(debug_identifier.clone(), fallback_flags))?;
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
@@ -94,6 +84,12 @@ impl VulkanArena {
         let memory = unsafe { device.allocate_memory(&alloc_info, None) }
             .map_err(|err| Error::VulkanAllocate(err, debug_identifier.clone(), size))?;
         debug_utils::name_vulkan_object(device, memory, debug_identifier_args);
+
+        let mapped_memory_ptr = if memory_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT) {
+            unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }.map_err(Error::VulkanMapMemory)? as *mut u8
+        } else {
+            ptr::null_mut()
+        };
 
         let physical_device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
         let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;
@@ -105,6 +101,7 @@ impl VulkanArena {
                 inner: memory,
                 device: device.clone(),
             }),
+            mapped_memory_ptr,
             total_size: size,
             offset: 0,
             non_coherent_atom_size,
@@ -145,18 +142,23 @@ impl VulkanArena {
                 return Err(err);
             }
         }
-
         debug_utils::name_vulkan_object(&self.device, buffer, name);
 
+        let ptr = if self.mapped_memory_ptr.is_null() {
+            ptr::null_mut()
+        } else {
+            unsafe { self.mapped_memory_ptr.offset(offset as isize) }
+        };
         self.offset = offset + size;
         self.previous_allocation_was_image = false;
+
         Ok(BufferAllocation {
             buffer: Buffer {
                 inner: buffer,
                 device: self.device.clone(),
                 memory: self.memory.clone(),
             },
-            offset,
+            ptr,
             size,
             non_coherent_atom_size: self.non_coherent_atom_size,
             backing_memory_size: self.total_size,
@@ -228,21 +230,23 @@ fn get_memory_type_index(
     optimal_flags: vk::MemoryPropertyFlags,
     fallback_flags: vk::MemoryPropertyFlags,
     size: vk::DeviceSize,
-) -> Option<u32> {
+) -> Option<(u32, vk::MemoryPropertyFlags)> {
     // TODO(low): Use VK_EXT_memory_budget to pick a heap that can fit the size, it's already enabled (if available)
     let memory_properties = unsafe { instance.get_physical_device_memory_properties(physical_device) };
     let types = &memory_properties.memory_types[..memory_properties.memory_type_count as usize];
     let heaps = &memory_properties.memory_heaps[..memory_properties.memory_heap_count as usize];
     for (i, memory_type) in types.iter().enumerate() {
         let heap_index = memory_type.heap_index as usize;
-        if memory_type.property_flags.contains(optimal_flags) && heaps[heap_index].size >= size {
-            return Some(i as u32);
+        let flags = memory_type.property_flags;
+        if flags.contains(optimal_flags) && heaps[heap_index].size >= size {
+            return Some((i as u32, flags));
         }
     }
     for (i, memory_type) in types.iter().enumerate() {
         let heap_index = memory_type.heap_index as usize;
-        if memory_type.property_flags.contains(fallback_flags) && heaps[heap_index].size >= size {
-            return Some(i as u32);
+        let flags = memory_type.property_flags;
+        if flags.contains(fallback_flags) && heaps[heap_index].size >= size {
+            return Some((i as u32, flags));
         }
     }
     None
@@ -250,6 +254,7 @@ fn get_memory_type_index(
 
 /// Returns `value` or the nearest integer greater than `value` which
 /// is divisible by `align_to`.
+#[allow(dead_code)]
 fn align_up(value: vk::DeviceSize, align_to: vk::DeviceSize) -> vk::DeviceSize {
     if value % align_to == 0 {
         value
@@ -260,6 +265,7 @@ fn align_up(value: vk::DeviceSize, align_to: vk::DeviceSize) -> vk::DeviceSize {
 
 /// Returns `value` or the nearest integer less than `value` which
 /// is divisible by `align_to`.
+#[allow(dead_code)]
 fn align_down(value: vk::DeviceSize, align_to: vk::DeviceSize) -> vk::DeviceSize {
     if value % align_to == 0 {
         value
