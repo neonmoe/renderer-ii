@@ -362,14 +362,11 @@ impl Renderer {
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
                     temp_arena.create_buffer(
                         *buffer_create_info,
+                        bytemuck::cast_slice(transforms),
+                        None,
                         format_args!("{}. transform buffer of pipeline {pl_index:?}", i + 1),
                     )?
                 };
-
-                {
-                    profiling::scope!("write transform buffer");
-                    unsafe { transform_buffer.write(transforms.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
-                }
 
                 let push_constants = [PushConstantStruct {
                     texture_index: material.array_index,
@@ -383,7 +380,7 @@ impl Renderer {
                 }
 
                 let mut vertex_buffers = vec![mesh.buffer(); mesh.vertices_offsets.len() + 1];
-                vertex_buffers[0] = transform_buffer.buffer.inner;
+                vertex_buffers[0] = transform_buffer.inner;
                 let mut vertex_offsets = Vec::with_capacity(mesh.vertices_offsets.len() + 1);
                 vertex_offsets.push(0);
                 vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
@@ -398,7 +395,7 @@ impl Renderer {
                         .cmd_draw_indexed(command_buffer, mesh.index_count, transforms.len() as u32, 0, 0, 0);
                 }
 
-                temp_arena.add_buffer(transform_buffer.buffer);
+                temp_arena.add_buffer(transform_buffer);
             }
         }
 

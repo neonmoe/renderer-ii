@@ -67,7 +67,9 @@ fn fallible_main() -> anyhow::Result<()> {
         &device,
         physical_device.inner,
         500_000_000,
-        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL
+            | neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE
+            | neonvk::vk::MemoryPropertyFlags::HOST_COHERENT,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         format_args!("sandbox assets"),
     )?;
@@ -75,6 +77,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut descriptors = neonvk::Descriptors::new(&device, physical_device.properties, pbr_defaults, 1)?;
 
     let mut resources = neonvk::GltfResources::with_path(find_resources_path());
+    let upload_start = Instant::now();
     let sponza_model = neonvk::Gltf::from_gltf(
         &device,
         &mut uploader,
@@ -86,7 +89,12 @@ fn fallible_main() -> anyhow::Result<()> {
     profiling::scope!("resource uploading");
     let upload_wait_start = Instant::now();
     assert!(uploader.wait(Duration::from_secs(5))?);
-    log::info!("Waited {:?} for the scene to upload.", Instant::now() - upload_wait_start);
+    let now = Instant::now();
+    log::info!(
+        "Spent {:?} loading resources, of which {:?} was waiting for upload.",
+        now - upload_start,
+        now - upload_wait_start
+    );
     drop(uploader);
     drop(resources);
 

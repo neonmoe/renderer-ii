@@ -1,4 +1,5 @@
-use crate::arena::{BufferAllocation, VulkanArena};
+use crate::arena::VulkanArena;
+use crate::vulkan_raii::Buffer;
 use crate::{Error, PipelineIndex, Uploader};
 use ash::vk;
 use glam::Vec4;
@@ -8,7 +9,7 @@ use std::{mem, ptr};
 #[derive(PartialEq, Eq, Hash)]
 pub struct Mesh {
     /// Contains the vertices and indices.
-    pub(crate) mesh_buffer: BufferAllocation,
+    pub(crate) mesh_buffer: Buffer,
 
     pub pipeline: PipelineIndex,
     pub(crate) index_count: u32,
@@ -35,12 +36,6 @@ impl Mesh {
     ) -> Result<Mesh, Error> {
         profiling::scope!("new_mesh");
 
-        let &mut Uploader {
-            graphics_queue_family,
-            transfer_queue_family,
-            ..
-        } = uploader;
-
         // The destination memory is aligned to 16 bytes (size of
         // Vec4), as well as the individual slices in it. Just to make
         // sure that alignment isn't causing problems.
@@ -50,7 +45,7 @@ impl Mesh {
         for vertices in vertices {
             total_size += round_size(vertices.len());
         }
-        let mut data: Vec<Vec4> = vec![Vec4::ZERO; total_size];
+        let mut data: Vec<Vec4> = vec![Vec4::ZERO; total_size / mem::size_of::<Vec4>()];
         let mut buffer_dst_ptr = data.as_mut_ptr() as *mut u8;
         let indices_src_ptr = indices.as_ptr();
         unsafe {
@@ -72,22 +67,6 @@ impl Mesh {
             buffer_dst_ptr = unsafe { buffer_dst_ptr.add(offset) };
         }
 
-        let staging_buffer = {
-            profiling::scope!("allocate staging buffer");
-            let buffer_create_info = vk::BufferCreateInfo::builder()
-                .size(total_size as vk::DeviceSize)
-                .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            uploader
-                .staging_arena
-                .create_buffer(*buffer_create_info, format_args!("staging buffer for {}", name))?
-        };
-
-        {
-            profiling::scope!("write staging buffer");
-            unsafe { staging_buffer.write(data.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
-        }
-
         let mesh_buffer = {
             profiling::scope!("allocate gpu buffer");
             let buffer_create_info = vk::BufferCreateInfo::builder()
@@ -100,44 +79,8 @@ impl Mesh {
                         | vk::BufferUsageFlags::UNIFORM_BUFFER,
                 )
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            arena.create_buffer(*buffer_create_info, name)?
+            arena.create_buffer(*buffer_create_info, bytemuck::cast_slice(&data), Some(uploader), name)?
         };
-
-        uploader.start_upload(
-            vk::PipelineStageFlags::VERTEX_INPUT,
-            staging_buffer.buffer,
-            name,
-            |device, staging_buffer, command_buffer| {
-                profiling::scope!("vkCmdCopyBuffer");
-                let src = staging_buffer.inner;
-                let dst = mesh_buffer.buffer.inner;
-                let copy_regions = [vk::BufferCopy::builder().size(total_size as vk::DeviceSize).build()];
-                unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
-            },
-            |device, command_buffer| {
-                profiling::scope!("vkCmdPipelineBarrier");
-                let barrier_from_transfer_dst_to_draw = vk::BufferMemoryBarrier::builder()
-                    .buffer(mesh_buffer.buffer.inner)
-                    .offset(0)
-                    .size(vk::WHOLE_SIZE)
-                    .src_queue_family_index(transfer_queue_family)
-                    .dst_queue_family_index(graphics_queue_family)
-                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    .dst_access_mask(vk::AccessFlags::VERTEX_ATTRIBUTE_READ)
-                    .build();
-                unsafe {
-                    device.cmd_pipeline_barrier(
-                        command_buffer,
-                        vk::PipelineStageFlags::TRANSFER,
-                        vk::PipelineStageFlags::VERTEX_INPUT,
-                        vk::DependencyFlags::empty(),
-                        &[],
-                        &[barrier_from_transfer_dst_to_draw],
-                        &[],
-                    );
-                }
-            },
-        )?;
 
         Ok(Mesh {
             mesh_buffer,
@@ -150,7 +93,7 @@ impl Mesh {
     }
 
     pub(crate) fn buffer(&self) -> vk::Buffer {
-        self.mesh_buffer.buffer.inner
+        self.mesh_buffer.inner
     }
 }
 

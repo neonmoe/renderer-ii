@@ -1,13 +1,21 @@
 use crate::{Descriptors, Error, FrameIndex, PipelineIndex, VulkanArena};
 use ash::vk;
+use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
 use std::mem;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct GlobalTransforms {
     _projection: Mat4,
     _view: Mat4,
 }
+
+// Mat4's are Pods, therefore they are Zeroable, therefore this is too.
+unsafe impl Zeroable for GlobalTransforms {}
+
+// repr(c) + Mat4's are Pods since glam has the bytemuck feature enabled.
+unsafe impl Pod for GlobalTransforms {}
 
 impl GlobalTransforms {
     fn new(width: f32, height: f32) -> GlobalTransforms {
@@ -45,6 +53,7 @@ impl Camera {
         temp_arena: &mut VulkanArena,
         frame_index: FrameIndex,
     ) -> Result<(), Error> {
+        let src = &[GlobalTransforms::new(width, height)];
         let temp_buffer = {
             profiling::scope!("create uniform buffer");
             let buffer_size = mem::size_of::<GlobalTransforms>() as vk::DeviceSize;
@@ -52,18 +61,17 @@ impl Camera {
                 .size(buffer_size)
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            temp_arena.create_buffer(*buffer_create_info, format_args!("uniform (view+proj matrices)"))?
+            temp_arena.create_buffer(
+                *buffer_create_info,
+                bytemuck::cast_slice(src),
+                None,
+                format_args!("uniform (view+proj matrices)"),
+            )?
         };
 
-        {
-            profiling::scope!("write uniform buffer");
-            let src = &[GlobalTransforms::new(width, height)];
-            unsafe { temp_buffer.write(src.as_ptr() as *const u8, 0, vk::WHOLE_SIZE) }?;
-        }
-
         let pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
-        descriptors.set_uniform_buffer(frame_index, pipeline, 0, 0, temp_buffer.buffer.inner);
-        temp_arena.add_buffer(temp_buffer.buffer);
+        descriptors.set_uniform_buffer(frame_index, pipeline, 0, 0, temp_buffer.inner);
+        temp_arena.add_buffer(temp_buffer);
         Ok(())
     }
 }

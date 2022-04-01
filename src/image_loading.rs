@@ -117,15 +117,13 @@ pub fn create_pixel(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        uploader
-            .staging_arena
-            .create_buffer(*buffer_create_info, format_args!("staging buffer for {}", debug_identifier))?
+        uploader.staging_arena.create_buffer(
+            *buffer_create_info,
+            &pixels,
+            None,
+            format_args!("staging buffer for {}", debug_identifier),
+        )?
     };
-
-    {
-        profiling::scope!("write to 1px staging buffer");
-        unsafe { staging_buffer.write(pixels.as_ptr(), 0, vk::WHOLE_SIZE) }?;
-    }
 
     let image_allocation = {
         profiling::scope!("allocate 1px gpu texture");
@@ -152,8 +150,7 @@ pub fn create_pixel(
         .build();
 
     uploader.start_upload(
-        vk::PipelineStageFlags::FRAGMENT_SHADER,
-        staging_buffer.buffer,
+        staging_buffer,
         format_args!("{}", debug_identifier),
         |device, staging_buffer, command_buffer| {
             profiling::scope!(&format!("record vkCmdCopyBufferToImage for {}", debug_identifier));
@@ -280,15 +277,13 @@ pub fn load_ktx(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        uploader
-            .staging_arena
-            .create_buffer(*buffer_create_info, format_args!("staging buffer for {}", debug_identifier))?
+        uploader.staging_arena.create_buffer(
+            *buffer_create_info,
+            &pixels,
+            None,
+            format_args!("staging buffer for {}", debug_identifier),
+        )?
     };
-
-    {
-        profiling::scope!("write to staging buffer");
-        unsafe { staging_buffer.write(pixels.as_ptr(), 0, vk::WHOLE_SIZE) }?;
-    }
 
     let image_allocation = {
         profiling::scope!("allocate gpu texture");
@@ -307,8 +302,7 @@ pub fn load_ktx(
     };
 
     uploader.start_upload(
-        vk::PipelineStageFlags::FRAGMENT_SHADER,
-        staging_buffer.buffer,
+        staging_buffer,
         format_args!("{}", debug_identifier),
         |device, staging_buffer, command_buffer| {
             let mut current_mip_level_extent = extent;

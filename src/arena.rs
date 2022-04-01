@@ -2,39 +2,12 @@
 use crate::debug_utils;
 use crate::error::Error;
 use crate::vulkan_raii::{Buffer, Device, DeviceMemory, Image};
+use crate::Uploader;
 use ash::vk;
 use ash::Instance;
 use std::fmt::Arguments;
 use std::ptr;
 use std::rc::Rc;
-
-/// A Vulkan buffer allocated from an [Arena].
-#[derive(PartialEq, Eq, Hash)]
-pub struct BufferAllocation {
-    pub buffer: Buffer,
-    ptr: *mut u8,
-    size: vk::DeviceSize,
-    non_coherent_atom_size: vk::DeviceSize,
-    backing_memory_size: vk::DeviceSize,
-}
-
-impl BufferAllocation {
-    /// Write `size` bytes from `src` into the buffer, `offset` bytes
-    /// after the start of the buffer. Both `offset` and `size` are
-    /// clamped to the buffer's bounds, so if `offset == 0` and `size
-    /// == VK_WHOLE_SIZE`, the entire buffer will be written, reading
-    /// from `src`.
-    pub unsafe fn write(&self, src: *const u8, offset: vk::DeviceSize, size: vk::DeviceSize) -> Result<(), Error> {
-        if self.ptr.is_null() {
-            return Err(Error::ArenaNotWritable);
-        }
-        let offset = offset.min(self.size);
-        let size = size.min(self.size - offset);
-        let dst = self.ptr.offset(offset as isize);
-        ptr::copy_nonoverlapping(src, dst, size as usize);
-        Ok(())
-    }
-}
 
 pub struct VulkanArena {
     device: Rc<Device>,
@@ -50,7 +23,6 @@ pub struct VulkanArena {
     /// are per-thread. A possible multi-threaded arena should use an
     /// atomic int here.
     offset: vk::DeviceSize,
-    non_coherent_atom_size: vk::DeviceSize,
     buffer_image_granularity: vk::DeviceSize,
     previous_allocation_was_image: bool,
     pinned_buffers: Vec<Buffer>,
@@ -93,7 +65,6 @@ impl VulkanArena {
 
         let physical_device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
         let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;
-        let non_coherent_atom_size = physical_device_properties.limits.non_coherent_atom_size;
 
         Ok(VulkanArena {
             device: device.clone(),
@@ -104,7 +75,6 @@ impl VulkanArena {
             mapped_memory_ptr,
             total_size: size,
             offset: 0,
-            non_coherent_atom_size,
             buffer_image_granularity,
             previous_allocation_was_image: false,
             pinned_buffers: Vec::new(),
@@ -112,7 +82,14 @@ impl VulkanArena {
         })
     }
 
-    pub fn create_buffer(&mut self, buffer_create_info: vk::BufferCreateInfo, name: Arguments) -> Result<BufferAllocation, Error> {
+    #[profiling::function]
+    pub fn create_buffer(
+        &mut self,
+        buffer_create_info: vk::BufferCreateInfo,
+        src: &[u8],
+        uploader: Option<&mut Uploader>,
+        name: Arguments,
+    ) -> Result<Buffer, Error> {
         let buffer = unsafe { self.device.create_buffer(&buffer_create_info, None) }.map_err(Error::VulkanBufferCreation)?;
         let buffer_memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         let alignment = buffer_memory_requirements.alignment;
@@ -124,6 +101,7 @@ impl VulkanArena {
 
         let offset = align_up(self.offset, alignment);
         let size = buffer_memory_requirements.size;
+        debug_assert_eq!(size, align_up(src.len() as vk::DeviceSize, alignment));
 
         if self.total_size - offset < size {
             unsafe { self.device.destroy_buffer(buffer, None) };
@@ -144,24 +122,91 @@ impl VulkanArena {
         }
         debug_utils::name_vulkan_object(&self.device, buffer, name);
 
-        let ptr = if self.mapped_memory_ptr.is_null() {
-            ptr::null_mut()
+        if self.mapped_memory_ptr.is_null() {
+            if let Some(uploader) = uploader {
+                let staging_info = vk::BufferCreateInfo::builder()
+                    .size(size)
+                    .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .build();
+                let staging_buffer =
+                    uploader
+                        .staging_arena
+                        .create_buffer(staging_info, src, None, format_args!("staging buffer for {}", name))?;
+                let &mut Uploader {
+                    graphics_queue_family,
+                    transfer_queue_family,
+                    ..
+                } = uploader;
+
+                uploader.start_upload(
+                    staging_buffer,
+                    name,
+                    |device, staging_buffer, command_buffer| {
+                        profiling::scope!("queue buffer copy from staging");
+                        let barrier_from_graphics_to_transfer = vk::BufferMemoryBarrier::builder()
+                            .buffer(buffer)
+                            .offset(0)
+                            .size(vk::WHOLE_SIZE)
+                            .src_queue_family_index(graphics_queue_family)
+                            .dst_queue_family_index(transfer_queue_family)
+                            .src_access_mask(vk::AccessFlags::NONE)
+                            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                            .build();
+                        unsafe {
+                            device.cmd_pipeline_barrier(
+                                command_buffer,
+                                vk::PipelineStageFlags::TOP_OF_PIPE,
+                                vk::PipelineStageFlags::TRANSFER,
+                                vk::DependencyFlags::empty(),
+                                &[],
+                                &[barrier_from_graphics_to_transfer],
+                                &[],
+                            );
+                        }
+                        let (src, dst) = (staging_buffer.inner, buffer);
+                        let copy_regions = [vk::BufferCopy::builder().size(size).build()];
+                        unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
+                    },
+                    |device, command_buffer| {
+                        profiling::scope!("vkCmdPipelineBarrier");
+                        let barrier_from_transfer_to_graphics = vk::BufferMemoryBarrier::builder()
+                            .buffer(buffer)
+                            .offset(0)
+                            .size(vk::WHOLE_SIZE)
+                            .src_queue_family_index(transfer_queue_family)
+                            .dst_queue_family_index(graphics_queue_family)
+                            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                            .dst_access_mask(vk::AccessFlags::VERTEX_ATTRIBUTE_READ)
+                            .build();
+                        unsafe {
+                            device.cmd_pipeline_barrier(
+                                command_buffer,
+                                vk::PipelineStageFlags::TRANSFER,
+                                vk::PipelineStageFlags::VERTEX_INPUT,
+                                vk::DependencyFlags::empty(),
+                                &[],
+                                &[barrier_from_transfer_to_graphics],
+                                &[],
+                            );
+                        }
+                    },
+                )?;
+            } else {
+                return Err(Error::ArenaNotWritable);
+            }
         } else {
-            unsafe { self.mapped_memory_ptr.offset(offset as isize) }
-        };
+            let dst = unsafe { self.mapped_memory_ptr.offset(offset as isize) };
+            unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len()) };
+        }
+
         self.offset = offset + size;
         self.previous_allocation_was_image = false;
 
-        Ok(BufferAllocation {
-            buffer: Buffer {
-                inner: buffer,
-                device: self.device.clone(),
-                memory: self.memory.clone(),
-            },
-            ptr,
-            size,
-            non_coherent_atom_size: self.non_coherent_atom_size,
-            backing_memory_size: self.total_size,
+        Ok(Buffer {
+            inner: buffer,
+            device: self.device.clone(),
+            memory: self.memory.clone(),
         })
     }
 

@@ -11,7 +11,7 @@ ash = { version = "0.36" }
 ash-window = { version = "0.9" }
 raw-window-handle = { version = "0.3.4" }
 shaders = { path = "shaders" }
-glam = { version = "0.19" }
+glam = { version = "0.19", features = ["bytemuck"] }
 miniserde = { version = "0.1" }
 bytemuck = { version = "1.7" }
 typed-arena = { version = "2.0" }

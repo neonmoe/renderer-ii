@@ -113,9 +113,6 @@ impl Uploader {
 
     pub(crate) fn start_upload<F, G>(
         &mut self,
-        // Not currently used, but very probably will be used at a
-        // later point, for intra-frame-upload-waiting.
-        #[allow(unused_variables)] wait_stage: vk::PipelineStageFlags,
         staging_buffer: Buffer,
         debug_identifier: Arguments,
         queue_transfer_commands: F,
