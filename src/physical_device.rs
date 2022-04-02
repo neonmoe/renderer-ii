@@ -31,6 +31,21 @@ impl PhysicalDevice {
     pub fn extension_supported(&self, extension: &str) -> bool {
         self.extensions.iter().any(|e| e == extension)
     }
+
+    /// Returns how many bytes of memorythis process is using from the physical
+    /// device's memory heaps.
+    pub fn get_memory_usage(&self, instance: &Instance) -> Option<u64> {
+        if self.extension_supported("VK_EXT_memory_budget") {
+            let mut memory_budget_properties = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
+            let mut memory_properties = vk::PhysicalDeviceMemoryProperties2::builder()
+                .push_next(&mut memory_budget_properties)
+                .build();
+            unsafe { instance.get_physical_device_memory_properties2(self.inner, &mut memory_properties) };
+            Some(memory_budget_properties.heap_usage.iter().sum())
+        } else {
+            None
+        }
+    }
 }
 
 /// Returns a list of GPUs that have the required capabilities. They

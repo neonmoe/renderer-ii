@@ -21,7 +21,6 @@ pub struct Material {
 #[derive(Clone)]
 pub enum PipelineSpecificData {
     Gltf {
-        // TODO(high): Other material data in uniform buffers?
         base_color: Option<Rc<ImageView>>,
         metallic_roughness: Option<Rc<ImageView>>,
         normal: Option<Rc<ImageView>>,

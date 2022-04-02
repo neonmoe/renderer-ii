@@ -209,12 +209,13 @@ fn fallible_main() -> anyhow::Result<()> {
         }
         match renderer.present_frame(frame_index, &swapchain) {
             Ok(_) => {}
-            Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => {}
+            Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => size_changed = true,
             Err(err) => log::warn!("Error during regular frame present: {}", err),
         }
 
-        frame_instants.push(Instant::now());
-        frame_instants.retain(|time| (Instant::now() - *time) < Duration::from_secs(1));
+        let now = Instant::now();
+        frame_instants.push(now);
+        frame_instants.retain(|time| (now - *time) < Duration::from_secs(1));
         let interval_count = frame_instants.len() - 1;
         let interval_sum: Duration = frame_instants
             .windows(2)
@@ -227,15 +228,16 @@ fn fallible_main() -> anyhow::Result<()> {
             })
             .sum();
         if let Some(avg_interval) = interval_sum.checked_div(interval_count as u32) {
-            // TODO(med): VRAM stats
-            // NOTE: Remove the dead_code annotation from display_bytes when fixing this
+            let used_memory = physical_device
+                .get_memory_usage(&instance.inner)
+                .map(display_bytes)
+                .unwrap_or_else(|| String::from("(unknown amount)"));
             let _ = window.set_title(&format!(
-                "{} ({:.2} ms frame interval ({:.0} fps), {} of VRAM in use, {} allocated)",
+                "{} ({:.2} ms frame interval ({:.0} fps), {} of VRAM in use)",
                 env!("CARGO_PKG_NAME"),
                 avg_interval.as_secs_f64() * 1000.0,
-                1.0 / avg_interval.as_secs_f64(),
-                -1,
-                -1,
+                frame_instants.len(),
+                used_memory,
             ));
         }
     }
