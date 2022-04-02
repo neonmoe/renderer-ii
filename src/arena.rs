@@ -207,6 +207,7 @@ impl VulkanArena {
             inner: buffer,
             device: self.device.clone(),
             memory: self.memory.clone(),
+            size,
         })
     }
 

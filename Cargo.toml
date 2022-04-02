@@ -16,6 +16,7 @@ miniserde = { version = "0.1" }
 bytemuck = { version = "1.7" }
 typed-arena = { version = "2.0" }
 once_cell = { version = "1.9" }
+memmap2 = { version = "0.5" }
 
 # TODO(cleanup): Move anyhow, sdl2 to dev deps
 # Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.
@@ -26,5 +27,6 @@ anyhow = { version = "1.0" }
 opt-level = 3
 
 [features]
-profile-with-tracy = ["profiling/profile-with-tracy"]
+# TODO(low): Write a profiling backend that outputs JSON for chrome://tracing?
+# Format: https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/edit
 vulkan-validation = ["shaders/generate-debug-info"]

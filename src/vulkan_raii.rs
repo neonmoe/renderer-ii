@@ -117,6 +117,7 @@ pub struct Buffer {
     pub inner: vk::Buffer,
     pub device: Rc<Device>,
     pub memory: Rc<DeviceMemory>,
+    pub size: vk::DeviceSize,
 }
 trivial_drop_impl!(Buffer, destroy_buffer);
 inner_and_device_based_eq_impl!(Buffer);

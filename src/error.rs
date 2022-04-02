@@ -119,10 +119,14 @@ pub enum Error {
     UnsupportedGltfVersion(String),
     #[error("gltf has buffer without an uri but no glb BIN buffer")]
     GlbBinMissing,
+    #[error("given gltf/glb file cannot be read")]
+    GltfMissingFile(#[source] std::io::Error),
     #[error("gltf refers to external data ({0}) but no directory was given in from_gltf/from_glb")]
     GltfMissingDirectory(String),
-    #[error("could not load gltf buffer from {0}")]
-    GltfBufferLoading(String, #[source] std::io::Error),
+    #[error("could not open resource file for gltf at {1}")]
+    GltfOpenFile(#[source] std::io::Error, std::path::PathBuf),
+    #[error("could map resource file into memory for gltf at {1}")]
+    GltfMapFile(#[source] std::io::Error, std::path::PathBuf),
     #[error("gltf node has multiple parents, which is not allowed by the 2.0 spec")]
     GltfInvalidNodeGraph,
     #[error("gltf has an out-of-bounds index ({0})")]

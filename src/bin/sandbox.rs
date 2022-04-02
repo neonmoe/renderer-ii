@@ -76,27 +76,29 @@ fn fallible_main() -> anyhow::Result<()> {
     let pbr_defaults = neonvk::PbrDefaults::new(&device, &mut uploader, &mut assets_arena)?;
     let mut descriptors = neonvk::Descriptors::new(&device, physical_device.properties, pbr_defaults, 1)?;
 
-    let mut resources = neonvk::GltfResources::with_path(find_resources_path());
-    let upload_start = Instant::now();
-    let sponza_model = neonvk::Gltf::from_gltf(
-        &device,
-        &mut uploader,
-        &mut descriptors,
-        &mut assets_arena,
-        include_str!("sponza/glTF/Sponza.gltf"),
-        &mut resources,
-    )?;
-    profiling::scope!("resource uploading");
-    let upload_wait_start = Instant::now();
-    assert!(uploader.wait(Duration::from_secs(5))?);
-    let now = Instant::now();
-    log::info!(
-        "Spent {:?} loading resources, of which {:?} was waiting for upload.",
-        now - upload_start,
-        now - upload_wait_start
-    );
-    drop(uploader);
-    drop(resources);
+    let sponza_model;
+    {
+        profiling::scope!("resource uploading");
+        let resources_path = find_resources_path();
+        let upload_start = Instant::now();
+        sponza_model = neonvk::Gltf::from_gltf(
+            &device,
+            &mut uploader,
+            &mut descriptors,
+            &mut assets_arena,
+            &resources_path.join("Sponza.gltf"),
+            &resources_path,
+        )?;
+        let upload_wait_start = Instant::now();
+        assert!(uploader.wait(Duration::from_secs(5))?);
+        let now = Instant::now();
+        log::info!(
+            "Spent {:?} loading resources, of which {:?} was waiting for upload.",
+            now - upload_start,
+            now - upload_wait_start
+        );
+        drop(uploader);
+    }
 
     let pipelines = neonvk::Pipelines::new(&device, physical_device, &descriptors)?;
     let mut swapchain_settings = neonvk::SwapchainSettings {

@@ -37,7 +37,7 @@ mod error;
 pub use error::Error;
 
 mod gltf;
-pub use gltf::{Gltf, GltfResources, MeshIter};
+pub use gltf::{Gltf, MeshIter};
 
 pub mod image_loading;
 

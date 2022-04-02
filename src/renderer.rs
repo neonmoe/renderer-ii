@@ -379,8 +379,11 @@ impl Renderer {
                         .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
                 }
 
-                let mut vertex_buffers = vec![mesh.buffer(); mesh.vertices_offsets.len() + 1];
-                vertex_buffers[0] = transform_buffer.inner;
+                let mut vertex_buffers = Vec::with_capacity(mesh.vertex_buffers.len() + 1);
+                vertex_buffers.push(transform_buffer.inner);
+                for vertex_buffer in &mesh.vertex_buffers {
+                    vertex_buffers.push(vertex_buffer.inner);
+                }
                 let mut vertex_offsets = Vec::with_capacity(mesh.vertices_offsets.len() + 1);
                 vertex_offsets.push(0);
                 vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
@@ -390,7 +393,7 @@ impl Renderer {
                     self.device
                         .cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
                     self.device
-                        .cmd_bind_index_buffer(command_buffer, mesh.buffer(), mesh.indices_offset, mesh.index_type);
+                        .cmd_bind_index_buffer(command_buffer, mesh.index_buffer.inner, mesh.index_buffer_offset, mesh.index_type);
                     self.device
                         .cmd_draw_indexed(command_buffer, mesh.index_count, transforms.len() as u32, 0, 0, 0);
                 }
