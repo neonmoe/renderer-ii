@@ -2,12 +2,11 @@ use crate::image_loading::{self, TextureKind};
 use crate::pipeline_parameters::{
     DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS,
 };
-use crate::vulkan_raii::{DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
+use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 use crate::{debug_utils, Error, ForImages, FrameIndex, Uploader, VulkanArena};
 use ash::vk;
 use std::hash::{Hash, Hasher};
 use std::mem;
-use std::ops::Range;
 use std::rc::{Rc, Weak};
 
 /// A unique index into one pipeline's textures and other material data.
@@ -73,35 +72,42 @@ type MaterialStatus = Vec<bool>;
 type MaterialStatusArray = Vec<MaterialStatus>;
 
 pub struct PbrDefaults {
-    default_base_color: ImageView,
-    default_metallic_roughness: ImageView,
-    default_normal: ImageView,
-    default_occlusion: ImageView,
-    default_emissive: ImageView,
+    base_color: ImageView,
+    metallic_roughness: ImageView,
+    normal: ImageView,
+    occlusion: ImageView,
+    emissive: ImageView,
 }
 
 impl PbrDefaults {
     pub fn new(device: &Rc<Device>, uploader: &mut Uploader, arena: &mut VulkanArena<ForImages>) -> Result<PbrDefaults, Error> {
         const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
         const BLACK: [u8; 4] = [0, 0, 0, 0xFF];
-        const NORMAL: [u8; 4] = [0, 0, 0xFF, 0];
+        const NORMAL_Z: [u8; 4] = [0, 0, 0xFF, 0];
         const M_AND_R: [u8; 4] = [0, 0x88, 0, 0];
 
         let mut create_pixel = |color, kind, name| image_loading::create_pixel(device, uploader, arena, color, kind, name);
-        let default_base_color = create_pixel(WHITE, TextureKind::SrgbColor, "default pbr base color")?;
-        let default_metallic_roughness = create_pixel(M_AND_R, TextureKind::LinearColor, "default pbr metallic/roughness")?;
-        let default_normal = create_pixel(NORMAL, TextureKind::NormalMap, "default pbr normals")?;
-        let default_occlusion = create_pixel(WHITE, TextureKind::LinearColor, "default pbr occlusion")?;
-        let default_emissive = create_pixel(BLACK, TextureKind::SrgbColor, "default pbr emissive")?;
+        let base_color = create_pixel(WHITE, TextureKind::SrgbColor, "default pbr base color")?;
+        let metallic_roughness = create_pixel(M_AND_R, TextureKind::LinearColor, "default pbr metallic/roughness")?;
+        let normal = create_pixel(NORMAL_Z, TextureKind::NormalMap, "default pbr normals")?;
+        let occlusion = create_pixel(WHITE, TextureKind::LinearColor, "default pbr occlusion")?;
+        let emissive = create_pixel(BLACK, TextureKind::SrgbColor, "default pbr emissive")?;
 
         Ok(PbrDefaults {
-            default_base_color,
-            default_metallic_roughness,
-            default_normal,
-            default_occlusion,
-            default_emissive,
+            base_color,
+            metallic_roughness,
+            normal,
+            occlusion,
+            emissive,
         })
     }
+}
+
+#[derive(Default)]
+struct PendingWrite {
+    write_descriptor_set: Option<vk::WriteDescriptorSet>,
+    _buffer_info: Option<Box<vk::DescriptorBufferInfo>>,
+    _image_info: Option<Box<vk::DescriptorImageInfo>>,
 }
 
 pub struct Descriptors {
@@ -325,21 +331,50 @@ impl Descriptors {
         })
     }
 
-    pub(crate) fn write_descriptors(&mut self, frame_index: FrameIndex) {
+    pub(crate) fn write_descriptors(&mut self, frame_index: FrameIndex, global_transforms_buffer: &Buffer) {
+        let mut materials_needing_update = Vec::new();
         for (pipeline, material_slots) in self.material_slots_per_pipeline.iter_with_pipeline() {
             for (i, material_slot) in material_slots.iter().enumerate() {
                 if let Some(material) = material_slot.as_ref().and_then(Weak::upgrade) {
                     let written = self.material_status_per_pipeline.get(pipeline)[i][frame_index.index()];
                     if !written {
-                        self.write_material(frame_index, pipeline, &material);
-                        self.material_status_per_pipeline.get_mut(pipeline)[i][frame_index.index()] = true;
+                        materials_needing_update.push((pipeline, i, material));
                     }
                 }
             }
         }
+
+        let mut pending_writes = Vec::with_capacity(materials_needing_update.len() * 6 + 1);
+
+        let shared_pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
+        let global_transforms_buffer = (global_transforms_buffer.inner, 0, vk::WHOLE_SIZE);
+        self.set_uniform_buffer(
+            frame_index,
+            shared_pipeline,
+            &mut pending_writes,
+            (0, 0, 0),
+            global_transforms_buffer,
+        );
+
+        for (pipeline, i, material) in &materials_needing_update {
+            self.write_material(frame_index, *pipeline, material, &mut pending_writes);
+            self.material_status_per_pipeline.get_mut(*pipeline)[*i][frame_index.index()] = true;
+        }
+
+        let mut writes = Vec::with_capacity(pending_writes.len());
+        for pending_write in &pending_writes {
+            writes.push(pending_write.write_descriptor_set.unwrap());
+        }
+        unsafe { self.device.update_descriptor_sets(&writes, &[]) };
     }
 
-    fn write_material(&self, frame_index: FrameIndex, pipeline: PipelineIndex, material: &Material) {
+    fn write_material(
+        &self,
+        frame_index: FrameIndex,
+        pipeline: PipelineIndex,
+        material: &Material,
+        pending_writes: &mut Vec<PendingWrite>,
+    ) {
         match &material.data {
             PipelineSpecificData::Gltf {
                 base_color,
@@ -348,75 +383,95 @@ impl Descriptors {
                 occlusion,
                 emissive,
             } => {
-                let index = material.array_index..material.array_index + 1;
                 let images = [
-                    base_color.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.default_base_color),
+                    base_color.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.base_color).inner,
                     metallic_roughness
                         .as_ref()
                         .map(Rc::as_ref)
-                        .unwrap_or(&self.pbr_defaults.default_metallic_roughness),
-                    normal.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.default_normal),
-                    occlusion.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.default_occlusion),
-                    emissive.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.default_emissive),
+                        .unwrap_or(&self.pbr_defaults.metallic_roughness)
+                        .inner,
+                    normal.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.normal).inner,
+                    occlusion.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.occlusion).inner,
+                    emissive.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.emissive).inner,
                 ];
-                self.set_uniform_images(frame_index, pipeline, 1, 1, &images, index);
+                self.set_uniform_images(frame_index, pipeline, pending_writes, (1, 1, material.array_index), &images);
             }
         }
     }
 
     #[profiling::function]
-    pub(crate) fn set_uniform_buffer(&self, frame_index: FrameIndex, pipeline: PipelineIndex, set: u32, binding: u32, buffer: vk::Buffer) {
+    fn set_uniform_buffer(
+        &self,
+        frame_index: FrameIndex,
+        pipeline: PipelineIndex,
+        pending_writes: &mut Vec<PendingWrite>,
+        (set, binding, array_index): (u32, u32, u32),
+        (buffer, offset, size): (vk::Buffer, vk::DeviceSize, vk::DeviceSize),
+    ) {
         let frame_idx = frame_index.index();
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[frame_idx].get(pipeline).inner[set_idx];
-        let descriptor_buffer_info = [vk::DescriptorBufferInfo::builder()
-            .buffer(buffer)
-            .offset(0)
-            .range(vk::WHOLE_SIZE)
-            .build()];
+        let descriptor_buffer_info = Box::new(
+            vk::DescriptorBufferInfo::builder()
+                .buffer(buffer)
+                .offset(offset)
+                .range(size)
+                .build(),
+        );
         let params = &PIPELINE_PARAMETERS.get(pipeline).descriptor_sets[set_idx][binding as usize];
-        let write_descriptor_set = vk::WriteDescriptorSet::builder()
-            .dst_set(descriptor_set)
-            .dst_binding(binding)
-            .dst_array_element(0)
-            .descriptor_type(params.descriptor_type)
-            .buffer_info(&descriptor_buffer_info)
-            .build();
-        unsafe { self.device.update_descriptor_sets(&[write_descriptor_set], &[]) };
+        let write_descriptor_set = vk::WriteDescriptorSet {
+            dst_set: descriptor_set,
+            dst_binding: binding,
+            dst_array_element: array_index,
+            descriptor_type: params.descriptor_type,
+            p_buffer_info: &*descriptor_buffer_info,
+            descriptor_count: 1,
+            ..Default::default()
+        };
+        pending_writes.push(PendingWrite {
+            write_descriptor_set: Some(write_descriptor_set),
+            _buffer_info: Some(descriptor_buffer_info),
+            ..Default::default()
+        });
     }
 
     /// Uploads the image_views to the given set, starting at
-    /// first_binding. The range parameter controls which indices of
-    /// the texture array are filled.
+    /// first_binding.
     #[profiling::function]
     fn set_uniform_images(
         &self,
         frame_index: FrameIndex,
         pipeline: PipelineIndex,
-        set: u32,
-        first_binding: u32,
-        image_views: &[&ImageView],
-        range: Range<u32>,
+        pending_writes: &mut Vec<PendingWrite>,
+        (set, first_binding, array_index): (u32, u32, u32),
+        image_views: &[vk::ImageView],
     ) {
         let frame_idx = frame_index.index();
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[frame_idx].get(pipeline).inner[set_idx];
         for (i, image_view) in image_views.iter().enumerate() {
-            let descriptor_image_info = vk::DescriptorImageInfo::builder()
-                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image_view(image_view.inner)
-                .build();
-            let descriptor_image_infos = vec![descriptor_image_info; range.len()];
+            let descriptor_image_info = Box::new(
+                vk::DescriptorImageInfo::builder()
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .image_view(*image_view)
+                    .build(),
+            );
             let binding = first_binding + i as u32;
             let params = &PIPELINE_PARAMETERS.get(pipeline).descriptor_sets[set_idx][binding as usize];
-            let write_descriptor_sets = [vk::WriteDescriptorSet::builder()
-                .dst_set(descriptor_set)
-                .dst_binding(binding)
-                .dst_array_element(range.start)
-                .descriptor_type(params.descriptor_type)
-                .image_info(&descriptor_image_infos)
-                .build()];
-            unsafe { self.device.update_descriptor_sets(&write_descriptor_sets, &[]) };
+            let write_descriptor_set = vk::WriteDescriptorSet {
+                dst_set: descriptor_set,
+                dst_binding: binding,
+                dst_array_element: array_index,
+                descriptor_type: params.descriptor_type,
+                p_image_info: &*descriptor_image_info,
+                descriptor_count: 1,
+                ..Default::default()
+            };
+            pending_writes.push(PendingWrite {
+                write_descriptor_set: Some(write_descriptor_set),
+                _image_info: Some(descriptor_image_info),
+                ..Default::default()
+            });
         }
     }
 

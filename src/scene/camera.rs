@@ -1,4 +1,5 @@
-use crate::{Descriptors, Error, ForBuffers, FrameIndex, PipelineIndex, VulkanArena};
+use crate::vulkan_raii::Buffer;
+use crate::{Error, ForBuffers, VulkanArena};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
@@ -43,33 +44,23 @@ pub struct Camera {}
 
 impl Camera {
     #[profiling::function]
-    pub(crate) fn upload(
+    pub(crate) fn create_global_transforms(
         &self,
-        descriptors: &Descriptors,
         temp_arena: &mut VulkanArena<ForBuffers>,
-        frame_index: FrameIndex,
         width: f32,
         height: f32,
-    ) -> Result<(), Error> {
+    ) -> Result<Buffer, Error> {
         let src = &[GlobalTransforms::new(width, height)];
-        let temp_buffer = {
-            profiling::scope!("create uniform buffer");
-            let buffer_size = mem::size_of::<GlobalTransforms>() as vk::DeviceSize;
-            let buffer_create_info = vk::BufferCreateInfo::builder()
-                .size(buffer_size)
-                .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            temp_arena.create_buffer(
-                *buffer_create_info,
-                bytemuck::cast_slice(src),
-                None,
-                format_args!("uniform (view+proj matrices)"),
-            )?
-        };
-
-        let pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
-        descriptors.set_uniform_buffer(frame_index, pipeline, 0, 0, temp_buffer.inner);
-        temp_arena.add_buffer(temp_buffer);
-        Ok(())
+        let buffer_size = mem::size_of::<GlobalTransforms>() as vk::DeviceSize;
+        let buffer_create_info = vk::BufferCreateInfo::builder()
+            .size(buffer_size)
+            .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        temp_arena.create_buffer(
+            *buffer_create_info,
+            bytemuck::cast_slice(src),
+            None,
+            format_args!("uniform (view+proj matrices)"),
+        )
     }
 }

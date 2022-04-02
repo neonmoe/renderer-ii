@@ -41,6 +41,7 @@ macro_rules! trivial_drop_impl {
         impl Drop for $struct_name {
             fn drop(&mut self) {
                 profiling::scope!(concat!("vk::", stringify!($destroy_func_name)));
+                log::trace!("{}({:?})", concat!("vk::", stringify!($destroy_func_name)), self.inner);
                 unsafe { self.device.$destroy_func_name(self.inner, None) }
             }
         }

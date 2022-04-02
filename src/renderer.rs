@@ -163,9 +163,11 @@ impl Renderer {
     ) -> Result<(), Error> {
         let fi = frame_index.index;
         let vk::Extent2D { width, height } = canvas.extent;
-        scene
+        let global_transforms_buffer = scene
             .camera
-            .upload(descriptors, &mut self.temp_arena[fi], frame_index, width as f32, height as f32)?;
+            .create_global_transforms(&mut self.temp_arena[fi], width as f32, height as f32)?;
+        descriptors.write_descriptors(frame_index, &global_transforms_buffer);
+        self.temp_arena[fi].add_buffer(global_transforms_buffer);
 
         let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, canvas, scene, debug_value)?;
 
@@ -220,8 +222,6 @@ impl Renderer {
         let fi = frame_index.index;
         let temp_arena = &mut self.temp_arena[fi];
         let framebuffer = &framebuffers.inner[frame_index.index];
-
-        descriptors.write_descriptors(frame_index);
 
         let command_pool_rc = &self.command_pool[fi];
         let command_pool = command_pool_rc.inner;
