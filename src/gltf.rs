@@ -228,53 +228,42 @@ fn create_gltf(
         }
     }
 
-    let meshes = {
-        profiling::scope!("meshes");
-        gltf.meshes
-            .iter()
-            .map(|mesh| {
-                mesh.primitives
-                    .iter()
-                    .map(|primitive| {
-                        let mesh = create_primitive(&gltf, &buffers, primitive)?;
-                        let material_index = primitive.material.ok_or(Error::GltfMisc("material missing"))?;
-                        Ok((mesh, material_index))
-                    })
-                    .collect::<Result<Vec<(Mesh, usize)>, Error>>()
-            })
-            .collect::<Result<Vec<Vec<(Mesh, usize)>>, Error>>()?
-    };
+    let mut meshes = Vec::with_capacity(gltf.meshes.len());
+    for mesh in &gltf.meshes {
+        let mut primitives = Vec::with_capacity(mesh.primitives.len());
+        for primitive in &mesh.primitives {
+            let mesh = create_primitive(&gltf, &buffers, primitive)?;
+            let material_index = primitive.material.ok_or(Error::GltfMisc("material missing"))?;
+            primitives.push((mesh, material_index));
+        }
+        meshes.push(primitives);
+    }
 
-    let nodes = {
-        profiling::scope!("nodes");
-        gltf.nodes
-            .iter()
-            .map(|node| {
-                let transform = if let Some(cols_array) = node.matrix {
-                    Mat4::from_cols_array(&cols_array)
-                } else {
-                    let translation = match node.translation {
-                        Some([x, y, z]) => Vec3::new(x, y, z),
-                        _ => Vec3::ZERO,
-                    };
-                    let rotation = match node.rotation {
-                        Some([x, y, z, w]) => Quat::from_xyzw(x, y, z, w),
-                        _ => Quat::IDENTITY,
-                    };
-                    let scale = match node.scale {
-                        Some([x, y, z]) => Vec3::new(x, y, z),
-                        _ => Vec3::new(1.0, 1.0, 1.0),
-                    };
-                    Mat4::from_scale_rotation_translation(scale, rotation, translation)
-                };
-                Node {
-                    mesh: node.mesh,
-                    children: node.children.clone(),
-                    transform,
-                }
-            })
-            .collect::<Vec<Node>>()
-    };
+    let mut nodes = Vec::with_capacity(gltf.nodes.len());
+    for node in &gltf.nodes {
+        let transform = if let Some(cols_array) = node.matrix {
+            Mat4::from_cols_array(&cols_array)
+        } else {
+            let translation = match node.translation {
+                Some([x, y, z]) => Vec3::new(x, y, z),
+                _ => Vec3::ZERO,
+            };
+            let rotation = match node.rotation {
+                Some([x, y, z, w]) => Quat::from_xyzw(x, y, z, w),
+                _ => Quat::IDENTITY,
+            };
+            let scale = match node.scale {
+                Some([x, y, z]) => Vec3::new(x, y, z),
+                _ => Vec3::new(1.0, 1.0, 1.0),
+            };
+            Mat4::from_scale_rotation_translation(scale, rotation, translation)
+        };
+        nodes.push(Node {
+            mesh: node.mesh,
+            children: node.children.clone(),
+            transform,
+        });
+    }
 
     let image_texture_kinds = {
         profiling::scope!("image kind map creation");
@@ -360,85 +349,85 @@ fn create_gltf(
         images.push(Rc::new(image_load(device, uploader, image_arena, bytes, kind, name)?));
     }
 
-    let materials = {
-        profiling::scope!("materials");
-        gltf.materials
-            .iter()
-            .map(|mat| {
-                let mktex = |images: &[Rc<ImageView>], texture_info: &gltf_json::TextureInfo| {
-                    let texture = match gltf.textures.get(texture_info.index) {
-                        Some(tex) => tex,
-                        None => return Some(Err(Error::GltfOob("texture"))),
-                    };
-                    let image_index = texture.source?;
-                    let image_view = match images.get(image_index) {
-                        Some(image_view) => image_view,
-                        None => return Some(Err(Error::GltfOob("image"))),
-                    };
-                    Some(Ok(image_view.clone()))
-                };
+    let mut material_factors = Vec::with_capacity(gltf.materials.len());
+    for mat in &gltf.materials {
+        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
+        material_factors.push(GltfFactors {
+            base_color: pbr
+                .base_color_factor
+                .as_ref()
+                .map(|&[r, g, b, a]| Vec4::new(r, g, b, a))
+                .unwrap_or(Vec4::ONE),
+            emissive: mat
+                .emissive_factor
+                .as_ref()
+                .map(|&[r, g, b]| Vec4::new(r, g, b, 0.0))
+                .unwrap_or(Vec4::ZERO),
+            metallic_roughness: Vec4::new(pbr.metallic_factor.unwrap_or(1.0), pbr.roughness_factor.unwrap_or(1.0), 0.0, 0.0),
+        });
+    }
+    let factors_slice = bytemuck::cast_slice(&material_factors);
+    let buffer_create_info = vk::BufferCreateInfo::builder()
+        .size(factors_slice.len() as u64)
+        .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .build();
+    let factors_buffer = buffer_arena.create_buffer(
+        buffer_create_info,
+        factors_slice,
+        Some(uploader),
+        format_args!("material parameters ({})", gltf_path.display()),
+    )?;
+    let factors_buffer = Rc::new(factors_buffer);
 
-                macro_rules! handle_optional_result {
-                    ($expression:expr) => {
-                        match $expression {
-                            Some(Ok(ok)) => Some(ok),
-                            Some(Err(err)) => return Err(err),
-                            None => None,
-                        }
-                    };
+    let mut materials = Vec::with_capacity(gltf.materials.len());
+    for (i, mat) in gltf.materials.iter().enumerate() {
+        let mktex = |images: &[Rc<ImageView>], texture_info: &gltf_json::TextureInfo| {
+            let texture = match gltf.textures.get(texture_info.index) {
+                Some(tex) => tex,
+                None => return Some(Err(Error::GltfOob("texture"))),
+            };
+            let image_index = texture.source?;
+            let image_view = match images.get(image_index) {
+                Some(image_view) => image_view,
+                None => return Some(Err(Error::GltfOob("image"))),
+            };
+            Some(Ok(image_view.clone()))
+        };
+
+        macro_rules! handle_optional_result {
+            ($expression:expr) => {
+                match $expression {
+                    Some(Ok(ok)) => Some(ok),
+                    Some(Err(err)) => return Err(err),
+                    None => None,
                 }
+            };
+        }
 
-                let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
-                let base_color = handle_optional_result!(pbr.base_color_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-                let metallic_roughness =
-                    handle_optional_result!(pbr.metallic_roughness_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-                let normal = handle_optional_result!(mat.normal_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-                let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-                let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
+        let base_color = handle_optional_result!(pbr.base_color_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+        let metallic_roughness = handle_optional_result!(pbr.metallic_roughness_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+        let normal = handle_optional_result!(mat.normal_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+        let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+        let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
 
-                let factors = &[GltfFactors {
-                    base_color: pbr
-                        .base_color_factor
-                        .as_ref()
-                        .map(|&[r, g, b, a]| Vec4::new(r, g, b, a))
-                        .unwrap_or(Vec4::ONE),
-                    emissive: mat
-                        .emissive_factor
-                        .as_ref()
-                        .map(|&[r, g, b]| Vec4::new(r, g, b, 0.0))
-                        .unwrap_or(Vec4::ZERO),
-                    metallic_roughness: Vec4::new(pbr.metallic_factor.unwrap_or(1.0), pbr.roughness_factor.unwrap_or(1.0), 0.0, 0.0),
-                }];
-                let factors = bytemuck::cast_slice(factors);
-                let factors_size = factors.len() as u64;
-                let buffer_create_info = vk::BufferCreateInfo::builder()
-                    .size(factors_size)
-                    .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .build();
-                let factors_buffer = buffer_arena.create_buffer(
-                    buffer_create_info,
-                    factors,
-                    Some(uploader),
-                    format_args!("material uniforms for {}", mat.name.as_deref().unwrap_or("unnamed material")),
-                )?;
-                let factors = (Rc::new(factors_buffer), 0, factors_size);
+        let factors_size = std::mem::size_of::<GltfFactors>() as u64;
+        let factors = (factors_buffer.clone(), factors_size * i as u64, factors_size);
 
-                Material::new(
-                    descriptors,
-                    PipelineIndex::Gltf,
-                    PipelineSpecificData::Gltf {
-                        base_color,
-                        metallic_roughness,
-                        normal,
-                        occlusion,
-                        emissive,
-                        factors,
-                    },
-                )
-            })
-            .collect::<Result<Vec<Rc<Material>>, Error>>()?
-    };
+        materials.push(Material::new(
+            descriptors,
+            PipelineIndex::Gltf,
+            PipelineSpecificData::Gltf {
+                base_color,
+                metallic_roughness,
+                normal,
+                occlusion,
+                emissive,
+                factors,
+            },
+        )?);
+    }
 
     {
         profiling::scope!("node graph creation");
