@@ -62,18 +62,27 @@ fn fallible_main() -> anyhow::Result<()> {
         300_000_000,
         "sandbox assets",
     )?;
-    let mut assets_arena = neonvk::VulkanArena::new(
+    let mut assets_buffers_arena = neonvk::VulkanArena::new(
         &instance.inner,
         &device,
         physical_device.inner,
-        500_000_000,
+        12_000_000,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL
             | neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE
             | neonvk::vk::MemoryPropertyFlags::HOST_COHERENT,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        format_args!("sandbox assets"),
+        format_args!("sandbox assets (buffers)"),
     )?;
-    let pbr_defaults = neonvk::PbrDefaults::new(&device, &mut uploader, &mut assets_arena)?;
+    let mut assets_textures_arena = neonvk::VulkanArena::new(
+        &instance.inner,
+        &device,
+        physical_device.inner,
+        100_000_000,
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        format_args!("sandbox assets (textures)"),
+    )?;
+    let pbr_defaults = neonvk::PbrDefaults::new(&device, &mut uploader, &mut assets_textures_arena)?;
     let mut descriptors = neonvk::Descriptors::new(&device, physical_device.properties, pbr_defaults, 1)?;
 
     let sponza_model;
@@ -85,7 +94,7 @@ fn fallible_main() -> anyhow::Result<()> {
             &device,
             &mut uploader,
             &mut descriptors,
-            &mut assets_arena,
+            (&mut assets_buffers_arena, &mut assets_textures_arena),
             &resources_path.join("Sponza.gltf"),
             &resources_path,
         )?;
@@ -241,7 +250,8 @@ fn fallible_main() -> anyhow::Result<()> {
 
     // Per-device-objects.
     drop(sponza_model);
-    drop(assets_arena);
+    drop(assets_textures_arena);
+    drop(assets_buffers_arena);
     drop(descriptors);
     assert_last_drop(device);
     assert_last_drop(surface);

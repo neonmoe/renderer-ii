@@ -6,22 +6,40 @@ use crate::Uploader;
 use ash::vk;
 use ash::Instance;
 use std::fmt::Arguments;
+use std::marker::PhantomData;
 use std::ptr;
 use std::rc::Rc;
 
-pub struct VulkanArena {
+pub trait ArenaType {
+    fn mappable() -> bool;
+}
+
+pub struct ForBuffers;
+impl ArenaType for ForBuffers {
+    fn mappable() -> bool {
+        true
+    }
+}
+
+pub struct ForImages;
+impl ArenaType for ForImages {
+    fn mappable() -> bool {
+        false
+    }
+}
+
+pub struct VulkanArena<T: ArenaType> {
     device: Rc<Device>,
     memory: Rc<DeviceMemory>,
     mapped_memory_ptr: *mut u8,
     total_size: vk::DeviceSize,
     offset: vk::DeviceSize,
-    buffer_image_granularity: vk::DeviceSize,
-    previous_allocation_was_image: bool,
     pinned_buffers: Vec<Buffer>,
     debug_identifier: String,
+    _arena_type_marker: PhantomData<T>,
 }
 
-impl Drop for VulkanArena {
+impl<T: ArenaType> Drop for VulkanArena<T> {
     fn drop(&mut self) {
         if !self.mapped_memory_ptr.is_null() {
             unsafe { self.device.unmap_memory(self.memory.inner) };
@@ -29,7 +47,7 @@ impl Drop for VulkanArena {
     }
 }
 
-impl VulkanArena {
+impl<T: ArenaType> VulkanArena<T> {
     pub fn new(
         instance: &Instance,
         device: &Rc<Device>,
@@ -38,7 +56,7 @@ impl VulkanArena {
         optimal_flags: vk::MemoryPropertyFlags,
         fallback_flags: vk::MemoryPropertyFlags,
         debug_identifier_args: Arguments,
-    ) -> Result<VulkanArena, Error> {
+    ) -> Result<VulkanArena<T>, Error> {
         let debug_identifier = format!("{}", debug_identifier_args);
         let (memory_type_index, memory_flags) = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
             .ok_or_else(|| Error::VulkanNoMatchingHeap(debug_identifier.clone(), fallback_flags))?;
@@ -49,14 +67,12 @@ impl VulkanArena {
             .map_err(|err| Error::VulkanAllocate(err, debug_identifier.clone(), size))?;
         debug_utils::name_vulkan_object(device, memory, debug_identifier_args);
 
-        let mapped_memory_ptr = if memory_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT) {
-            unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }.map_err(Error::VulkanMapMemory)? as *mut u8
-        } else {
-            ptr::null_mut()
-        };
-
-        let physical_device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
-        let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;
+        let mapped_memory_ptr =
+            if T::mappable() && memory_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT) {
+                unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }.map_err(Error::VulkanMapMemory)? as *mut u8
+            } else {
+                ptr::null_mut()
+            };
 
         Ok(VulkanArena {
             device: device.clone(),
@@ -67,11 +83,32 @@ impl VulkanArena {
             mapped_memory_ptr,
             total_size: size,
             offset: 0,
-            buffer_image_granularity,
-            previous_allocation_was_image: false,
             pinned_buffers: Vec::new(),
             debug_identifier,
+            _arena_type_marker: PhantomData {},
         })
+    }
+
+    /// Attempts to reset the arena, marking all graphics memory owned by it as
+    /// usable again. If some of the memory allocated from this arena is still
+    /// in use, Err is returned and the arena is not reset.
+    pub fn reset(&mut self) -> Result<(), Error> {
+        if Rc::strong_count(&self.memory) > 1 + self.pinned_buffers.len() {
+            Err(Error::ArenaNotResettable)
+        } else {
+            self.pinned_buffers.clear();
+            self.offset = 0;
+            Ok(())
+        }
+    }
+}
+
+impl VulkanArena<ForBuffers> {
+    /// Stores the buffer reference in this arena, to be destroyed when the
+    /// arena is reset. Ideal for temporary arenas whose buffers just have to
+    /// live until the arena is reset.
+    pub fn add_buffer(&mut self, buffer: Buffer) {
+        self.pinned_buffers.push(buffer);
     }
 
     #[profiling::function]
@@ -85,11 +122,6 @@ impl VulkanArena {
         let buffer = unsafe { self.device.create_buffer(&buffer_create_info, None) }.map_err(Error::VulkanBufferCreation)?;
         let buffer_memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         let alignment = buffer_memory_requirements.alignment;
-        let alignment = if self.previous_allocation_was_image {
-            alignment.max(self.buffer_image_granularity)
-        } else {
-            alignment
-        };
 
         let offset = align_up(self.offset, alignment);
         let size = buffer_memory_requirements.size;
@@ -193,7 +225,6 @@ impl VulkanArena {
         }
 
         self.offset = offset + size;
-        self.previous_allocation_was_image = false;
 
         Ok(Buffer {
             inner: buffer,
@@ -202,14 +233,13 @@ impl VulkanArena {
             size,
         })
     }
+}
 
+impl VulkanArena<ForImages> {
     pub fn create_image(&mut self, image_create_info: vk::ImageCreateInfo, name: Arguments) -> Result<Image, Error> {
-        // TODO(high): Tiled-only memory might conflict with mapped memory currently, as all the memory could be mapped.
-        // One solution: re-map the memory when creating an image so that the mapped area does not conflict
-        // Another solution: don't allow buffers and images in the same arena? Then we could ditch buffer-image-granularity too.
         let image = unsafe { self.device.create_image(&image_create_info, None) }.map_err(Error::VulkanImageCreation)?;
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
-        let alignment = image_memory_requirements.alignment.max(self.buffer_image_granularity);
+        let alignment = image_memory_requirements.alignment;
 
         let offset = align_up(self.offset, alignment);
         let size = image_memory_requirements.size;
@@ -235,32 +265,11 @@ impl VulkanArena {
         debug_utils::name_vulkan_object(&self.device, image, name);
 
         self.offset = offset + size;
-        self.previous_allocation_was_image = true;
         Ok(Image {
             inner: image,
             device: self.device.clone(),
             memory: self.memory.clone(),
         })
-    }
-
-    /// Stores the buffer reference in this arena, to be destroyed when the
-    /// arena is reset. Ideal for temporary arenas whose buffers just have to
-    /// live until the arena is reset.
-    pub fn add_buffer(&mut self, buffer: Buffer) {
-        self.pinned_buffers.push(buffer);
-    }
-
-    /// Attempts to reset the arena, marking all graphics memory owned by it as
-    /// usable again. If some of the memory allocated from this arena is still
-    /// in use, Err is returned and the arena is not reset.
-    pub fn reset(&mut self) -> Result<(), Error> {
-        if Rc::strong_count(&self.memory) > 1 + self.pinned_buffers.len() {
-            Err(Error::ArenaNotResettable)
-        } else {
-            self.pinned_buffers.clear();
-            self.offset = 0;
-            Ok(())
-        }
     }
 }
 

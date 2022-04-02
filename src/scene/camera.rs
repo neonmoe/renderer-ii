@@ -1,4 +1,4 @@
-use crate::{Descriptors, Error, FrameIndex, PipelineIndex, VulkanArena};
+use crate::{Descriptors, Error, ForBuffers, FrameIndex, PipelineIndex, VulkanArena};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
@@ -46,7 +46,7 @@ impl Camera {
     pub(crate) fn upload(
         &self,
         descriptors: &Descriptors,
-        temp_arena: &mut VulkanArena,
+        temp_arena: &mut VulkanArena<ForBuffers>,
         frame_index: FrameIndex,
         width: f32,
         height: f32,

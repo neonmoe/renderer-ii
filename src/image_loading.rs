@@ -1,5 +1,5 @@
 use crate::vulkan_raii::{Device, ImageView};
-use crate::{debug_utils, Error, Uploader, VulkanArena};
+use crate::{debug_utils, Error, ForImages, Uploader, VulkanArena};
 use ash::vk;
 use std::rc::Rc;
 
@@ -97,7 +97,7 @@ fn to_snorm(format: vk::Format) -> vk::Format {
 pub fn create_pixel(
     device: &Rc<Device>,
     uploader: &mut Uploader,
-    arena: &mut VulkanArena,
+    arena: &mut VulkanArena<ForImages>,
     pixels: [u8; 4],
     kind: TextureKind,
     debug_identifier: &str,
@@ -247,7 +247,7 @@ pub fn create_pixel(
 pub fn load_ktx(
     device: &Rc<Device>,
     uploader: &mut Uploader,
-    arena: &mut VulkanArena,
+    arena: &mut VulkanArena<ForImages>,
     bytes: &[u8],
     kind: TextureKind,
     debug_identifier: &str,

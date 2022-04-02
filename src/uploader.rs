@@ -1,6 +1,6 @@
 use crate::debug_utils;
 use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
-use crate::{Error, PhysicalDevice, VulkanArena};
+use crate::{Error, ForBuffers, PhysicalDevice, VulkanArena};
 use ash::vk;
 use ash::Instance;
 use std::fmt::Arguments;
@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 pub struct Uploader {
-    pub staging_arena: VulkanArena,
+    pub staging_arena: VulkanArena<ForBuffers>,
     pub graphics_queue_family: u32,
     pub transfer_queue_family: u32,
     device: Rc<Device>,

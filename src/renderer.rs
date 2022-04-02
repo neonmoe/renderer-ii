@@ -2,7 +2,7 @@ use crate::debug_utils;
 use crate::descriptors::Descriptors;
 use crate::pipeline_parameters::PushConstantStruct;
 use crate::vulkan_raii::{CommandBuffer, CommandPool, Device, Fence, Semaphore};
-use crate::{Error, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
+use crate::{Error, ForBuffers, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
 use ash::{vk, Instance};
 use glam::Mat4;
 use std::mem;
@@ -35,7 +35,7 @@ pub struct Renderer {
     frame_start_fence: Fence,
     ready_for_present: PerFrame<Semaphore>,
     frame_end_fence: PerFrame<Fence>,
-    temp_arena: PerFrame<VulkanArena>,
+    temp_arena: PerFrame<VulkanArena<ForBuffers>>,
     command_pool: PerFrame<Rc<CommandPool>>,
     command_buffers_in_use: PerFrame<Vec<CommandBuffer>>,
     command_buffers_unused: PerFrame<Vec<CommandBuffer>>,

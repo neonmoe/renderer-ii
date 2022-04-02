@@ -4,7 +4,7 @@ use crate::image_loading::{self, TextureKind};
 use crate::mesh::Mesh;
 use crate::vk;
 use crate::vulkan_raii::{Buffer, Device, ImageView};
-use crate::{Descriptors, Error, Material, PipelineIndex, Uploader};
+use crate::{Descriptors, Error, ForBuffers, ForImages, Material, PipelineIndex, Uploader};
 use glam::{Mat4, Quat, Vec3};
 use memmap2::{Advice, Mmap, MmapOptions};
 use std::collections::HashMap;
@@ -47,7 +47,7 @@ impl Gltf {
         device: &Rc<Device>,
         uploader: &mut Uploader,
         descriptors: &mut Descriptors,
-        main_arena: &mut VulkanArena,
+        arenas: (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
         glb_path: &Path,
         resource_path: &Path,
     ) -> Result<Gltf, Error> {
@@ -111,15 +111,7 @@ impl Gltf {
 
         let json = json.ok_or(Error::MissingGlbJson)?;
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
-        create_gltf(
-            device,
-            uploader,
-            descriptors,
-            main_arena,
-            gltf,
-            (glb_path, resource_path),
-            Some(buffer),
-        )
+        create_gltf(device, uploader, descriptors, arenas, gltf, (glb_path, resource_path), Some(buffer))
     }
 
     /// Loads the glTF scene from a .gltf file.
@@ -131,13 +123,13 @@ impl Gltf {
         device: &Rc<Device>,
         uploader: &mut Uploader,
         descriptors: &mut Descriptors,
-        main_arena: &mut VulkanArena,
+        arenas: (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
         gltf_path: &Path,
         resource_path: &Path,
     ) -> Result<Gltf, Error> {
         let gltf = fs::read_to_string(gltf_path).map_err(Error::GltfMissingFile)?;
         let gltf: gltf_json::GltfJson = miniserde::json::from_str(&gltf).map_err(Error::GltfJsonDeserialization)?;
-        create_gltf(device, uploader, descriptors, main_arena, gltf, (gltf_path, resource_path), None)
+        create_gltf(device, uploader, descriptors, arenas, gltf, (gltf_path, resource_path), None)
     }
 
     pub fn mesh_iter(&self) -> MeshIter<'_> {
@@ -150,7 +142,7 @@ fn create_gltf(
     device: &Rc<Device>,
     uploader: &mut Uploader,
     descriptors: &mut Descriptors,
-    arena: &mut VulkanArena,
+    (buffer_arena, image_arena): (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
     gltf: gltf_json::GltfJson,
     (gltf_path, resource_path): (&Path, &Path),
     bin_buffer: Option<&[u8]>,
@@ -203,7 +195,7 @@ fn create_gltf(
                 )
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .build();
-            let buffer = arena.create_buffer(
+            let buffer = buffer_arena.create_buffer(
                 buffer_create_info,
                 data,
                 Some(uploader),
@@ -223,7 +215,7 @@ fn create_gltf(
                         )
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .build();
-                    let buffer = arena.create_buffer(
+                    let buffer = buffer_arena.create_buffer(
                         buffer_create_info,
                         data,
                         Some(uploader),
@@ -365,7 +357,7 @@ fn create_gltf(
 
         let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
         let name = image.uri.as_deref().unwrap_or("glb binary buffer");
-        images.push(Rc::new(image_load(device, uploader, arena, bytes, kind, name)?));
+        images.push(Rc::new(image_load(device, uploader, image_arena, bytes, kind, name)?));
     }
 
     let materials = {

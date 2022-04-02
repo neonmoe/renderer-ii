@@ -17,7 +17,7 @@ mod vulkan_raii;
 // public-facing modules:
 
 mod arena;
-pub use arena::VulkanArena;
+pub use arena::{ForBuffers, ForImages, VulkanArena};
 
 pub use ash::vk;
 

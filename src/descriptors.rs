@@ -3,7 +3,7 @@ use crate::pipeline_parameters::{
     DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS,
 };
 use crate::vulkan_raii::{DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
-use crate::{debug_utils, Error, FrameIndex, Uploader, VulkanArena};
+use crate::{debug_utils, Error, ForImages, FrameIndex, Uploader, VulkanArena};
 use ash::vk;
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -81,7 +81,7 @@ pub struct PbrDefaults {
 }
 
 impl PbrDefaults {
-    pub fn new(device: &Rc<Device>, uploader: &mut Uploader, arena: &mut VulkanArena) -> Result<PbrDefaults, Error> {
+    pub fn new(device: &Rc<Device>, uploader: &mut Uploader, arena: &mut VulkanArena<ForImages>) -> Result<PbrDefaults, Error> {
         const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
         const BLACK: [u8; 4] = [0, 0, 0, 0xFF];
         const NORMAL: [u8; 4] = [0, 0, 0xFF, 0];
