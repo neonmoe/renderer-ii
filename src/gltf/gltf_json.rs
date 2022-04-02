@@ -1,4 +1,4 @@
-use miniserde::Deserialize;
+use serde_derive::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Deserialize)]
@@ -33,10 +33,10 @@ pub struct Node {
     pub name: Option<String>,
     pub mesh: Option<usize>,
     pub children: Option<Vec<usize>>,
-    pub matrix: Option<Vec<f32>>,
-    pub translation: Option<Vec<f32>>,
-    pub rotation: Option<Vec<f32>>,
-    pub scale: Option<Vec<f32>>,
+    pub matrix: Option<[f32; 16]>,
+    pub translation: Option<[f32; 3]>,
+    pub rotation: Option<[f32; 4]>,
+    pub scale: Option<[f32; 3]>,
 }
 
 #[derive(Deserialize)]
@@ -101,6 +101,7 @@ pub struct Image {
 
 #[derive(Deserialize)]
 pub struct Material {
+    pub name: Option<String>,
     #[serde(rename = "pbrMetallicRoughness")]
     pub pbr_metallic_roughness: Option<PbrMetallicRoughness>,
     #[serde(rename = "normalTexture")]
@@ -110,13 +111,13 @@ pub struct Material {
     #[serde(rename = "emissiveTexture")]
     pub emissive_texture: Option<TextureInfo>,
     #[serde(rename = "emissiveFactor")]
-    pub emissive_factor: Option<Vec<f32>>,
+    pub emissive_factor: Option<[f32; 3]>,
 }
 
 #[derive(Deserialize)]
 pub struct PbrMetallicRoughness {
     #[serde(rename = "baseColorFactor")]
-    pub base_color_factor: Option<Vec<f32>>,
+    pub base_color_factor: Option<[f32; 4]>,
     #[serde(rename = "metallicFactor")]
     pub metallic_factor: Option<f32>,
     #[serde(rename = "roughnessFactor")]

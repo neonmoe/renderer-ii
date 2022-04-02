@@ -1,11 +1,11 @@
 use crate::arena::VulkanArena;
-use crate::descriptors::PipelineSpecificData;
+use crate::descriptors::{GltfFactors, PipelineSpecificData};
 use crate::image_loading::{self, TextureKind};
 use crate::mesh::Mesh;
 use crate::vk;
 use crate::vulkan_raii::{Buffer, Device, ImageView};
 use crate::{Descriptors, Error, ForBuffers, ForImages, Material, PipelineIndex, Uploader};
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use memmap2::{Advice, Mmap, MmapOptions};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -110,7 +110,7 @@ impl Gltf {
         let buffer = buffer.ok_or(Error::GltfMisc("glb buffer is required"))?;
 
         let json = json.ok_or(Error::MissingGlbJson)?;
-        let gltf: gltf_json::GltfJson = miniserde::json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
+        let gltf: gltf_json::GltfJson = serde_json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
         create_gltf(device, uploader, descriptors, arenas, gltf, (glb_path, resource_path), Some(buffer))
     }
 
@@ -128,7 +128,7 @@ impl Gltf {
         resource_path: &Path,
     ) -> Result<Gltf, Error> {
         let gltf = fs::read_to_string(gltf_path).map_err(Error::GltfMissingFile)?;
-        let gltf: gltf_json::GltfJson = miniserde::json::from_str(&gltf).map_err(Error::GltfJsonDeserialization)?;
+        let gltf: gltf_json::GltfJson = serde_json::from_str(&gltf).map_err(Error::GltfJsonDeserialization)?;
         create_gltf(device, uploader, descriptors, arenas, gltf, (gltf_path, resource_path), None)
     }
 
@@ -250,19 +250,19 @@ fn create_gltf(
         gltf.nodes
             .iter()
             .map(|node| {
-                let transform = if let Some(&[x0, y0, z0, w0, x1, y1, z1, w1, x2, y2, z2, w2, x3, y3, z3, w3]) = node.matrix.as_deref() {
-                    Mat4::from_cols_array(&[x0, y0, z0, w0, x1, y1, z1, w1, x2, y2, z2, w2, x3, y3, z3, w3])
+                let transform = if let Some(cols_array) = node.matrix {
+                    Mat4::from_cols_array(&cols_array)
                 } else {
-                    let translation = match node.translation.as_deref() {
-                        Some(&[x, y, z]) => Vec3::new(x, y, z),
+                    let translation = match node.translation {
+                        Some([x, y, z]) => Vec3::new(x, y, z),
                         _ => Vec3::ZERO,
                     };
-                    let rotation = match node.rotation.as_deref() {
-                        Some(&[x, y, z, w]) => Quat::from_xyzw(x, y, z, w),
+                    let rotation = match node.rotation {
+                        Some([x, y, z, w]) => Quat::from_xyzw(x, y, z, w),
                         _ => Quat::IDENTITY,
                     };
-                    let scale = match node.scale.as_deref() {
-                        Some(&[x, y, z]) => Vec3::new(x, y, z),
+                    let scale = match node.scale {
+                        Some([x, y, z]) => Vec3::new(x, y, z),
                         _ => Vec3::new(1.0, 1.0, 1.0),
                     };
                     Mat4::from_scale_rotation_translation(scale, rotation, translation)
@@ -395,6 +395,35 @@ fn create_gltf(
                 let normal = handle_optional_result!(mat.normal_texture.as_ref().and_then(|tex| mktex(&images, tex)));
                 let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex)));
                 let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
+
+                let factors = &[GltfFactors {
+                    base_color: pbr
+                        .base_color_factor
+                        .as_ref()
+                        .map(|&[r, g, b, a]| Vec4::new(r, g, b, a))
+                        .unwrap_or(Vec4::ONE),
+                    emissive: mat
+                        .emissive_factor
+                        .as_ref()
+                        .map(|&[r, g, b]| Vec4::new(r, g, b, 0.0))
+                        .unwrap_or(Vec4::ZERO),
+                    metallic_roughness: Vec4::new(pbr.metallic_factor.unwrap_or(1.0), pbr.roughness_factor.unwrap_or(1.0), 0.0, 0.0),
+                }];
+                let factors = bytemuck::cast_slice(factors);
+                let factors_size = factors.len() as u64;
+                let buffer_create_info = vk::BufferCreateInfo::builder()
+                    .size(factors_size)
+                    .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .build();
+                let factors_buffer = buffer_arena.create_buffer(
+                    buffer_create_info,
+                    factors,
+                    Some(uploader),
+                    format_args!("material uniforms for {}", mat.name.as_deref().unwrap_or("unnamed material")),
+                )?;
+                let factors = (Rc::new(factors_buffer), 0, factors_size);
+
                 Material::new(
                     descriptors,
                     PipelineIndex::Gltf,
@@ -404,6 +433,7 @@ fn create_gltf(
                         normal,
                         occlusion,
                         emissive,
+                        factors,
                     },
                 )
             })

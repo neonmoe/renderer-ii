@@ -5,6 +5,8 @@ use crate::pipeline_parameters::{
 use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 use crate::{debug_utils, Error, ForImages, FrameIndex, Uploader, VulkanArena};
 use ash::vk;
+use bytemuck::{Pod, Zeroable};
+use glam::Vec4;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::rc::{Rc, Weak};
@@ -25,8 +27,25 @@ pub enum PipelineSpecificData {
         normal: Option<Rc<ImageView>>,
         occlusion: Option<Rc<ImageView>>,
         emissive: Option<Rc<ImageView>>,
+        /// (Buffer, offset, size) that contains a [GltfFactors].
+        factors: (Rc<Buffer>, vk::DeviceSize, vk::DeviceSize),
     },
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GltfFactors {
+    /// (r, g, b, _). Vec4 to make sure there's no padding/alignment issues.
+    pub base_color: Vec4,
+    /// (r, g, b, _). Vec4 to make sure there's no padding/alignment issues.
+    pub emissive: Vec4,
+    /// (metallic, roughness, _, _). Vec4 to make sure there's no padding.
+    pub metallic_roughness: Vec4,
+}
+// Mat4's are Pods, therefore they are Zeroable, therefore this is too.
+unsafe impl Zeroable for GltfFactors {}
+// repr(c), the contents are Pods, and there's no padding.
+unsafe impl Pod for GltfFactors {}
 
 impl PartialEq for Material {
     fn eq(&self, other: &Self) -> bool {
@@ -382,6 +401,7 @@ impl Descriptors {
                 normal,
                 occlusion,
                 emissive,
+                factors,
             } => {
                 let images = [
                     base_color.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.base_color).inner,
@@ -394,7 +414,9 @@ impl Descriptors {
                     occlusion.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.occlusion).inner,
                     emissive.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.emissive).inner,
                 ];
+                let factors = (factors.0.inner, factors.1, factors.2);
                 self.set_uniform_images(frame_index, pipeline, pending_writes, (1, 1, material.array_index), &images);
+                self.set_uniform_buffer(frame_index, pipeline, pending_writes, (1, 6, material.array_index), factors);
             }
         }
     }

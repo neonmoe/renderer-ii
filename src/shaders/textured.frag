@@ -14,6 +14,12 @@ layout(set = 1, binding = 2) uniform texture2D metallic_roughness[MAX_TEXTURE_CO
 layout(set = 1, binding = 3) uniform texture2D normal[MAX_TEXTURE_COUNT];
 layout(set = 1, binding = 4) uniform texture2D occlusion[MAX_TEXTURE_COUNT];
 layout(set = 1, binding = 5) uniform texture2D emissive[MAX_TEXTURE_COUNT];
+layout(set = 1, binding = 6) uniform GltfFactors {
+    vec4 base_color;
+    vec4 emissive;
+    vec4 metallic_roughness;
+}
+factors[MAX_TEXTURE_COUNT];
 
 layout(push_constant) uniform PushConstantStruct {
     int texture_index;
@@ -22,17 +28,25 @@ layout(push_constant) uniform PushConstantStruct {
 push_constant;
 
 void main() {
+    vec4 base_color_factor = factors[push_constant.texture_index].base_color;
+    vec3 emissive_factor = factors[push_constant.texture_index].emissive.xyz;
+    vec2 metallic_roughness_factor = factors[push_constant.texture_index].metallic_roughness.xy;
     vec4 base_color =
         texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
-    vec4 metallic_roughness =
-        texture(sampler2D(metallic_roughness[push_constant.texture_index], tex_sampler), in_uv);
+    vec2 metallic_roughness =
+        texture(sampler2D(metallic_roughness[push_constant.texture_index], tex_sampler), in_uv).xy;
     vec4 normal_tex = texture(sampler2D(normal[push_constant.texture_index], tex_sampler), in_uv);
     vec4 occlusion = texture(sampler2D(occlusion[push_constant.texture_index], tex_sampler), in_uv);
-    vec4 emissive = texture(sampler2D(emissive[push_constant.texture_index], tex_sampler), in_uv);
+    vec3 emissive =
+        texture(sampler2D(emissive[push_constant.texture_index], tex_sampler), in_uv).xyz;
 
     vec3 bitangent = in_tangent.w * cross(in_normal, in_tangent.xyz);
     mat3 tangent_to_world = mat3(in_tangent.xyz, bitangent, in_normal);
     vec3 normal = tangent_to_world * normal_tex.xyz;
+
+    base_color *= base_color_factor;
+    emissive *= emissive_factor;
+    metallic_roughness *= metallic_roughness_factor;
 
     switch (push_constant.debug_texture) {
     // The actual rendering case, enabled by default and by pressing 0 in
@@ -47,7 +61,7 @@ void main() {
         out_color = base_color;
         break;
     case 2:
-        out_color = metallic_roughness;
+        out_color = vec4(metallic_roughness, 0.0, 1.0);
         break;
     case 3:
         out_color = vec4(normal, 1.0);
@@ -56,7 +70,7 @@ void main() {
         out_color = occlusion;
         break;
     case 5:
-        out_color = emissive;
+        out_color = vec4(emissive, 1.0);
         break;
     }
 }

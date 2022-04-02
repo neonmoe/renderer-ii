@@ -114,7 +114,7 @@ pub enum Error {
     #[error("glb json chunk missing")]
     MissingGlbJson,
     #[error("failed to deserialize gltf json")]
-    GltfJsonDeserialization(#[source] miniserde::Error),
+    GltfJsonDeserialization(#[source] serde_json::Error),
     #[error("unsupported gltf minimum version ({0}), 2.0 is supported")]
     UnsupportedGltfVersion(String),
     #[error("gltf has buffer without an uri but no glb BIN buffer")]
