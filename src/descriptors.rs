@@ -10,17 +10,17 @@ use std::mem;
 use std::ops::Range;
 use std::rc::{Rc, Weak};
 
-/// A unique index into one pipeline's textures. A [Weak] of
-/// this is held by [Descriptors], [Rc] by [Material](crate::Material).
+/// A unique index into one pipeline's textures and other material data.
 pub struct Material {
     pub array_index: u32,
-    pipeline: PipelineIndex,
+    pub pipeline: PipelineIndex,
     data: PipelineSpecificData,
 }
 
 #[derive(Clone)]
 pub enum PipelineSpecificData {
     Gltf {
+        // TODO(high): Other material data in uniform buffers?
         base_color: Option<Rc<ImageView>>,
         metallic_roughness: Option<Rc<ImageView>>,
         normal: Option<Rc<ImageView>>,
@@ -67,8 +67,8 @@ impl Material {
 type MaterialSlot = Option<Weak<Material>>;
 type MaterialSlotArray = Vec<MaterialSlot>;
 
-/// Synchronization status per frame index. True means the image views
-/// for the frame index are up to date.
+/// Synchronization status per frame index. True at index i means the uniforms
+/// for the frame index i are up to date.
 type MaterialStatus = Vec<bool>;
 type MaterialStatusArray = Vec<MaterialStatus>;
 

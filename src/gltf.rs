@@ -38,10 +38,10 @@ pub struct Gltf {
 }
 
 impl Gltf {
-    /// Loads the glTF scene from the contents of a .glb file.
+    /// Loads the glTF scene from a .glb file.
     ///
-    /// Any external files referenced in the glTF are searched
-    /// relative to `directory`.
+    /// Any external files referenced in the glTF are searched relative to
+    /// `resource_path`.
     #[profiling::function]
     pub fn from_glb(
         device: &Rc<Device>,
@@ -122,10 +122,10 @@ impl Gltf {
         )
     }
 
-    /// Loads the glTF scene from the contents of a .gltf file.
+    /// Loads the glTF scene from a .gltf file.
     ///
-    /// Any external files referenced in the glTF are searched
-    /// relative to `directory`.
+    /// Any external files referenced in the glTF are searched relative to
+    /// `resource_path`.
     #[profiling::function]
     pub fn from_gltf(
         device: &Rc<Device>,
@@ -182,6 +182,7 @@ fn create_gltf(
             memmap_options.len(range.count());
         }
         let memmap = unsafe { memmap_options.map(&file) }.map_err(|err| Error::GltfMapFile(err, path.clone()))?;
+        let _ = memmap.advise(Advice::Sequential);
         let _ = memmap.advise(Advice::WillNeed);
         *memmap_holder = Some(memmap);
         Ok(memmap_holder.as_deref().unwrap())
@@ -189,11 +190,6 @@ fn create_gltf(
 
     let mut buffers = Vec::with_capacity(gltf.buffers.len());
     for buffer in &gltf.buffers {
-        // TODO: Don't load buffers that are only used by images here, as the
-        // image loading code will need to reload the buffer for its staging
-        // memory anyways, and as such, doesn't reuse these buffers. The image
-        // loading code can't use purely device local buffers (i.e. these
-        // buffers), as it needs to parse stuff from the buffer on the CPU-side.
         if let Some(uri) = buffer.uri.as_ref() {
             let path = resource_path.join(uri);
             let data = load_file(&mut memmap_holder, path, None)?;

@@ -30,11 +30,6 @@ impl FrameIndex {
 
 type PerFrame<T> = Vec<T>;
 
-/// The main half of the rendering pair, along with [Canvas].
-///
-/// Each instance of [Gpu] contains a handle to a single physical
-/// device in Vulkan terms, i.e. a GPU, and everything else is built
-/// off of that.
 pub struct Renderer {
     device: Rc<Device>,
     frame_start_fence: Fence,
@@ -47,16 +42,6 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// Creates a new instance of [Gpu], optionally the specified
-    /// one. Only one should exist at a time.
-    ///
-    /// The tuple's second part is a list of usable physical
-    /// devices, for picking between e.g. a laptop's integrated and
-    /// discrete GPUs.
-    ///
-    /// The inner tuples consist of: whether the gpu is the one picked
-    /// in this function call, the display name, and the id passed to
-    /// a new [Gpu] when recreating it with a new physical device.
     pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice, frames: u32) -> Result<Renderer, Error> {
         profiling::scope!("new_gpu");
 
@@ -180,7 +165,7 @@ impl Renderer {
         let vk::Extent2D { width, height } = canvas.extent;
         scene
             .camera
-            .upload(descriptors, width as f32, height as f32, &mut self.temp_arena[fi], frame_index)?;
+            .upload(descriptors, &mut self.temp_arena[fi], frame_index, width as f32, height as f32)?;
 
         let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, canvas, scene, debug_value)?;
 

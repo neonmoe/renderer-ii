@@ -9,8 +9,8 @@ pub use camera::Camera;
 
 type MeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
 
-/// A container for the meshes rendered during a particular frame, and
-/// the transforms those meshes are rendered with.
+/// A container for the materials and meshes to render during a particular
+/// frame, and transforms for each instance.
 pub struct Scene<'a> {
     pub camera: Camera,
     pub pipeline_map: PipelineMap<MeshMap<'a>>,

@@ -6,7 +6,6 @@ use std::rc::Rc;
 #[derive(PartialEq, Eq, Hash)]
 pub struct Mesh {
     pub pipeline: PipelineIndex,
-    /// Vec<(Buffer, offset in bytes)>
     pub(crate) vertex_buffers: Vec<Rc<Buffer>>,
     pub(crate) vertices_offsets: Vec<vk::DeviceSize>,
     pub(crate) index_buffer: Rc<Buffer>,
@@ -18,11 +17,6 @@ pub struct Mesh {
 impl Mesh {
     /// Creates a new mesh. Ensure that the vertices match the
     /// pipeline.
-    ///
-    /// The `vertices` slice should contain a slice for each
-    /// attribute, containing the values for that attribute tightly
-    /// packed.
-    // TODO(high): Meshes that refer to existing buffers, instead of owning them themselves
     pub fn new<I: IndexType>(
         pipeline: PipelineIndex,
         vertex_buffers: Vec<Rc<Buffer>>,

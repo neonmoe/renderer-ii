@@ -62,7 +62,7 @@ impl Instance {
             log::debug!("Instance extension (optional): VK_EXT_debug_utils");
         }
 
-        // Features in core Vulkan, provided by the target api version:
+        // Features in core Vulkan, provided by the target api version, used somewhere in the codebase:
         // - VK_KHR_get_physical_device_properties2 (Vulkan 1.1)
 
         let create_info = vk::InstanceCreateInfo::builder()

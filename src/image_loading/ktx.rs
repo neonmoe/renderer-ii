@@ -43,12 +43,12 @@ pub fn decode(bytes: &[u8]) -> Result<KtxData, Error> {
         return Err(Error::UnsupportedKtxFeature("cube textures are not supported"));
     }
 
-    // We have to allocate yet another buffer because the KTX files'
-    // mip levels are aligned to 4 bytes, but Vulkan requires the
-    // source of the vkCmdCopyBufferToImage to be aligned to the texel
-    // size, which can be e.g. 16 for BC7. Tightly packed texels are
-    // aligned to the texel size, so no manual alignment math needs to
-    // be done for this secondary buffer.
+    // We have to allocate yet another buffer (as opposed to just reusing
+    // `bytes`) because the KTX files' mip levels are aligned to 4 bytes, but
+    // Vulkan requires the source of the vkCmdCopyBufferToImage to be aligned to
+    // the texel size, which can be e.g. 16 for BC7. Tightly packed texels are
+    // aligned to the texel size, so no manual alignment math needs to be done
+    // for this secondary buffer.
     let mut pixels = Vec::with_capacity(bytes.len() + number_of_mipmap_levels * 12);
     let mut mip_ranges = Vec::with_capacity(number_of_mipmap_levels);
     let all_images_start = 64 + bytes_of_key_value_data;
@@ -57,6 +57,10 @@ pub fn decode(bytes: &[u8]) -> Result<KtxData, Error> {
         profiling::scope!("processing mip level");
         let image_size = u32::from_le_bytes(bytes[image_start..image_start + 4].try_into().unwrap()) as usize;
 
+        // TODO(low): Add configuration for not loading some mip levels
+        // This would be an easy "texture quality" switch to add. It would be
+        // enough to just not push the first N mip ranges and pixels, and set
+        // width/height to the first mip's width/height.
         let mip_pixels = &bytes[image_start + 4..image_start + 4 + image_size];
         let mip_range_start = pixels.len();
         {

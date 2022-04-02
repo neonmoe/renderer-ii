@@ -46,13 +46,17 @@ fn format_object_name(mut object_name: String) -> String {
             break;
         }
 
-        if &object_name[i..i + 1] == "_" {
-            // Remove the _. The uppercase character after it will be
-            // left in its place.
-            object_name.remove(i);
-        } else {
-            // Everything else gets lowercased.
-            (&mut object_name[i..i + 1]).make_ascii_lowercase();
+        for char_len in 1.. {
+            if let Some(char_str) = object_name.get(i..i + char_len) {
+                if char_str == "_" {
+                    // Remove the _. The uppercase character after it will be
+                    // left in its place.
+                    object_name.remove(i);
+                } else {
+                    // Everything else gets lowercased.
+                    (&mut object_name[i..i + char_len]).make_ascii_lowercase();
+                }
+            }
         }
     }
     object_name

@@ -42,16 +42,14 @@ fn reverse_z_rh_infinite_projection(fov: f32, aspect_ratio: f32, near: f32) -> M
 pub struct Camera {}
 
 impl Camera {
-    /// Updates Vulkan buffers with the current state of the
-    /// [Camera] and [Canvas].
     #[profiling::function]
     pub(crate) fn upload(
         &self,
         descriptors: &Descriptors,
-        width: f32,
-        height: f32,
         temp_arena: &mut VulkanArena,
         frame_index: FrameIndex,
+        width: f32,
+        height: f32,
     ) -> Result<(), Error> {
         let src = &[GlobalTransforms::new(width, height)];
         let temp_buffer = {

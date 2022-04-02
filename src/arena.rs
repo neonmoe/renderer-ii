@@ -14,14 +14,6 @@ pub struct VulkanArena {
     memory: Rc<DeviceMemory>,
     mapped_memory_ptr: *mut u8,
     total_size: vk::DeviceSize,
-    /// The location where the available memory starts. Gets set to 0
-    /// when the arena is reset, bumped when allocating.
-    ///
-    /// NOTE: Cells are not Sync, so all accesses to the offset are
-    /// single-threaded. This is why it's safe to get() and replace()
-    /// instead of using atomic operations. At least currently, Arenas
-    /// are per-thread. A possible multi-threaded arena should use an
-    /// atomic int here.
     offset: vk::DeviceSize,
     buffer_image_granularity: vk::DeviceSize,
     previous_allocation_was_image: bool,
@@ -212,6 +204,9 @@ impl VulkanArena {
     }
 
     pub fn create_image(&mut self, image_create_info: vk::ImageCreateInfo, name: Arguments) -> Result<Image, Error> {
+        // TODO(high): Tiled-only memory might conflict with mapped memory currently, as all the memory could be mapped.
+        // One solution: re-map the memory when creating an image so that the mapped area does not conflict
+        // Another solution: don't allow buffers and images in the same arena? Then we could ditch buffer-image-granularity too.
         let image = unsafe { self.device.create_image(&image_create_info, None) }.map_err(Error::VulkanImageCreation)?;
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
         let alignment = image_memory_requirements.alignment.max(self.buffer_image_granularity);
@@ -248,17 +243,16 @@ impl VulkanArena {
         })
     }
 
-    /// Stores the buffer in this arena, to be destroyed when the
-    /// arena is reset. Ideal for temporary arenas whose buffers just
-    /// have to live "long enough."
+    /// Stores the buffer reference in this arena, to be destroyed when the
+    /// arena is reset. Ideal for temporary arenas whose buffers just have to
+    /// live until the arena is reset.
     pub fn add_buffer(&mut self, buffer: Buffer) {
         self.pinned_buffers.push(buffer);
     }
 
-    /// Attempts to reset the arena, marking all graphics memory owned
-    /// by it as usable again. If some of the memory allocated from
-    /// this arena is still in use, Err is returned and the arena is
-    /// not reset.
+    /// Attempts to reset the arena, marking all graphics memory owned by it as
+    /// usable again. If some of the memory allocated from this arena is still
+    /// in use, Err is returned and the arena is not reset.
     pub fn reset(&mut self) -> Result<(), Error> {
         if Rc::strong_count(&self.memory) > 1 + self.pinned_buffers.len() {
             Err(Error::ArenaNotResettable)

@@ -243,9 +243,6 @@ pub fn create_pixel(
     Ok(image_view)
 }
 
-/// Loads a ktx into (width, height, format, pixel bytes). Note that
-/// the pixel bytes do not map to a linear rgba array: the data is
-/// compressed. The format reflects this.
 #[profiling::function]
 pub fn load_ktx(
     device: &Rc<Device>,
