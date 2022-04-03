@@ -111,8 +111,24 @@ trivial_drop_impl!(Swapchain, destroy_swapchain);
 pub struct DeviceMemory {
     pub inner: vk::DeviceMemory,
     pub device: Rc<Device>,
+    size: u64,
 }
-trivial_drop_impl!(DeviceMemory, free_memory);
+impl DeviceMemory {
+    pub fn new(inner: vk::DeviceMemory, device: Rc<Device>, size: u64) -> DeviceMemory {
+        crate::allocation::ALLOCATED.fetch_add(size, std::sync::atomic::Ordering::Relaxed);
+        crate::allocation::IN_USE.fetch_add(size, std::sync::atomic::Ordering::Relaxed);
+        DeviceMemory { inner, device, size }
+    }
+}
+impl Drop for DeviceMemory {
+    fn drop(&mut self) {
+        profiling::scope!("vk::free_memory");
+        log::trace!("vk::free_memory({:?}) [{} bytes]", self.inner, self.size);
+        crate::allocation::IN_USE.fetch_sub(self.size, std::sync::atomic::Ordering::Relaxed);
+        crate::allocation::ALLOCATED.fetch_sub(self.size, std::sync::atomic::Ordering::Relaxed);
+        unsafe { self.device.free_memory(self.inner, None) };
+    }
+}
 
 pub struct Buffer {
     pub inner: vk::Buffer,

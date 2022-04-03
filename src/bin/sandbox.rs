@@ -136,14 +136,14 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, swapchain.frame_count())?;
     descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain.frame_count())?;
 
-    let mut frame_instants = Vec::with_capacity(10_000);
-    frame_instants.push(Instant::now());
+    let mut frame_processing_durations = Vec::with_capacity(10_000);
 
     window.show();
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut size_changed = false;
     let mut debug_value = 0;
     'running: loop {
+        let update_start_time = Instant::now();
         for event in event_pump.poll_iter() {
             profiling::scope!("handle SDL event");
             match event {
@@ -214,12 +214,21 @@ fn fallible_main() -> anyhow::Result<()> {
             }
         }
 
-        let frame_index = renderer.wait_frame(&swapchain)?;
+        let update_duration = Instant::now() - update_start_time;
+        let frame_index = {
+            // Xwayland waits here for vsync, don't take into account for frame times
+            renderer.wait_frame(&swapchain)?
+        };
+        let render_start_time = Instant::now();
         match renderer.render_frame(frame_index, &mut descriptors, &pipelines, &framebuffers, &scene, debug_value) {
             Ok(_) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
         }
-        match renderer.present_frame(frame_index, &swapchain) {
+        let render_duration = Instant::now() - render_start_time;
+        match {
+            // Wayland waits here for vsync, don't take into account for frame times
+            renderer.present_frame(frame_index, &swapchain)
+        } {
             Ok(_) => {}
             Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => size_changed = true,
             Err(err) => log::warn!("Error during regular frame present: {}", err),
@@ -228,32 +237,24 @@ fn fallible_main() -> anyhow::Result<()> {
         {
             profiling::scope!("frame time tracking");
             let now = Instant::now();
-            frame_instants.push(now);
-            frame_instants.retain(|time| (now - *time) < Duration::from_secs(1));
-            let interval_count = frame_instants.len() - 1;
-            let interval_sum: Duration = frame_instants
-                .windows(2)
-                .map(|instants| {
-                    if let [before, after] = *instants {
-                        after - before
-                    } else {
-                        unreachable!()
-                    }
-                })
-                .sum();
-            if let Some(avg_interval) = interval_sum.checked_div(interval_count as u32) {
-                let used_memory = physical_device
-                    .get_memory_usage(&instance.inner)
-                    .map(display_bytes)
-                    .unwrap_or_else(|| String::from("(unknown amount)"));
-                let _ = window.set_title(&format!(
-                    "{} ({:.2} ms frame interval ({:.0} fps), {} of VRAM in use)",
-                    env!("CARGO_PKG_NAME"),
-                    avg_interval.as_secs_f64() * 1000.0,
-                    frame_instants.len(),
-                    used_memory,
-                ));
-            }
+            let frame_duration = update_duration + render_duration;
+            frame_processing_durations.push((now, frame_duration));
+            frame_processing_durations.retain(|(time, _)| (now - *time) < Duration::from_secs(1));
+            let avg_frame_duration =
+                frame_processing_durations.iter().map(|(_, d)| d.as_secs_f64()).sum::<f64>() / frame_processing_durations.len() as f64;
+            let used_memory = neonvk::get_allocated_vram_in_use();
+            let actual_used_memory = physical_device.get_memory_usage(&instance.inner).unwrap_or(used_memory);
+            let external_used_memory = actual_used_memory - used_memory;
+            let allocated_memory = neonvk::get_allocated_vram();
+            let _ = window.set_title(&format!(
+                "{} ({:.3} ms frametime, {:.0} fps, {} / {} of VRAM in use / allocated + {} allocated by the system)",
+                env!("CARGO_PKG_NAME"),
+                avg_frame_duration * 1000.0,
+                frame_processing_durations.len(),
+                display_bytes(used_memory),
+                display_bytes(allocated_memory),
+                display_bytes(external_used_memory),
+            ));
         }
 
         profiling::finish_frame!();
@@ -276,6 +277,15 @@ fn fallible_main() -> anyhow::Result<()> {
         drop(descriptors);
         assert_last_drop(device);
         assert_last_drop(surface);
+        drop(instance);
+    }
+
+    {
+        profiling::scope!("clean up on exit (SDL)");
+        drop(event_pump);
+        drop(window);
+        drop(video_subsystem);
+        drop(sdl_context);
     }
 
     Ok(())

@@ -44,6 +44,9 @@ impl<T: ArenaType> Drop for VulkanArena<T> {
         if !self.mapped_memory_ptr.is_null() {
             unsafe { self.device.unmap_memory(self.memory.inner) };
         }
+        // The memory may still be in use, and after this, usage can't be
+        // tracked. So assume the entire memory block is in use.
+        crate::allocation::IN_USE.fetch_add(self.total_size - self.offset, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -66,6 +69,7 @@ impl<T: ArenaType> VulkanArena<T> {
             .memory_type_index(memory_type_index);
         let memory = {
             profiling::scope!("vk::allocate_memory");
+            log::trace!("vk::allocate_memory({} bytes, index {})", size, memory_type_index);
             unsafe { device.allocate_memory(&alloc_info, None) }
                 .map_err(|err| Error::VulkanAllocate(err, debug_identifier.clone(), size))?
         };
@@ -78,12 +82,13 @@ impl<T: ArenaType> VulkanArena<T> {
                 ptr::null_mut()
             };
 
+        let memory = Rc::new(DeviceMemory::new(memory, device.clone(), size));
+        // IN_USE gets bumped by DeviceMemory::new, subtract it back down because none of it is actually in use.
+        crate::allocation::IN_USE.fetch_sub(size, std::sync::atomic::Ordering::Relaxed);
+
         Ok(VulkanArena {
             device: device.clone(),
-            memory: Rc::new(DeviceMemory {
-                inner: memory,
-                device: device.clone(),
-            }),
+            memory,
             mapped_memory_ptr,
             total_size: size,
             offset: 0,
@@ -101,6 +106,8 @@ impl<T: ArenaType> VulkanArena<T> {
             Err(Error::ArenaNotResettable)
         } else {
             self.pinned_buffers.clear();
+            // Everything created from this arena no longer exists, so none of the memory is in use anymore.
+            crate::allocation::IN_USE.fetch_sub(self.offset, std::sync::atomic::Ordering::Relaxed);
             self.offset = 0;
             Ok(())
         }
@@ -231,7 +238,9 @@ impl VulkanArena<ForBuffers> {
             unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len()) };
         }
 
-        self.offset = offset + size;
+        let new_offset = offset + size;
+        crate::allocation::IN_USE.fetch_add(new_offset - self.offset, std::sync::atomic::Ordering::Relaxed);
+        self.offset = new_offset;
 
         Ok(Buffer {
             inner: buffer,
@@ -272,7 +281,10 @@ impl VulkanArena<ForImages> {
 
         debug_utils::name_vulkan_object(&self.device, image, name);
 
-        self.offset = offset + size;
+        let new_offset = offset + size;
+        crate::allocation::IN_USE.fetch_add(new_offset - self.offset, std::sync::atomic::Ordering::Relaxed);
+        self.offset = new_offset;
+
         Ok(Image {
             inner: image,
             device: self.device.clone(),

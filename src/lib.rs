@@ -80,3 +80,18 @@ mod surface {
     }
 }
 pub use surface::create_surface;
+
+mod allocation {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    pub(crate) static ALLOCATED: AtomicU64 = AtomicU64::new(0);
+    pub(crate) static IN_USE: AtomicU64 = AtomicU64::new(0);
+
+    pub fn get_allocated_vram() -> u64 {
+        ALLOCATED.load(Ordering::Relaxed)
+    }
+
+    pub fn get_allocated_vram_in_use() -> u64 {
+        IN_USE.load(Ordering::Relaxed)
+    }
+}
+pub use allocation::{get_allocated_vram, get_allocated_vram_in_use};
