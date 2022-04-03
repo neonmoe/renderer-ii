@@ -4,6 +4,8 @@ use crate::{debug_utils, physical_device_features, Error, PhysicalDevice};
 use ash::{vk, Instance};
 
 pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> Result<Device, Error> {
+    profiling::scope!("vulkan device creation");
+
     // Just to have an array to point at for the queue priorities.
     let ones = [1.0, 1.0, 1.0];
     let queue_families = [

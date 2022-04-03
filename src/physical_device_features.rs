@@ -17,10 +17,9 @@ pub fn create_device_with_feature_requirements(
         .push_next(&mut descriptor_indexing_features)
         .push_next(&mut extended_dynamic_state_features)
         .enabled_features(&features);
-    unsafe {
-        instance
-            .create_device(physical_device, &device_create_info, None)
-            .map_err(Error::VulkanDeviceCreation)
+    {
+        profiling::scope!("vk::create_device");
+        unsafe { instance.create_device(physical_device, &device_create_info, None) }.map_err(Error::VulkanDeviceCreation)
     }
 }
 

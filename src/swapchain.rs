@@ -26,6 +26,8 @@ impl Swapchain {
         old_swapchain: Option<&Swapchain>,
         settings: &SwapchainSettings,
     ) -> Result<Swapchain, Error> {
+        profiling::scope!("swapchain creation");
+
         let surface_ext = khr::Surface::new(entry, instance);
         let swapchain_ext = khr::Swapchain::new(instance, &device.inner);
         let queue_family_indices = [

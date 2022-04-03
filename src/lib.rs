@@ -70,6 +70,7 @@ mod surface {
     use raw_window_handle::HasRawWindowHandle;
 
     pub fn create_surface(entry: &Entry, instance: &Instance, window: &dyn HasRawWindowHandle) -> Result<Surface, Error> {
+        profiling::scope!("window surface creation");
         let surface = unsafe { ash_window::create_surface(entry, instance, window, None) }.map_err(Error::VulkanSurfaceCreation)?;
         let surface_ext = khr::Surface::new(entry, instance);
         Ok(Surface {

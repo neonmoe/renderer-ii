@@ -63,6 +63,7 @@ impl Hash for Material {
 
 impl Material {
     pub fn new(descriptors: &mut Descriptors, pipeline: PipelineIndex, data: PipelineSpecificData) -> Result<Rc<Material>, Error> {
+        profiling::scope!("material slot reservation");
         let material_slot_array = descriptors.material_slots_per_pipeline.get_mut(pipeline);
         if let Some((i, slot)) = material_slot_array.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
             let material = Rc::new(Material {
@@ -99,6 +100,8 @@ pub struct PbrDefaults {
 
 impl PbrDefaults {
     pub fn new(device: &Rc<Device>, uploader: &mut Uploader, arena: &mut VulkanArena<ForImages>) -> Result<PbrDefaults, Error> {
+        profiling::scope!("pbr default textures creation");
+
         const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
         const BLACK: [u8; 4] = [0, 0, 0, 0xFF];
         const NORMAL_Z: [u8; 4] = [0, 0, 0xFF, 0];
@@ -146,10 +149,12 @@ impl Descriptors {
         pbr_defaults: PbrDefaults,
         frame_count: u32,
     ) -> Result<Descriptors, Error> {
+        profiling::scope!("creating descriptor sets");
         Descriptors::new_(device, physical_device_properties, pbr_defaults, None, frame_count)
     }
 
     pub fn from_existing(old_descriptors: Descriptors, frame_count: u32) -> Result<Descriptors, Error> {
+        profiling::scope!("recreating descriptor sets");
         let Descriptors {
             pipeline_layouts,
             device,
@@ -188,7 +193,6 @@ impl Descriptors {
         pipeline_layouts: Option<PipelineMap<PipelineLayout>>,
         frame_count: u32,
     ) -> Result<Descriptors, Error> {
-        profiling::scope!("new_descriptors");
         let sampler_create_info = vk::SamplerCreateInfo::builder()
             .mag_filter(vk::Filter::LINEAR)
             .min_filter(vk::Filter::LINEAR)
@@ -308,6 +312,7 @@ impl Descriptors {
 
         let descriptor_sets = (1..frame_count + 1)
             .map(|nth| {
+                profiling::scope!("descriptor set allocation for a frame");
                 let mut descriptor_set_layouts_per_pipeline = pipeline_layouts.iter().map(|pl| &pl.descriptor_set_layouts);
                 let pipeline_map = PipelineMap::new::<Error, _>(|pl| {
                     let descriptor_set_layouts = descriptor_set_layouts_per_pipeline.next().unwrap();
@@ -350,6 +355,7 @@ impl Descriptors {
     }
 
     pub(crate) fn write_descriptors(&mut self, frame_index: FrameIndex, global_transforms_buffer: &Buffer) {
+        profiling::scope!("updating descriptors");
         let mut materials_needing_update = Vec::new();
         for (pipeline, material_slots) in self.material_slots_per_pipeline.iter_with_pipeline() {
             for (i, material_slot) in material_slots.iter().enumerate() {
@@ -383,7 +389,10 @@ impl Descriptors {
         for pending_write in &pending_writes {
             writes.push(pending_write.write_descriptor_set.unwrap());
         }
-        unsafe { self.device.update_descriptor_sets(&writes, &[]) };
+        {
+            profiling::scope!("vk::update_descriptor_sets");
+            unsafe { self.device.update_descriptor_sets(&writes, &[]) };
+        }
     }
 
     fn write_material(

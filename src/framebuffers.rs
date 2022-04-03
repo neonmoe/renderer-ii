@@ -18,7 +18,7 @@ impl Framebuffers {
         pipelines: &Pipelines,
         swapchain: &Swapchain,
     ) -> Result<Framebuffers, Error> {
-        profiling::scope!("new_canvas");
+        profiling::scope!("framebuffers creation");
 
         let swapchain_format = physical_device.swapchain_format;
         let frame_count = swapchain.frame_count();
@@ -45,16 +45,19 @@ impl Framebuffers {
             .collect::<Vec<_>>();
 
         let mut framebuffer_size = 0;
-        for framebuffer_image_info in color_image_infos.iter().chain(depth_image_infos.iter()) {
-            let image = unsafe { device.create_image(framebuffer_image_info, None) }.map_err(Error::VulkanImageCreation)?;
-            debug_utils::name_vulkan_object(device, image, format_args!("memory requirement querying temp img"));
-            let reqs = unsafe { device.get_image_memory_requirements(image) };
-            let size_mod = framebuffer_size % reqs.alignment;
-            if size_mod != 0 {
-                framebuffer_size += reqs.alignment - size_mod;
+        {
+            profiling::scope!("framebuffer memory requirements querying");
+            for framebuffer_image_info in color_image_infos.iter().chain(depth_image_infos.iter()) {
+                let image = unsafe { device.create_image(framebuffer_image_info, None) }.map_err(Error::VulkanImageCreation)?;
+                debug_utils::name_vulkan_object(device, image, format_args!("memory requirement querying temp img"));
+                let reqs = unsafe { device.get_image_memory_requirements(image) };
+                let size_mod = framebuffer_size % reqs.alignment;
+                if size_mod != 0 {
+                    framebuffer_size += reqs.alignment - size_mod;
+                }
+                framebuffer_size += reqs.size;
+                unsafe { device.destroy_image(image, None) };
             }
-            framebuffer_size += reqs.size;
-            unsafe { device.destroy_image(image, None) };
         }
 
         let mut framebuffer_arena = VulkanArena::new(
@@ -143,6 +146,7 @@ impl Framebuffers {
             .zip(depth_image_views.into_iter())
             .zip(swapchain_image_views.into_iter())
             .map(|(((i, color_image_view), depth_image_view), swapchain_image_view)| {
+                profiling::scope!("one frame's framebuffers' creation");
                 let attachments = [color_image_view.inner, depth_image_view.inner, swapchain_image_view.inner];
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(pipelines.render_pass.inner)

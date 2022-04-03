@@ -12,7 +12,6 @@ pub struct Instance {
 }
 
 impl Drop for Instance {
-    #[profiling::function]
     fn drop(&mut self) {
         if let Some(debug_utils_messenger) = self.debug_utils_messenger.take() {
             debug_utils::destroy_debug_utils_messenger(&self.entry, &self.inner, debug_utils_messenger);
@@ -27,7 +26,7 @@ impl Drop for Instance {
 
 impl Instance {
     pub fn new(window: &dyn HasRawWindowHandle) -> Result<Instance, Error> {
-        profiling::scope!("new_driver");
+        profiling::scope!("vulkan instance creation");
         // TODO(low): Missing Vulkan is not gracefully handled.
         let entry = unsafe { Entry::load().unwrap() };
         let app_info = vk::ApplicationInfo::builder()
@@ -84,7 +83,10 @@ impl Instance {
             create_info
         };
 
-        let instance = unsafe { entry.create_instance(&create_info, None) }.map_err(Error::VulkanInstanceCreation)?;
+        let instance = {
+            profiling::scope!("vk::create_instance");
+            unsafe { entry.create_instance(&create_info, None) }.map_err(Error::VulkanInstanceCreation)?
+        };
 
         let debug_utils_messenger = if debug_utils_available {
             debug_utils::init_debug_utils(&entry, &instance);
@@ -108,7 +110,10 @@ fn make_api_version(variant: u32, major: u32, minor: u32, patch: u32) -> u32 {
 
 #[profiling::function]
 fn is_validation_layer_supported(entry: &Entry, target_layer_name: &str) -> bool {
-    match entry.enumerate_instance_layer_properties() {
+    match {
+        profiling::scope!("vk::enumerate_instance_layer_properties");
+        entry.enumerate_instance_layer_properties()
+    } {
         Err(_) => false,
         Ok(layers) => layers.iter().any(|layer_properties| {
             let layer_name_slice = &layer_properties.layer_name[..];
@@ -120,7 +125,10 @@ fn is_validation_layer_supported(entry: &Entry, target_layer_name: &str) -> bool
 
 #[profiling::function]
 fn is_extension_supported(entry: &Entry, target_extension_name: &str) -> bool {
-    match entry.enumerate_instance_extension_properties(None) {
+    match {
+        profiling::scope!("vk::enumerate_instance_extension_properties");
+        entry.enumerate_instance_extension_properties(None)
+    } {
         Err(_) => false,
         Ok(extensions) => extensions.iter().any(|extension_properties| {
             let extension_name_slice = &extension_properties.extension_name[..];

@@ -57,14 +57,18 @@ impl<T: ArenaType> VulkanArena<T> {
         fallback_flags: vk::MemoryPropertyFlags,
         debug_identifier_args: Arguments,
     ) -> Result<VulkanArena<T>, Error> {
+        profiling::scope!("gpu memory arena creation");
         let debug_identifier = format!("{}", debug_identifier_args);
         let (memory_type_index, memory_flags) = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
             .ok_or_else(|| Error::VulkanNoMatchingHeap(debug_identifier.clone(), fallback_flags))?;
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
             .memory_type_index(memory_type_index);
-        let memory = unsafe { device.allocate_memory(&alloc_info, None) }
-            .map_err(|err| Error::VulkanAllocate(err, debug_identifier.clone(), size))?;
+        let memory = {
+            profiling::scope!("vk::allocate_memory");
+            unsafe { device.allocate_memory(&alloc_info, None) }
+                .map_err(|err| Error::VulkanAllocate(err, debug_identifier.clone(), size))?
+        };
         debug_utils::name_vulkan_object(device, memory, debug_identifier_args);
 
         let mapped_memory_ptr =
@@ -119,6 +123,7 @@ impl VulkanArena<ForBuffers> {
         uploader: Option<&mut Uploader>,
         name: Arguments,
     ) -> Result<Buffer, Error> {
+        profiling::scope!("vulkan buffer creation");
         let buffer = unsafe { self.device.create_buffer(&buffer_create_info, None) }.map_err(Error::VulkanBufferCreation)?;
         let buffer_memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         let alignment = buffer_memory_requirements.alignment;
@@ -148,6 +153,7 @@ impl VulkanArena<ForBuffers> {
 
         if self.mapped_memory_ptr.is_null() {
             if let Some(uploader) = uploader {
+                profiling::scope!("staging buffer creation");
                 let staging_info = vk::BufferCreateInfo::builder()
                     .size(size)
                     .usage(vk::BufferUsageFlags::TRANSFER_SRC)
@@ -167,7 +173,7 @@ impl VulkanArena<ForBuffers> {
                     staging_buffer,
                     name,
                     |device, staging_buffer, command_buffer| {
-                        profiling::scope!("queue buffer copy from staging");
+                        profiling::scope!("record buffer copy cmd from staging");
                         let barrier_from_graphics_to_transfer = vk::BufferMemoryBarrier::builder()
                             .buffer(buffer)
                             .offset(0)
@@ -193,7 +199,7 @@ impl VulkanArena<ForBuffers> {
                         unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
                     },
                     |device, command_buffer| {
-                        profiling::scope!("vkCmdPipelineBarrier");
+                        profiling::scope!("vk::cmd_pipeline_barrier");
                         let barrier_from_transfer_to_graphics = vk::BufferMemoryBarrier::builder()
                             .buffer(buffer)
                             .offset(0)
@@ -220,6 +226,7 @@ impl VulkanArena<ForBuffers> {
                 return Err(Error::ArenaNotWritable);
             }
         } else {
+            profiling::scope!("writing buffer data");
             let dst = unsafe { self.mapped_memory_ptr.offset(offset as isize) };
             unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len()) };
         }
@@ -237,6 +244,7 @@ impl VulkanArena<ForBuffers> {
 
 impl VulkanArena<ForImages> {
     pub fn create_image(&mut self, image_create_info: vk::ImageCreateInfo, name: Arguments) -> Result<Image, Error> {
+        profiling::scope!("vulkan image creation");
         let image = unsafe { self.device.create_image(&image_create_info, None) }.map_err(Error::VulkanImageCreation)?;
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
         let alignment = image_memory_requirements.alignment;

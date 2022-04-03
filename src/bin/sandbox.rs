@@ -33,17 +33,26 @@ fn main() -> anyhow::Result<()> {
 fn fallible_main() -> anyhow::Result<()> {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Trace)).unwrap();
 
-    let sdl_context = sdl2::init().map_err(SandboxError::Sdl)?;
-    let video_subsystem = sdl_context.video().map_err(SandboxError::Sdl)?;
+    let sdl_context = {
+        profiling::scope!("SDL init");
+        sdl2::init().map_err(SandboxError::Sdl)?
+    };
+    let video_subsystem = {
+        profiling::scope!("SDL video subsystem init");
+        sdl_context.video().map_err(SandboxError::Sdl)?
+    };
 
-    let mut window = video_subsystem
-        .window("neonvk sandbox", 640, 480)
-        .position_centered()
-        .resizable()
-        .allow_highdpi()
-        .vulkan()
-        .hidden()
-        .build()?;
+    let mut window = {
+        profiling::scope!("SDL window creation");
+        video_subsystem
+            .window("neonvk sandbox", 640, 480)
+            .position_centered()
+            .resizable()
+            .allow_highdpi()
+            .vulkan()
+            .hidden()
+            .build()?
+    };
 
     let (width, height) = window.vulkan_drawable_size();
 
@@ -87,7 +96,7 @@ fn fallible_main() -> anyhow::Result<()> {
 
     let sponza_model;
     {
-        profiling::scope!("resource uploading");
+        profiling::scope!("loading Sponza.gltf from disk to vram");
         let resources_path = find_resources_path();
         let upload_start = Instant::now();
         sponza_model = neonvk::Gltf::from_gltf(
@@ -135,9 +144,8 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut size_changed = false;
     let mut debug_value = 0;
     'running: loop {
-        profiling::finish_frame!();
-
         for event in event_pump.poll_iter() {
+            profiling::scope!("handle SDL event");
             match event {
                 Event::Quit { .. }
                 | Event::KeyDown {
@@ -172,6 +180,7 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         if size_changed {
+            profiling::scope!("handle resize");
             device.wait_idle()?;
             let (width, height) = window.vulkan_drawable_size();
             drop(renderer);
@@ -198,8 +207,11 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         let mut scene = neonvk::Scene::default();
-        for (mesh, material, transform) in sponza_model.mesh_iter() {
-            scene.queue(mesh, material, transform);
+        {
+            profiling::scope!("queue meshes to render");
+            for (mesh, material, transform) in sponza_model.mesh_iter() {
+                scene.queue(mesh, material, transform);
+            }
         }
 
         let frame_index = renderer.wait_frame(&swapchain)?;
@@ -213,50 +225,58 @@ fn fallible_main() -> anyhow::Result<()> {
             Err(err) => log::warn!("Error during regular frame present: {}", err),
         }
 
-        let now = Instant::now();
-        frame_instants.push(now);
-        frame_instants.retain(|time| (now - *time) < Duration::from_secs(1));
-        let interval_count = frame_instants.len() - 1;
-        let interval_sum: Duration = frame_instants
-            .windows(2)
-            .map(|instants| {
-                if let [before, after] = *instants {
-                    after - before
-                } else {
-                    unreachable!()
-                }
-            })
-            .sum();
-        if let Some(avg_interval) = interval_sum.checked_div(interval_count as u32) {
-            let used_memory = physical_device
-                .get_memory_usage(&instance.inner)
-                .map(display_bytes)
-                .unwrap_or_else(|| String::from("(unknown amount)"));
-            let _ = window.set_title(&format!(
-                "{} ({:.2} ms frame interval ({:.0} fps), {} of VRAM in use)",
-                env!("CARGO_PKG_NAME"),
-                avg_interval.as_secs_f64() * 1000.0,
-                frame_instants.len(),
-                used_memory,
-            ));
+        {
+            profiling::scope!("frame time tracking");
+            let now = Instant::now();
+            frame_instants.push(now);
+            frame_instants.retain(|time| (now - *time) < Duration::from_secs(1));
+            let interval_count = frame_instants.len() - 1;
+            let interval_sum: Duration = frame_instants
+                .windows(2)
+                .map(|instants| {
+                    if let [before, after] = *instants {
+                        after - before
+                    } else {
+                        unreachable!()
+                    }
+                })
+                .sum();
+            if let Some(avg_interval) = interval_sum.checked_div(interval_count as u32) {
+                let used_memory = physical_device
+                    .get_memory_usage(&instance.inner)
+                    .map(display_bytes)
+                    .unwrap_or_else(|| String::from("(unknown amount)"));
+                let _ = window.set_title(&format!(
+                    "{} ({:.2} ms frame interval ({:.0} fps), {} of VRAM in use)",
+                    env!("CARGO_PKG_NAME"),
+                    avg_interval.as_secs_f64() * 1000.0,
+                    frame_instants.len(),
+                    used_memory,
+                ));
+            }
         }
+
+        profiling::finish_frame!();
     }
 
-    device.wait_idle()?;
+    {
+        profiling::scope!("clean up on exit");
+        device.wait_idle()?;
 
-    // Per-resize objects.
-    drop(renderer);
-    drop(framebuffers);
-    drop(swapchain);
-    drop(pipelines);
+        // Per-resize objects.
+        drop(renderer);
+        drop(framebuffers);
+        drop(swapchain);
+        drop(pipelines);
 
-    // Per-device-objects.
-    drop(sponza_model);
-    drop(assets_textures_arena);
-    drop(assets_buffers_arena);
-    drop(descriptors);
-    assert_last_drop(device);
-    assert_last_drop(surface);
+        // Per-device-objects.
+        drop(sponza_model);
+        drop(assets_textures_arena);
+        drop(assets_buffers_arena);
+        drop(descriptors);
+        assert_last_drop(device);
+        assert_last_drop(surface);
+    }
 
     Ok(())
 }

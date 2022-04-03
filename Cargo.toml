@@ -26,6 +26,6 @@ sdl2 = { version = "0.34", features = ["raw-window-handle"] }
 anyhow = { version = "1.0" }
 
 [features]
-# TODO(med): Write a profiling backend that outputs JSON for chrome://tracing?
-# Format: https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/edit
+profile-with-tracy = ["profiling/profile-with-tracy"]
+profile-with-tracing = ["profiling/profile-with-tracing"]
 vulkan-validation = ["shaders/generate-debug-info"]

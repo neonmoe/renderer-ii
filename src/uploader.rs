@@ -34,7 +34,10 @@ impl Uploader {
         staging_buffer_size: vk::DeviceSize,
         debug_identifier: &'static str,
     ) -> Result<Uploader, Error> {
+        profiling::scope!("uploader creation");
+
         let transfer_command_pool = {
+            profiling::scope!("transfer command pool creation");
             let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
                 .queue_family_index(physical_device.transfer_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
@@ -48,6 +51,7 @@ impl Uploader {
         };
 
         let graphics_command_pool = {
+            profiling::scope!("graphics command pool creation");
             let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
                 .queue_family_index(physical_device.graphics_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
@@ -89,6 +93,7 @@ impl Uploader {
     }
 
     pub fn get_upload_statuses(&self) -> impl Iterator<Item = bool> + '_ {
+        profiling::scope!("uploader fence status enumeration");
         self.upload_fences
             .iter()
             .map(move |fence| unsafe { self.device.get_fence_status(fence.inner) }.unwrap_or(false))
@@ -103,6 +108,7 @@ impl Uploader {
     /// [Uploader::get_upload_statuses], which may be more
     /// inefficient.
     pub fn wait(&self, timeout: Duration) -> Result<bool, Error> {
+        profiling::scope!("waiting on uploader fences");
         let fences = self.upload_fences.iter().map(|fence| fence.inner).collect::<Vec<_>>();
         match unsafe { self.device.wait_for_fences(&fences, true, timeout.as_nanos() as u64) } {
             Ok(_) => Ok(true),
@@ -245,6 +251,7 @@ impl Uploader {
     }
 
     pub fn reset(&mut self) -> Result<(), Error> {
+        profiling::scope!("uploader reset");
         if self.get_upload_statuses().any(|uploaded| !uploaded) {
             return Err(Error::UploaderNotResettable);
         }

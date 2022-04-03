@@ -43,7 +43,7 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice, frames: u32) -> Result<Renderer, Error> {
-        profiling::scope!("new_gpu");
+        profiling::scope!("renderer creation (per-frame-stuff)");
 
         let ready_for_present = (1..frames + 1)
             .map(|nth| {

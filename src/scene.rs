@@ -26,8 +26,8 @@ impl Default for Scene<'_> {
 }
 
 impl<'a> Scene<'a> {
-    #[profiling::function]
     pub fn queue(&mut self, mesh: &'a Mesh, material: &'a Material, transform: Mat4) {
+        profiling::scope!("queue mesh for rendering");
         let mesh_map = self.pipeline_map.get_mut(mesh.pipeline);
         let mesh_vec = mesh_map.entry((mesh, material)).or_insert_with(Vec::new);
         mesh_vec.push(transform);

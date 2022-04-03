@@ -35,6 +35,7 @@ impl PhysicalDevice {
     /// Returns how many bytes of memorythis process is using from the physical
     /// device's memory heaps.
     pub fn get_memory_usage(&self, instance: &Instance) -> Option<u64> {
+        profiling::scope!("query used vram");
         if self.extension_supported("VK_EXT_memory_budget") {
             let mut memory_budget_properties = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
             let mut memory_properties = vk::PhysicalDeviceMemoryProperties2::builder()
@@ -52,9 +53,13 @@ impl PhysicalDevice {
 /// are also ordered by performance, based on a heuristic (mostly:
 /// discrete gpu > integrated gpu > virtual gpu > cpu).
 pub fn get_physical_devices(entry: &Entry, instance: &Instance, surface: vk::SurfaceKHR) -> Result<Vec<PhysicalDevice>, Error> {
+    profiling::scope!("physical device enumeration");
     let surface_ext = khr::Surface::new(entry, instance);
-    let mut capable_physical_devices = unsafe { instance.enumerate_physical_devices() }
-        .map_err(Error::VulkanEnumeratePhysicalDevices)?
+    let physical_devices = {
+        profiling::scope!("vk::enumerate_physical_devices");
+        unsafe { instance.enumerate_physical_devices() }.map_err(Error::VulkanEnumeratePhysicalDevices)?
+    };
+    let mut capable_physical_devices = physical_devices
         .into_iter()
         .filter_map(|physical_device| filter_capable_device(instance, &surface_ext, surface, physical_device))
         .collect::<Result<Vec<_>, Error>>()?;
@@ -80,6 +85,16 @@ fn filter_capable_device(
     surface: vk::SurfaceKHR,
     physical_device: vk::PhysicalDevice,
 ) -> Option<Result<PhysicalDevice, Error>> {
+    profiling::scope!("physical device capability checks");
+
+    let properties = unsafe {
+        profiling::scope!("vk::get_physical_device_properties");
+        instance.get_physical_device_properties(physical_device)
+    };
+    if properties.api_version < vk::API_VERSION_1_3 {
+        return None;
+    }
+
     let extensions = get_extensions(instance, physical_device);
     if extensions.iter().all(|s| s != "VK_KHR_swapchain") {
         return None;
@@ -89,7 +104,10 @@ fn filter_capable_device(
         return None;
     }
 
-    let queue_families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
+    let queue_families = unsafe {
+        profiling::scope!("vk::get_physical_device_queue_family_properties");
+        instance.get_physical_device_queue_family_properties(physical_device)
+    };
     let mut graphics_queue_family = None;
     let mut surface_queue_family = None;
     let mut transfer_queue_family = None;
@@ -98,7 +116,10 @@ fn filter_capable_device(
             index: index as u32,
             max_count: queue_family_properties.queue_count as usize,
         };
-        let surface_support = unsafe { surface_ext.get_physical_device_surface_support(physical_device, index as u32, surface) };
+        let surface_support = unsafe {
+            profiling::scope!("vk::get_physical_device_surface_support");
+            surface_ext.get_physical_device_surface_support(physical_device, index as u32, surface)
+        };
         if graphics_queue_family.is_none() || surface_queue_family.is_none() || graphics_queue_family != surface_queue_family {
             if queue_family_properties.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
                 graphics_queue_family = Some(queue_family);
@@ -117,13 +138,11 @@ fn filter_capable_device(
         }
     }
 
-    let properties = unsafe { instance.get_physical_device_properties(physical_device) };
-    if properties.api_version < vk::API_VERSION_1_3 {
-        return None;
-    }
-
     let has_feature = |format: vk::Format, feature: vk::FormatFeatureFlags| -> bool {
-        let format_properties = unsafe { instance.get_physical_device_format_properties(physical_device, format) };
+        let format_properties = unsafe {
+            profiling::scope!("vk::get_physical_device_format_properties");
+            instance.get_physical_device_format_properties(physical_device, format)
+        };
         format_properties.optimal_tiling_features.contains(feature)
     };
 
@@ -144,6 +163,7 @@ fn filter_capable_device(
 
     let (swapchain_format, swapchain_color_space) = {
         let surface_formats = match unsafe {
+            profiling::scope!("vk::get_physical_device_surface_formats");
             surface_ext
                 .get_physical_device_surface_formats(physical_device, surface)
                 .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
@@ -193,7 +213,10 @@ fn filter_capable_device(
 
 #[profiling::function]
 fn get_extensions(instance: &Instance, physical_device: vk::PhysicalDevice) -> Vec<String> {
-    match unsafe { instance.enumerate_device_extension_properties(physical_device) } {
+    match unsafe {
+        profiling::scope!("vk::enumerate_device_extension_properties");
+        instance.enumerate_device_extension_properties(physical_device)
+    } {
         Ok(extensions) => extensions
             .iter()
             .map(|extension_properties| {
