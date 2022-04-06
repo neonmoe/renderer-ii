@@ -3,7 +3,7 @@ use crate::{debug_utils, Error, ForImages, Uploader, VulkanArena};
 use ash::vk;
 use std::rc::Rc;
 
-mod ktx;
+mod ntex;
 
 #[derive(Clone, Copy)]
 pub enum TextureKind {
@@ -244,7 +244,7 @@ pub fn create_pixel(
 }
 
 #[profiling::function]
-pub fn load_ktx(
+pub fn load_ntex(
     device: &Rc<Device>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
@@ -252,13 +252,13 @@ pub fn load_ktx(
     kind: TextureKind,
     debug_identifier: &str,
 ) -> Result<ImageView, Error> {
-    let ktx::KtxData {
+    let ntex::NtexData {
         width,
         height,
         format,
         pixels,
         mip_ranges,
-    } = ktx::decode(bytes)?;
+    } = ntex::decode(bytes)?;
     let format = kind.convert_format(format);
     let extent = *vk::Extent3D::builder().width(width).height(height).depth(1);
     let &mut Uploader {
@@ -276,7 +276,7 @@ pub fn load_ktx(
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         uploader.staging_arena.create_buffer(
             *buffer_create_info,
-            &pixels,
+            pixels,
             None,
             format_args!("staging buffer for {}", debug_identifier),
         )?

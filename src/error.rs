@@ -137,10 +137,8 @@ pub enum Error {
     GltfMisc(&'static str),
     #[error("error during image decoding: {0}")]
     MiscImageDecoding(&'static str),
-    #[error("malformed ktx file")]
-    BadKtx,
-    #[error("could not load ktx: {0}")]
-    UnsupportedKtxFeature(&'static str),
+    #[error("malformed ntex file")]
+    BadNtex,
     #[error("arena {identifier} ({used}/{total} bytes used) cannot fit {required} bytes")]
     ArenaOutOfMemory {
         identifier: String,

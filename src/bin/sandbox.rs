@@ -247,7 +247,7 @@ fn fallible_main() -> anyhow::Result<()> {
             let external_used_memory = actual_used_memory - used_memory;
             let allocated_memory = neonvk::get_allocated_vram();
             let _ = window.set_title(&format!(
-                "{} ({:.3} ms frametime, {:.0} fps, {} / {} of VRAM in use / allocated + {} allocated by the system)",
+                "{} ({:.3} ms frametime, {:.0} fps, {} / {} of VRAM in use / allocated + {} not accounted for)",
                 env!("CARGO_PKG_NAME"),
                 avg_frame_duration * 1000.0,
                 frame_processing_durations.len(),

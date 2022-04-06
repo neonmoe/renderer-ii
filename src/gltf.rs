@@ -311,8 +311,8 @@ fn create_gltf(
         let bytes: &[u8];
         if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
             image_load = match mime_type.as_str() {
-                "image/ktx" => image_loading::load_ktx,
-                _ => return Err(Error::GltfSpec("mime type of texture is not image/ktx")),
+                "image/prs.ntex" => image_loading::load_ntex,
+                _ => return Err(Error::GltfSpec("mime type of texture is not image/prs.ntex")),
             };
             let buffer_view = gltf.buffer_views.get(*buffer_view).ok_or(Error::GltfOob("texture buffer view"))?;
             let buffer = gltf.buffers.get(buffer_view.buffer).ok_or(Error::GltfOob("texture buffer"))?;
@@ -329,14 +329,14 @@ fn create_gltf(
             }
             bytes = &buffer_bytes[buffer_offset..buffer_offset + buffer_size];
         } else if let Some(uri) = &image.uri {
-            let mime_type = if uri.ends_with(".ktx") {
-                "image/ktx"
+            let mime_type = if uri.ends_with(".ntex") {
+                "image/prs.ntex"
             } else {
-                return Err(Error::GltfMisc("image uri does not end in .ktx"));
+                return Err(Error::GltfMisc("image uri does not end in .ntex"));
             };
             image_load = match mime_type {
-                "image/ktx" => image_loading::load_ktx,
-                _ => return Err(Error::GltfSpec("mime type of texture is not image/ktx")),
+                "image/prs.ntex" => image_loading::load_ntex,
+                _ => return Err(Error::GltfSpec("mime type of texture is not image/prs.ntex")),
             };
             let path = resource_path.join(uri);
             bytes = load_file(&mut memmap_holder, path, None)?;
