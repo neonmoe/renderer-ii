@@ -89,7 +89,7 @@ impl Renderer {
                 VulkanArena::new(
                     instance,
                     device,
-                    physical_device.inner,
+                    physical_device,
                     10_000_000,
                     vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::DEVICE_LOCAL,
                     vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,

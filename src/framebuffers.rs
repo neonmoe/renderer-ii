@@ -63,7 +63,7 @@ impl Framebuffers {
         let mut framebuffer_arena = VulkanArena::new(
             instance,
             device,
-            physical_device.inner,
+            physical_device,
             framebuffer_size,
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,

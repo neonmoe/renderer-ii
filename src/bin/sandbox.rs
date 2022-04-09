@@ -74,7 +74,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut assets_buffers_arena = neonvk::VulkanArena::new(
         &instance.inner,
         &device,
-        physical_device.inner,
+        physical_device,
         12_000_000,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL
             | neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -85,7 +85,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut assets_textures_arena = neonvk::VulkanArena::new(
         &instance.inner,
         &device,
-        physical_device.inner,
+        physical_device,
         100_000_000,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -251,9 +251,9 @@ fn fallible_main() -> anyhow::Result<()> {
                 env!("CARGO_PKG_NAME"),
                 avg_frame_duration * 1000.0,
                 frame_processing_durations.len(),
-                display_bytes(used_memory),
-                display_bytes(allocated_memory),
-                display_bytes(external_used_memory),
+                neonvk::display_utils::Bytes(used_memory),
+                neonvk::display_utils::Bytes(allocated_memory),
+                neonvk::display_utils::Bytes(external_used_memory),
             ));
         }
 
@@ -289,19 +289,6 @@ fn fallible_main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-#[allow(dead_code)]
-fn display_bytes(bytes: u64) -> String {
-    const KIBI: u64 = 1_024;
-    const MEBI: u64 = KIBI * KIBI;
-    const GIBI: u64 = KIBI * KIBI * KIBI;
-    match bytes {
-        x if x < KIBI => format!("{:.1} bytes", bytes as f32),
-        x if x < MEBI => format!("{:.1} KiB", bytes as f32 / KIBI as f32),
-        x if x < GIBI => format!("{:.1} MiB", bytes as f32 / MEBI as f32),
-        _ => format!("{:.1} GiB", bytes as f32 / GIBI as f32),
-    }
 }
 
 /// Attempts to find the sponza/glTF directory to be used as a

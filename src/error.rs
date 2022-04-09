@@ -81,6 +81,8 @@ pub enum Error {
     VulkanAllocate(#[source] vk::Result, String, vk::DeviceSize),
     #[error("no heap with the required flags (id: {0}, flags: {1:?})")]
     VulkanNoMatchingHeap(String, vk::MemoryPropertyFlags),
+    #[error("no heap with specified flags has enough memory (id: {0}, flags: {1:?}, size: {2})")]
+    VulkanHeapsOutOfMemory(String, vk::MemoryPropertyFlags, crate::display_utils::Bytes),
     #[error("could not create buffer")]
     VulkanBufferCreation(#[source] vk::Result),
     #[error("could not bind buffer to allocated memory")]

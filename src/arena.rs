@@ -2,10 +2,10 @@
 use crate::debug_utils;
 use crate::error::Error;
 use crate::vulkan_raii::{Buffer, Device, DeviceMemory, Image};
-use crate::Uploader;
+use crate::{display_utils, PhysicalDevice, Uploader};
 use ash::vk;
 use ash::Instance;
-use std::fmt::Arguments;
+use std::fmt::{Arguments, Debug};
 use std::marker::PhantomData;
 use std::ptr;
 use std::rc::Rc;
@@ -54,7 +54,7 @@ impl<T: ArenaType> VulkanArena<T> {
     pub fn new(
         instance: &Instance,
         device: &Rc<Device>,
-        physical_device: vk::PhysicalDevice,
+        physical_device: &PhysicalDevice,
         size: vk::DeviceSize,
         optimal_flags: vk::MemoryPropertyFlags,
         fallback_flags: vk::MemoryPropertyFlags,
@@ -63,7 +63,12 @@ impl<T: ArenaType> VulkanArena<T> {
         profiling::scope!("gpu memory arena creation");
         let debug_identifier = format!("{}", debug_identifier_args);
         let (memory_type_index, memory_flags) = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
-            .ok_or_else(|| Error::VulkanNoMatchingHeap(debug_identifier.clone(), fallback_flags))?;
+            .map_err(|err| match err {
+                MissingMemoryTypeError::MemoryTypeMissing => Error::VulkanNoMatchingHeap(debug_identifier.clone(), fallback_flags),
+                MissingMemoryTypeError::OutOfMemory => {
+                    Error::VulkanHeapsOutOfMemory(debug_identifier.clone(), fallback_flags, display_utils::Bytes(size))
+                }
+            })?;
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
             .memory_type_index(memory_type_index);
@@ -293,32 +298,66 @@ impl VulkanArena<ForImages> {
     }
 }
 
+#[derive(Debug)]
+pub enum MissingMemoryTypeError {
+    MemoryTypeMissing,
+    OutOfMemory,
+}
+
 fn get_memory_type_index(
     instance: &Instance,
-    physical_device: vk::PhysicalDevice,
+    physical_device: &PhysicalDevice,
     optimal_flags: vk::MemoryPropertyFlags,
     fallback_flags: vk::MemoryPropertyFlags,
     size: vk::DeviceSize,
-) -> Option<(u32, vk::MemoryPropertyFlags)> {
-    // TODO(low): Use VK_EXT_memory_budget to pick a heap that can fit the size, it's already enabled (if available)
-    let memory_properties = unsafe { instance.get_physical_device_memory_properties(physical_device) };
-    let types = &memory_properties.memory_types[..memory_properties.memory_type_count as usize];
-    let heaps = &memory_properties.memory_heaps[..memory_properties.memory_heap_count as usize];
+) -> Result<(u32, vk::MemoryPropertyFlags), MissingMemoryTypeError> {
+    let budget_supported = physical_device.extension_supported("VK_EXT_memory_budget");
+    let mut memory_properties = vk::PhysicalDeviceMemoryProperties2::builder();
+    let mut budget_props = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
+    if budget_supported {
+        memory_properties = memory_properties.push_next(&mut budget_props);
+    }
+    let mut memory_properties = memory_properties.build();
+    unsafe { instance.get_physical_device_memory_properties2(physical_device.inner, &mut memory_properties) };
+
+    let props = memory_properties.memory_properties;
+    let types = &props.memory_types[..props.memory_type_count as usize];
+    let heaps = &props.memory_heaps[..props.memory_heap_count as usize];
+    let mut valid_type_found = false;
     for (i, memory_type) in types.iter().enumerate() {
         let heap_index = memory_type.heap_index as usize;
-        let flags = memory_type.property_flags;
-        if flags.contains(optimal_flags) && heaps[heap_index].size >= size {
-            return Some((i as u32, flags));
+        let budget = if budget_supported {
+            budget_props.heap_budget[heap_index]
+        } else {
+            heaps[heap_index].size
+        };
+        if memory_type.property_flags.contains(optimal_flags) {
+            valid_type_found = true;
+            if budget >= size {
+                return Ok((i as u32, memory_type.property_flags));
+            }
         }
     }
     for (i, memory_type) in types.iter().enumerate() {
         let heap_index = memory_type.heap_index as usize;
-        let flags = memory_type.property_flags;
-        if flags.contains(fallback_flags) && heaps[heap_index].size >= size {
-            return Some((i as u32, flags));
+        let budget = if budget_supported {
+            budget_props.heap_budget[heap_index]
+        } else {
+            heaps[heap_index].size
+        };
+        if memory_type.property_flags.contains(fallback_flags) {
+            valid_type_found = true;
+            if budget >= size {
+                return Ok((i as u32, memory_type.property_flags));
+            }
         }
     }
-    None
+
+    if valid_type_found {
+        Err(MissingMemoryTypeError::OutOfMemory)
+    } else {
+        Err(MissingMemoryTypeError::MemoryTypeMissing)
+    }
 }
 
 /// Returns `value` or the nearest integer greater than `value` which

@@ -67,7 +67,7 @@ impl Uploader {
         let staging_memory = VulkanArena::new(
             instance,
             device,
-            physical_device.inner,
+            physical_device,
             staging_buffer_size,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,

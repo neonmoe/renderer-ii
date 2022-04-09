@@ -62,6 +62,44 @@ pub use swapchain::{Swapchain, SwapchainSettings};
 mod uploader;
 pub use uploader::Uploader;
 
+mod allocation {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    pub(crate) static ALLOCATED: AtomicU64 = AtomicU64::new(0);
+    pub(crate) static IN_USE: AtomicU64 = AtomicU64::new(0);
+
+    pub fn get_allocated_vram() -> u64 {
+        ALLOCATED.load(Ordering::Relaxed)
+    }
+
+    pub fn get_allocated_vram_in_use() -> u64 {
+        IN_USE.load(Ordering::Relaxed)
+    }
+}
+pub use allocation::{get_allocated_vram, get_allocated_vram_in_use};
+
+pub mod display_utils {
+    use std::fmt::{Display, Formatter, Result};
+
+    #[derive(Debug)]
+    pub struct Bytes(pub u64);
+
+    impl Display for Bytes {
+        fn fmt(&self, fmt: &mut Formatter) -> Result {
+            const KIBI: u64 = 1_024;
+            const MEBI: u64 = KIBI * KIBI;
+            const GIBI: u64 = MEBI * KIBI;
+            const TIBI: u64 = GIBI * KIBI;
+            match self.0 {
+                bytes if bytes < KIBI => write!(fmt, "{:.0} bytes", bytes as f32),
+                bytes if bytes < MEBI => write!(fmt, "{:.2} KiB", bytes as f32 / KIBI as f32),
+                bytes if bytes < GIBI => write!(fmt, "{:.2} MiB", bytes as f32 / MEBI as f32),
+                bytes if bytes < TIBI => write!(fmt, "{:.2} GiB", bytes as f32 / MEBI as f32),
+                bytes => write!(fmt, "{:.3} TiB", bytes as f32 / GIBI as f32),
+            }
+        }
+    }
+}
+
 mod surface {
     use crate::vulkan_raii::Surface;
     use crate::Error;
@@ -80,18 +118,3 @@ mod surface {
     }
 }
 pub use surface::create_surface;
-
-mod allocation {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    pub(crate) static ALLOCATED: AtomicU64 = AtomicU64::new(0);
-    pub(crate) static IN_USE: AtomicU64 = AtomicU64::new(0);
-
-    pub fn get_allocated_vram() -> u64 {
-        ALLOCATED.load(Ordering::Relaxed)
-    }
-
-    pub fn get_allocated_vram_in_use() -> u64 {
-        IN_USE.load(Ordering::Relaxed)
-    }
-}
-pub use allocation::{get_allocated_vram, get_allocated_vram_in_use};
