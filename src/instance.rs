@@ -36,7 +36,7 @@ impl Instance {
     pub fn new(window: &dyn HasRawWindowHandle) -> Result<Instance, InstanceCreationError> {
         profiling::scope!("vulkan instance creation");
         // TODO: Missing Vulkan is not gracefully handled.
-        let entry = unsafe { Entry::load().unwrap() };
+        let entry = Entry::linked();
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))
             .application_version(make_api_version(0, 0, 1, 0))
@@ -55,12 +55,12 @@ impl Instance {
 
         let mut extensions = ash_window::enumerate_required_extensions(window)
             .map_err(InstanceCreationError::WindowExtensionEnumeration)?
-            .into_iter()
-            .map(|cs| {
-                if let Ok(s) = cs.to_str() {
+            .iter()
+            .map(|&cs| {
+                if let Ok(s) = unsafe { CStr::from_ptr(cs) }.to_str() {
                     log::debug!("Instance extension: {}", s);
                 }
-                cs.as_ptr()
+                cs
             })
             .collect::<Vec<*const c_char>>();
         let debug_utils_available = is_extension_supported(&entry, "VK_EXT_debug_utils");
