@@ -19,7 +19,7 @@ pub fn create_device_with_feature_requirements(
         .enabled_features(&features);
     {
         profiling::scope!("vk::create_device");
-        unsafe { instance.create_device(physical_device, &device_create_info, None) }.map_err(Error::VulkanDeviceCreation)
+        unsafe { instance.create_device(physical_device, &device_create_info, None) }.map_err(Error::DeviceCreation)
     }
 }
 

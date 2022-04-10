@@ -1,11 +1,61 @@
+use crate::arena::VulkanArenaError;
 use crate::debug_utils;
 use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
-use crate::{Error, ForBuffers, PhysicalDevice, VulkanArena};
+use crate::{ForBuffers, PhysicalDevice, VulkanArena};
 use ash::vk;
 use ash::Instance;
 use std::fmt::Arguments;
 use std::rc::Rc;
 use std::time::Duration;
+
+/// General errors related to the creation and usage of [Uploader]. The actual
+/// uploads have their own error type, [UploadError].
+#[derive(thiserror::Error, Debug)]
+pub enum UploaderError {
+    #[error("failed to wait for uploader's vulkan fences")]
+    FenceWait(#[source] vk::Result),
+    #[error("tried to reset uploader while some uploads are still in progress (or the device has been lost)")]
+    NotResettable,
+    #[error("failed to create staging arena")]
+    StagingArenaCreation(#[source] VulkanArenaError),
+    #[error("failed to create uploader transfer command pool (out of memory?)")]
+    TransferCommandPoolCreation(#[source] vk::Result),
+    #[error("failed to create uploader graphics command pool (out of memory?)")]
+    GraphicsCommandPoolCreation(#[source] vk::Result),
+    #[error("failed to reset staging arena")]
+    StagingArenaReset(#[source] VulkanArenaError),
+    #[error("failed to reset uploader transfer command pool")]
+    TransferCommandPoolReset(#[source] vk::Result),
+    #[error("failed to reset uploader graphics command pool")]
+    GraphicsCommandPoolReset(#[source] vk::Result),
+}
+
+/// Errors that may be generated when starting an upload with [Uploader].
+#[derive(thiserror::Error, Debug)]
+pub enum UploadError {
+    #[error("failed to create uploader transfer command buffer (out of memory?)")]
+    TransferCommandBufferCreation(#[source] vk::Result),
+    #[error("failed to create uploader graphics command buffer (out of memory?)")]
+    GraphicsCommandBufferCreation(#[source] vk::Result),
+    #[error("failed to reset uploader vulkan fence")]
+    FenceReset(#[source] vk::Result),
+    #[error("failed to create vulkan fence for uploader (out of memory?)")]
+    FenceCreation(#[source] vk::Result),
+    #[error("failed to create vulkan semaphore for uploader (out of memory?)")]
+    SemaphoreCreation(#[source] vk::Result),
+    #[error("failed to begin transfer command buffer for upload")]
+    TransferCommandBufferBegin(#[source] vk::Result),
+    #[error("failed to end transfer command buffer for upload")]
+    TransferCommandBufferEnd(#[source] vk::Result),
+    #[error("failed to begin graphics command buffer for upload")]
+    GraphicsCommandBufferBegin(#[source] vk::Result),
+    #[error("failed to end graphics command buffer for upload")]
+    GraphicsCommandBufferEnd(#[source] vk::Result),
+    #[error("failed to submit uploader transfer commands")]
+    TransferQueueSubmit(#[source] vk::Result),
+    #[error("failed to submit uploader graphics commands")]
+    GraphicsQueueSubmit(#[source] vk::Result),
+}
 
 pub struct Uploader {
     pub staging_arena: VulkanArena<ForBuffers>,
@@ -33,7 +83,7 @@ impl Uploader {
         physical_device: &PhysicalDevice,
         staging_buffer_size: vk::DeviceSize,
         debug_identifier: &'static str,
-    ) -> Result<Uploader, Error> {
+    ) -> Result<Uploader, UploaderError> {
         profiling::scope!("uploader creation");
 
         let transfer_command_pool = {
@@ -41,8 +91,8 @@ impl Uploader {
             let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
                 .queue_family_index(physical_device.transfer_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
-            let command_pool =
-                unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
+            let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
+                .map_err(UploaderError::TransferCommandPoolCreation)?;
             debug_utils::name_vulkan_object(device, command_pool, format_args!("upload cmds (T) for {}", debug_identifier));
             CommandPool {
                 inner: command_pool,
@@ -55,8 +105,8 @@ impl Uploader {
             let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
                 .queue_family_index(physical_device.graphics_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
-            let command_pool =
-                unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
+            let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
+                .map_err(UploaderError::GraphicsCommandPoolCreation)?;
             debug_utils::name_vulkan_object(device, command_pool, format_args!("upload cmds (G) for {}", debug_identifier));
             CommandPool {
                 inner: command_pool,
@@ -72,7 +122,8 @@ impl Uploader {
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             format_args!("uploader staging memory"),
-        )?;
+        )
+        .map_err(UploaderError::StagingArenaCreation)?;
 
         Ok(Uploader {
             staging_arena: staging_memory,
@@ -107,13 +158,13 @@ impl Uploader {
     /// individual upload operation with
     /// [Uploader::get_upload_statuses], which may be more
     /// inefficient.
-    pub fn wait(&self, timeout: Duration) -> Result<bool, Error> {
+    pub fn wait(&self, timeout: Duration) -> Result<bool, UploaderError> {
         profiling::scope!("waiting on uploader fences");
         let fences = self.upload_fences.iter().map(|fence| fence.inner).collect::<Vec<_>>();
         match unsafe { self.device.wait_for_fences(&fences, true, timeout.as_nanos() as u64) } {
             Ok(_) => Ok(true),
             Err(vk::Result::TIMEOUT) => Ok(false),
-            Err(err) => Err(Error::VulkanFenceWait(err)),
+            Err(err) => Err(UploaderError::FenceWait(err)),
         }
     }
 
@@ -123,7 +174,7 @@ impl Uploader {
         debug_identifier: Arguments,
         queue_transfer_commands: F,
         queue_graphics_commands: G,
-    ) -> Result<(), Error>
+    ) -> Result<(), UploadError>
     where
         F: FnOnce(&ash::Device, &Buffer, vk::CommandBuffer),
         G: FnOnce(&ash::Device, vk::CommandBuffer),
@@ -136,13 +187,13 @@ impl Uploader {
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
             let transfer_buffers =
-                unsafe { self.device.allocate_command_buffers(&transfer) }.map_err(Error::VulkanCommandBuffersAllocation)?;
+                unsafe { self.device.allocate_command_buffers(&transfer) }.map_err(UploadError::TransferCommandBufferCreation)?;
             let graphics = vk::CommandBufferAllocateInfo::builder()
                 .command_pool(self.graphics_command_pool.inner)
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
             let graphics_buffers =
-                unsafe { self.device.allocate_command_buffers(&graphics) }.map_err(Error::VulkanCommandBuffersAllocation)?;
+                unsafe { self.device.allocate_command_buffers(&graphics) }.map_err(UploadError::GraphicsCommandBufferCreation)?;
             [transfer_buffers[0], graphics_buffers[0]]
         };
         debug_utils::name_vulkan_object(
@@ -158,11 +209,11 @@ impl Uploader {
 
         let upload_fence = if let Some(fence) = self.free_fences.pop() {
             let fences = [fence.inner];
-            unsafe { self.device.reset_fences(&fences) }.map_err(Error::VulkanFenceReset)?;
+            unsafe { self.device.reset_fences(&fences) }.map_err(UploadError::FenceReset)?;
             fence
         } else {
             profiling::scope!("create fence");
-            let fence = unsafe { self.device.create_fence(&vk::FenceCreateInfo::default(), None) }.map_err(Error::VulkanFenceCreation)?;
+            let fence = unsafe { self.device.create_fence(&vk::FenceCreateInfo::default(), None) }.map_err(UploadError::FenceCreation)?;
             Fence {
                 inner: fence,
                 device: self.device.clone(),
@@ -182,7 +233,7 @@ impl Uploader {
         } else {
             profiling::scope!("create semaphore");
             let semaphore = unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
-                .map_err(Error::VulkanSemaphoreCreation)?;
+                .map_err(UploadError::SemaphoreCreation)?;
             Semaphore {
                 inner: semaphore,
                 device: self.device.clone(),
@@ -198,18 +249,18 @@ impl Uploader {
             profiling::scope!("record commands for transfer queue");
             let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { self.device.begin_command_buffer(transfer_cmdbuf, &command_buffer_begin_info) }
-                .map_err(Error::VulkanBeginCommandBuffer)?;
+                .map_err(UploadError::TransferCommandBufferBegin)?;
             queue_transfer_commands(&self.device, &staging_buffer, transfer_cmdbuf);
-            unsafe { self.device.end_command_buffer(transfer_cmdbuf) }.map_err(Error::VulkanEndCommandBuffer)?;
+            unsafe { self.device.end_command_buffer(transfer_cmdbuf) }.map_err(UploadError::TransferCommandBufferEnd)?;
         }
 
         {
             profiling::scope!("record commands for graphics queue");
             let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { self.device.begin_command_buffer(graphics_cmdbuf, &command_buffer_begin_info) }
-                .map_err(Error::VulkanBeginCommandBuffer)?;
+                .map_err(UploadError::GraphicsCommandBufferBegin)?;
             queue_graphics_commands(&self.device, graphics_cmdbuf);
-            unsafe { self.device.end_command_buffer(graphics_cmdbuf) }.map_err(Error::VulkanEndCommandBuffer)?;
+            unsafe { self.device.end_command_buffer(graphics_cmdbuf) }.map_err(UploadError::GraphicsCommandBufferEnd)?;
         }
 
         {
@@ -223,7 +274,7 @@ impl Uploader {
             unsafe {
                 self.device
                     .queue_submit(self.transfer_queue, &submit_infos, vk::Fence::null())
-                    .map_err(Error::VulkanQueueSubmit)
+                    .map_err(UploadError::TransferQueueSubmit)
             }?;
         }
 
@@ -240,7 +291,7 @@ impl Uploader {
             unsafe {
                 self.device
                     .queue_submit(self.graphics_queue, &submit_infos, upload_fence.inner)
-                    .map_err(Error::VulkanQueueSubmit)
+                    .map_err(UploadError::GraphicsQueueSubmit)
             }?;
         }
 
@@ -250,24 +301,24 @@ impl Uploader {
         Ok(())
     }
 
-    pub fn reset(&mut self) -> Result<(), Error> {
+    pub fn reset(&mut self) -> Result<(), UploaderError> {
         profiling::scope!("uploader reset");
         if self.get_upload_statuses().any(|uploaded| !uploaded) {
-            return Err(Error::UploaderNotResettable);
+            return Err(UploaderError::NotResettable);
         }
         self.staging_buffers.clear();
-        self.staging_arena.reset()?;
+        self.staging_arena.reset().map_err(UploaderError::StagingArenaReset)?;
         self.free_fences.append(&mut self.upload_fences);
         self.free_semaphores.append(&mut self.transfer_semaphores);
         unsafe {
             self.device
                 .reset_command_pool(self.transfer_command_pool.inner, vk::CommandPoolResetFlags::empty())
-                .map_err(Error::VulkanResetCommandPool)
+                .map_err(UploaderError::TransferCommandPoolReset)
         }?;
         unsafe {
             self.device
                 .reset_command_pool(self.graphics_command_pool.inner, vk::CommandPoolResetFlags::empty())
-                .map_err(Error::VulkanResetCommandPool)
+                .map_err(UploaderError::GraphicsCommandPoolReset)
         }?;
         Ok(())
     }

@@ -1,12 +1,51 @@
+use crate::arena::VulkanArenaError;
 use crate::debug_utils;
 use crate::descriptors::Descriptors;
 use crate::pipeline_parameters::PushConstantStruct;
 use crate::vulkan_raii::{CommandBuffer, CommandPool, Device, Fence, Semaphore};
-use crate::{Error, ForBuffers, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
+use crate::{ForBuffers, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
 use ash::{vk, Instance};
 use glam::Mat4;
 use std::mem;
 use std::rc::Rc;
+
+#[derive(thiserror::Error, Debug)]
+pub enum RendererError {
+    #[error("failed to create semaphore for renderer signalling present")]
+    PresentReadySemaphoreCreation(#[source] vk::Result),
+    #[error("failed to create semaphore for renderer signalling frame start")]
+    FrameStartSemaphoreCreation(#[source] vk::Result),
+    #[error("failed to create fence for renderer signalling frame end")]
+    FrameEndFenceCreation(#[source] vk::Result),
+    #[error("failed to create command pools for renderer")]
+    CommandPoolCreation(#[source] vk::Result),
+    #[error("failed to create frame-local vulkan arenas")]
+    FrameLocalArenaCreation(#[source] VulkanArenaError),
+    #[error("failed to acquire next frame's swapchain image (window issues?)")]
+    AcquireImage(#[source] vk::Result),
+    #[error("failed to wait for the frame end fence")]
+    FrameEndFenceWait(#[source] vk::Result),
+    #[error("failed to rest the frame-local vulkan arena")]
+    FrameLocalArenaReset(#[source] VulkanArenaError),
+    #[error("failed to create uniform buffer for camera transforms")]
+    CameraTransformUniformCreation(#[source] VulkanArenaError),
+    #[error("failed to submit rendering command buffers to the graphics queue (device lost or out of memory?)")]
+    RenderQueueSubmit(#[source] vk::Result),
+    #[error("present was successful, but may display oddly; swapchain is out of date")]
+    SwapchainOutOfDate(#[source] vk::Result),
+    #[error("failed to present to the surface queue (window issues?)")]
+    RenderQueuePresent(#[source] vk::Result),
+    #[error("failed to reset command pools for rendering")]
+    CommandPoolReset(#[source] vk::Result),
+    #[error("failed to allocate command buffers for rendering")]
+    CommandBufferAllocation(#[source] vk::Result),
+    #[error("failed to begin command buffer for rendering")]
+    CommandBufferBegin(#[source] vk::Result),
+    #[error("failed to create transform buffer")]
+    TransformBufferCreation(#[source] VulkanArenaError),
+    #[error("failed to end rendering command buffer")]
+    CommandBufferEnd(#[source] vk::Result),
+}
 
 /// Get from [Gpu::wait_frame].
 #[derive(Clone, Copy)]
@@ -42,32 +81,32 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice, frames: u32) -> Result<Renderer, Error> {
+    pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice, frames: u32) -> Result<Renderer, RendererError> {
         profiling::scope!("renderer creation (per-frame-stuff)");
 
         let ready_for_present = (1..frames + 1)
             .map(|nth| {
                 let semaphore = unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
-                    .map_err(Error::VulkanSemaphoreCreation)?;
+                    .map_err(RendererError::PresentReadySemaphoreCreation)?;
                 debug_utils::name_vulkan_object(device, semaphore, format_args!("render finish semaphore ({nth}/{frames})"));
                 Ok(Semaphore {
                     inner: semaphore,
                     device: device.clone(),
                 })
             })
-            .collect::<Result<Vec<_>, Error>>()?;
+            .collect::<Result<Vec<_>, RendererError>>()?;
 
         let frame_end_fence = (1..frames + 1)
             .map(|nth| {
                 let fence_create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-                let fence = unsafe { device.create_fence(&fence_create_info, None) }.map_err(Error::VulkanFenceCreation)?;
+                let fence = unsafe { device.create_fence(&fence_create_info, None) }.map_err(RendererError::FrameEndFenceCreation)?;
                 debug_utils::name_vulkan_object(device, fence, format_args!("frame end fence ({nth}/{frames})"));
                 Ok(Fence {
                     inner: fence,
                     device: device.clone(),
                 })
             })
-            .collect::<Result<Vec<_>, Error>>()?;
+            .collect::<Result<Vec<_>, RendererError>>()?;
 
         let command_pool = (1..frames + 1)
             .map(|nth| {
@@ -75,14 +114,14 @@ impl Renderer {
                     .queue_family_index(physical_device.graphics_queue_family.index)
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);
                 let command_pool =
-                    unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(Error::VulkanCommandPoolCreation)?;
+                    unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(RendererError::CommandPoolCreation)?;
                 debug_utils::name_vulkan_object(device, command_pool, format_args!("rendering cmds per frame ({nth}/{frames})"));
                 Ok(Rc::new(CommandPool {
                     inner: command_pool,
                     device: device.clone(),
                 }))
             })
-            .collect::<Result<Vec<_>, Error>>()?;
+            .collect::<Result<Vec<_>, RendererError>>()?;
 
         let temp_arena = (1..frames + 1)
             .map(|nth| {
@@ -95,13 +134,14 @@ impl Renderer {
                     vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
                     format_args!("frame local arena ({nth}/{frames})"),
                 )
+                .map_err(RendererError::FrameLocalArenaCreation)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
         let frame_start_fence = unsafe {
             device
                 .create_fence(&vk::FenceCreateInfo::default(), None)
-                .map_err(Error::VulkanSemaphoreCreation)
+                .map_err(RendererError::FrameStartSemaphoreCreation)
         }?;
         debug_utils::name_vulkan_object(device, frame_start_fence, format_args!("wait_frame fence"));
         let frame_start_fence = Fence {
@@ -126,14 +166,14 @@ impl Renderer {
     /// After ensuring that the next frame can be rendered, this also
     /// frees the resources that can now be freed up.
     #[profiling::function]
-    pub fn wait_frame(&mut self, swapchain: &Swapchain) -> Result<FrameIndex, Error> {
+    pub fn wait_frame(&mut self, swapchain: &Swapchain) -> Result<FrameIndex, RendererError> {
         let (image_index, _) = unsafe {
             profiling::scope!("acquire next image");
             let fence = self.frame_start_fence.inner;
             swapchain
                 .device()
                 .acquire_next_image(swapchain.inner(), u64::MAX, vk::Semaphore::null(), fence)
-                .map_err(Error::VulkanAcquireImage)
+                .map_err(RendererError::AcquireImage)
         }?;
         let frame_index = FrameIndex::new(image_index as usize);
         let fi = frame_index.index;
@@ -143,10 +183,10 @@ impl Renderer {
             profiling::scope!("wait for the image");
             self.device
                 .wait_for_fences(&fences, true, u64::MAX)
-                .map_err(Error::VulkanFenceWait)?;
-            self.device.reset_fences(&fences).map_err(Error::VulkanFenceReset)?;
+                .map_err(RendererError::FrameEndFenceWait)?;
+            self.device.reset_fences(&fences).map_err(RendererError::FrameEndFenceWait)?;
         }
-        self.temp_arena[fi].reset()?;
+        self.temp_arena[fi].reset().map_err(RendererError::FrameLocalArenaReset)?;
 
         Ok(frame_index)
     }
@@ -160,12 +200,24 @@ impl Renderer {
         canvas: &Framebuffers,
         scene: &Scene,
         debug_value: u32,
-    ) -> Result<(), Error> {
+    ) -> Result<(), RendererError> {
         let fi = frame_index.index;
         let vk::Extent2D { width, height } = canvas.extent;
-        let global_transforms_buffer = scene
-            .camera
-            .create_global_transforms(&mut self.temp_arena[fi], width as f32, height as f32)?;
+
+        let global_transforms = &[scene.camera.create_global_transforms(width as f32, height as f32)];
+        let global_transforms = bytemuck::cast_slice(global_transforms);
+        let buffer_create_info = vk::BufferCreateInfo::builder()
+            .size(global_transforms.len() as u64)
+            .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let global_transforms_buffer = self.temp_arena[fi]
+            .create_buffer(
+                *buffer_create_info,
+                global_transforms,
+                None,
+                format_args!("uniform (view+proj matrices)"),
+            )
+            .map_err(RendererError::CameraTransformUniformCreation)?;
         descriptors.write_descriptors(frame_index, &global_transforms_buffer);
         self.temp_arena[fi].add_buffer(global_transforms_buffer);
 
@@ -181,12 +233,12 @@ impl Renderer {
             profiling::scope!("queue render");
             self.device
                 .queue_submit(self.device.graphics_queue, &submit_infos, self.frame_end_fence[fi].inner)
-                .map_err(Error::VulkanQueueSubmit)
+                .map_err(RendererError::RenderQueueSubmit)
         }
     }
 
     #[profiling::function]
-    pub fn present_frame(&mut self, frame_index: FrameIndex, swapchain: &Swapchain) -> Result<(), Error> {
+    pub fn present_frame(&mut self, frame_index: FrameIndex, swapchain: &Swapchain) -> Result<(), RendererError> {
         let fi = frame_index.index;
         let wait_semaphores = [self.ready_for_present[fi].inner];
         let swapchains = [swapchain.inner()];
@@ -201,12 +253,10 @@ impl Renderer {
         };
 
         match present_result {
-            Err(err @ vk::Result::ERROR_OUT_OF_DATE_KHR) => return Err(Error::VulkanSwapchainOutOfDate(err)),
-            Err(err) => return Err(Error::VulkanQueuePresent(err)),
-            _ => {}
+            Err(err @ vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(RendererError::SwapchainOutOfDate(err)),
+            Err(err) => Err(RendererError::RenderQueuePresent(err)),
+            _ => Ok(()),
         }
-
-        Ok(())
     }
 
     #[profiling::function]
@@ -218,7 +268,7 @@ impl Renderer {
         framebuffers: &Framebuffers,
         scene: &Scene,
         debug_value: u32,
-    ) -> Result<vk::CommandBuffer, Error> {
+    ) -> Result<vk::CommandBuffer, RendererError> {
         let fi = frame_index.index;
         let temp_arena = &mut self.temp_arena[fi];
         let framebuffer = &framebuffers.inner[frame_index.index];
@@ -229,7 +279,7 @@ impl Renderer {
             profiling::scope!("reset command pool");
             self.device
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
-                .map_err(Error::VulkanResetCommandPool)
+                .map_err(RendererError::CommandPoolReset)
         }?;
         let unused_cbs = &mut self.command_buffers_unused[fi];
         let in_use_cbs = &mut self.command_buffers_in_use[fi];
@@ -248,7 +298,7 @@ impl Renderer {
                 let command_buffers = self
                     .device
                     .allocate_command_buffers(&command_buffer_allocate_info)
-                    .map_err(Error::VulkanCommandBuffersAllocation)?;
+                    .map_err(RendererError::CommandBufferAllocation)?;
                 debug_utils::name_vulkan_object(&self.device, command_buffers[0], format_args!("frame rendering cmds"));
                 CommandBuffer {
                     inner: command_buffers[0],
@@ -268,7 +318,7 @@ impl Renderer {
             profiling::scope!("begin command buffer");
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)
-                .map_err(Error::VulkanBeginCommandBuffer)?;
+                .map_err(RendererError::CommandBufferBegin)?;
         }
 
         let viewports = [vk::Viewport::builder()
@@ -345,12 +395,14 @@ impl Renderer {
                         .size(buffer_size)
                         .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                    temp_arena.create_buffer(
-                        *buffer_create_info,
-                        bytemuck::cast_slice(transforms),
-                        None,
-                        format_args!("{}. transform buffer of pipeline {pl_index:?}", i + 1),
-                    )?
+                    temp_arena
+                        .create_buffer(
+                            *buffer_create_info,
+                            bytemuck::cast_slice(transforms),
+                            None,
+                            format_args!("{}. transform buffer of pipeline {pl_index:?}", i + 1),
+                        )
+                        .map_err(RendererError::TransformBufferCreation)?
                 };
 
                 let push_constants = [PushConstantStruct {
@@ -396,7 +448,7 @@ impl Renderer {
             profiling::scope!("end command buffer");
             self.device
                 .end_command_buffer(command_buffer)
-                .map_err(Error::VulkanEndCommandBuffer)?;
+                .map_err(RendererError::CommandBufferEnd)?;
         }
 
         Ok(command_buffer)

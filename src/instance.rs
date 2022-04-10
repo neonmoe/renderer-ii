@@ -1,8 +1,16 @@
-use crate::{debug_utils, Error};
+use crate::debug_utils;
 use ash::{vk, Entry};
 use raw_window_handle::HasRawWindowHandle;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+
+#[derive(thiserror::Error, Debug)]
+pub enum InstanceCreationError {
+    #[error("failed to enumerate vulkan extensions required to create a surface from a window")]
+    WindowExtensionEnumeration(#[source] vk::Result),
+    #[error("failed to create vulkan window")]
+    InstanceCreation(#[source] vk::Result),
+}
 
 pub struct Instance {
     pub entry: Entry,
@@ -25,9 +33,9 @@ impl Drop for Instance {
 }
 
 impl Instance {
-    pub fn new(window: &dyn HasRawWindowHandle) -> Result<Instance, Error> {
+    pub fn new(window: &dyn HasRawWindowHandle) -> Result<Instance, InstanceCreationError> {
         profiling::scope!("vulkan instance creation");
-        // TODO(low): Missing Vulkan is not gracefully handled.
+        // TODO: Missing Vulkan is not gracefully handled.
         let entry = unsafe { Entry::load().unwrap() };
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))
@@ -46,7 +54,7 @@ impl Instance {
         }
 
         let mut extensions = ash_window::enumerate_required_extensions(window)
-            .map_err(Error::WindowRequiredExtensions)?
+            .map_err(InstanceCreationError::WindowExtensionEnumeration)?
             .into_iter()
             .map(|cs| {
                 if let Ok(s) = cs.to_str() {
@@ -85,7 +93,7 @@ impl Instance {
 
         let instance = {
             profiling::scope!("vk::create_instance");
-            unsafe { entry.create_instance(&create_info, None) }.map_err(Error::VulkanInstanceCreation)?
+            unsafe { entry.create_instance(&create_info, None) }.map_err(InstanceCreationError::InstanceCreation)?
         };
 
         let debug_utils_messenger = if debug_utils_available {

@@ -1,13 +1,9 @@
-use crate::vulkan_raii::Buffer;
-use crate::{Error, ForBuffers, VulkanArena};
-use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
-use std::mem;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct GlobalTransforms {
+pub struct GlobalTransforms {
     _projection: Mat4,
     _view: Mat4,
 }
@@ -44,23 +40,7 @@ pub struct Camera {}
 
 impl Camera {
     #[profiling::function]
-    pub(crate) fn create_global_transforms(
-        &self,
-        temp_arena: &mut VulkanArena<ForBuffers>,
-        width: f32,
-        height: f32,
-    ) -> Result<Buffer, Error> {
-        let src = &[GlobalTransforms::new(width, height)];
-        let buffer_size = mem::size_of::<GlobalTransforms>() as vk::DeviceSize;
-        let buffer_create_info = vk::BufferCreateInfo::builder()
-            .size(buffer_size)
-            .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        temp_arena.create_buffer(
-            *buffer_create_info,
-            bytemuck::cast_slice(src),
-            None,
-            format_args!("uniform (view+proj matrices)"),
-        )
+    pub(crate) fn create_global_transforms(&self, width: f32, height: f32) -> GlobalTransforms {
+        GlobalTransforms::new(width, height)
     }
 }

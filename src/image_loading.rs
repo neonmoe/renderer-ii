@@ -1,9 +1,25 @@
+use crate::arena::VulkanArenaError;
+use crate::uploader::UploadError;
 use crate::vulkan_raii::{Device, ImageView};
-use crate::{debug_utils, Error, ForImages, Uploader, VulkanArena};
+use crate::{debug_utils, ForImages, Uploader, VulkanArena};
 use ash::vk;
 use std::rc::Rc;
 
 mod ntex;
+
+#[derive(thiserror::Error, Debug)]
+pub enum ImageLoadingError {
+    #[error("failed to decode ntex file")]
+    Ntex(#[source] ntex::NtexDecodeError),
+    #[error("failed to create staging buffer for the image")]
+    StagingBufferCreation(#[source] VulkanArenaError),
+    #[error("failed to create the image")]
+    ImageCreation(#[source] VulkanArenaError),
+    #[error("failed to start upload for image")]
+    StartTextureUpload(#[source] UploadError),
+    #[error("failed to create the image view")]
+    ImageViewCreation(#[source] vk::Result),
+}
 
 #[derive(Clone, Copy)]
 pub enum TextureKind {
@@ -90,18 +106,48 @@ fn to_snorm(format: vk::Format) -> vk::Format {
     }
 }
 
-/// Creates an ImageView that consists of a single pixel with the
-/// given color.
-///
-/// The pixel channels are laid out as: [r, g, b, a].
-pub fn create_pixel(
+pub struct PbrDefaults {
+    pub base_color: ImageView,
+    pub metallic_roughness: ImageView,
+    pub normal: ImageView,
+    pub occlusion: ImageView,
+    pub emissive: ImageView,
+}
+
+impl PbrDefaults {
+    pub fn new(device: &Rc<Device>, uploader: &mut Uploader, arena: &mut VulkanArena<ForImages>) -> Result<PbrDefaults, ImageLoadingError> {
+        profiling::scope!("pbr default textures creation");
+
+        const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+        const BLACK: [u8; 4] = [0, 0, 0, 0xFF];
+        const NORMAL_Z: [u8; 4] = [0, 0, 0xFF, 0];
+        const M_AND_R: [u8; 4] = [0, 0x88, 0, 0];
+
+        let mut create_pixel = |color, kind, name| create_pixel(device, uploader, arena, color, kind, name);
+        let base_color = create_pixel(WHITE, TextureKind::SrgbColor, "default pbr base color")?;
+        let metallic_roughness = create_pixel(M_AND_R, TextureKind::LinearColor, "default pbr metallic/roughness")?;
+        let normal = create_pixel(NORMAL_Z, TextureKind::NormalMap, "default pbr normals")?;
+        let occlusion = create_pixel(WHITE, TextureKind::LinearColor, "default pbr occlusion")?;
+        let emissive = create_pixel(BLACK, TextureKind::SrgbColor, "default pbr emissive")?;
+
+        Ok(PbrDefaults {
+            base_color,
+            metallic_roughness,
+            normal,
+            occlusion,
+            emissive,
+        })
+    }
+}
+
+fn create_pixel(
     device: &Rc<Device>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
     pixels: [u8; 4],
     kind: TextureKind,
     debug_identifier: &str,
-) -> Result<ImageView, Error> {
+) -> Result<ImageView, ImageLoadingError> {
     let format = kind.convert_format(vk::Format::R8G8B8A8_UNORM);
     let extent = *vk::Extent3D::builder().width(1).height(1).depth(1);
     let &mut Uploader {
@@ -117,12 +163,15 @@ pub fn create_pixel(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        uploader.staging_arena.create_buffer(
-            *buffer_create_info,
-            &pixels,
-            None,
-            format_args!("staging buffer for {}", debug_identifier),
-        )?
+        uploader
+            .staging_arena
+            .create_buffer(
+                *buffer_create_info,
+                &pixels,
+                None,
+                format_args!("staging buffer for {}", debug_identifier),
+            )
+            .map_err(ImageLoadingError::StagingBufferCreation)?
     };
 
     let image_allocation = {
@@ -138,7 +187,9 @@ pub fn create_pixel(
             .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
             .samples(vk::SampleCountFlags::TYPE_1)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        arena.create_image(*image_info, format_args!("{}", debug_identifier))?
+        arena
+            .create_image(*image_info, format_args!("{}", debug_identifier))
+            .map_err(ImageLoadingError::ImageCreation)?
     };
 
     let subresource_range = vk::ImageSubresourceRange::builder()
@@ -149,169 +200,12 @@ pub fn create_pixel(
         .layer_count(1)
         .build();
 
-    uploader.start_upload(
-        staging_buffer,
-        format_args!("{}", debug_identifier),
-        |device, staging_buffer, command_buffer| {
-            profiling::scope!("vk::cmd_copy_buffer_to_image");
-            let barrier_from_undefined_to_transfer_dst = vk::ImageMemoryBarrier::builder()
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .image(image_allocation.inner)
-                .subresource_range(subresource_range)
-                .src_access_mask(vk::AccessFlags::empty())
-                .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                .build();
-            unsafe {
-                device.cmd_pipeline_barrier(
-                    command_buffer,
-                    vk::PipelineStageFlags::TOP_OF_PIPE,
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[barrier_from_undefined_to_transfer_dst],
-                );
-            }
-            let subresource_layers_dst = vk::ImageSubresourceLayers::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .mip_level(0)
-                .base_array_layer(0)
-                .layer_count(1)
-                .build();
-            let image_copy_region = vk::BufferImageCopy::builder()
-                .buffer_offset(0)
-                .buffer_row_length(1)
-                .buffer_image_height(1)
-                .image_subresource(subresource_layers_dst)
-                .image_extent(extent)
-                .build();
-            unsafe {
-                device.cmd_copy_buffer_to_image(
-                    command_buffer,
-                    staging_buffer.inner,
-                    image_allocation.inner,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    &[image_copy_region],
-                );
-            }
-        },
-        |device, command_buffer| {
-            profiling::scope!("record transfer->shader barrier");
-            let barrier_from_transfer_dst_to_shader = vk::ImageMemoryBarrier::builder()
-                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .src_queue_family_index(transfer_queue_family)
-                .dst_queue_family_index(graphics_queue_family)
-                .image(image_allocation.inner)
-                .subresource_range(subresource_range)
-                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                .build();
-            unsafe {
-                device.cmd_pipeline_barrier(
-                    command_buffer,
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::PipelineStageFlags::FRAGMENT_SHADER,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[barrier_from_transfer_dst_to_shader],
-                );
-            }
-        },
-    )?;
-
-    let image_view = {
-        let image_view_create_info = vk::ImageViewCreateInfo::builder()
-            .image(image_allocation.inner)
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .format(format)
-            .subresource_range(subresource_range);
-
-        let image_view = unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation)?;
-        ImageView {
-            inner: image_view,
-            device: device.clone(),
-            image: Rc::new(image_allocation.into()),
-        }
-    };
-    debug_utils::name_vulkan_object(device, image_view.inner, format_args!("{}", debug_identifier));
-
-    Ok(image_view)
-}
-
-#[profiling::function]
-pub fn load_ntex(
-    device: &Rc<Device>,
-    uploader: &mut Uploader,
-    arena: &mut VulkanArena<ForImages>,
-    bytes: &[u8],
-    kind: TextureKind,
-    debug_identifier: &str,
-) -> Result<ImageView, Error> {
-    let ntex::NtexData {
-        width,
-        height,
-        format,
-        pixels,
-        mip_ranges,
-    } = ntex::decode(bytes)?;
-    let format = kind.convert_format(format);
-    let extent = *vk::Extent3D::builder().width(width).height(height).depth(1);
-    let &mut Uploader {
-        graphics_queue_family,
-        transfer_queue_family,
-        ..
-    } = uploader;
-
-    let staging_buffer = {
-        profiling::scope!("allocate and create staging buffer");
-        let buffer_size = pixels.len() as vk::DeviceSize;
-        let buffer_create_info = vk::BufferCreateInfo::builder()
-            .size(buffer_size)
-            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        uploader.staging_arena.create_buffer(
-            *buffer_create_info,
-            pixels,
-            None,
-            format_args!("staging buffer for {}", debug_identifier),
-        )?
-    };
-
-    let image_allocation = {
-        profiling::scope!("allocate gpu texture");
-        let image_info = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .extent(extent)
-            .mip_levels(mip_ranges.len() as u32)
-            .array_layers(1)
-            .format(format)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        arena.create_image(*image_info, format_args!("{}", debug_identifier))?
-    };
-
-    uploader.start_upload(
-        staging_buffer,
-        format_args!("{}", debug_identifier),
-        |device, staging_buffer, command_buffer| {
-            let mut current_mip_level_extent = extent;
-            for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
+    uploader
+        .start_upload(
+            staging_buffer,
+            format_args!("{}", debug_identifier),
+            |device, staging_buffer, command_buffer| {
                 profiling::scope!("vk::cmd_copy_buffer_to_image");
-                let subresource_range = vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .base_mip_level(mip_level as u32)
-                    .level_count(1)
-                    .base_array_layer(0)
-                    .layer_count(1)
-                    .build();
                 let barrier_from_undefined_to_transfer_dst = vk::ImageMemoryBarrier::builder()
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
@@ -335,18 +229,16 @@ pub fn load_ntex(
                 }
                 let subresource_layers_dst = vk::ImageSubresourceLayers::builder()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .mip_level(mip_level as u32)
+                    .mip_level(0)
                     .base_array_layer(0)
                     .layer_count(1)
                     .build();
-                // NOTE: Only works for square block sizes. May cause issues down the line.
-                let texel_size = (mip_range.len() as f32).sqrt() as u32;
                 let image_copy_region = vk::BufferImageCopy::builder()
-                    .buffer_offset(mip_range.start as vk::DeviceSize)
-                    .buffer_row_length(current_mip_level_extent.width.max(texel_size))
-                    .buffer_image_height(current_mip_level_extent.height.max(texel_size))
+                    .buffer_offset(0)
+                    .buffer_row_length(1)
+                    .buffer_image_height(1)
                     .image_subresource(subresource_layers_dst)
-                    .image_extent(current_mip_level_extent)
+                    .image_extent(extent)
                     .build();
                 unsafe {
                     device.cmd_copy_buffer_to_image(
@@ -357,21 +249,9 @@ pub fn load_ntex(
                         &[image_copy_region],
                     );
                 }
-                current_mip_level_extent.width = (current_mip_level_extent.width / 2).max(1);
-                current_mip_level_extent.height = (current_mip_level_extent.height / 2).max(1);
-                current_mip_level_extent.depth = (current_mip_level_extent.depth / 2).max(1);
-            }
-        },
-        |device, command_buffer| {
-            for mip_level in 0..mip_ranges.len() {
+            },
+            |device, command_buffer| {
                 profiling::scope!("record transfer->shader barrier");
-                let subresource_range = vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .base_mip_level(mip_level as u32)
-                    .level_count(1)
-                    .base_array_layer(0)
-                    .layer_count(1)
-                    .build();
                 let barrier_from_transfer_dst_to_shader = vk::ImageMemoryBarrier::builder()
                     .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
@@ -393,9 +273,190 @@ pub fn load_ntex(
                         &[barrier_from_transfer_dst_to_shader],
                     );
                 }
-            }
-        },
-    )?;
+            },
+        )
+        .map_err(ImageLoadingError::StartTextureUpload)?;
+
+    let image_view = {
+        let image_view_create_info = vk::ImageViewCreateInfo::builder()
+            .image(image_allocation.inner)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(format)
+            .subresource_range(subresource_range);
+
+        let image_view =
+            unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(ImageLoadingError::ImageViewCreation)?;
+        ImageView {
+            inner: image_view,
+            device: device.clone(),
+            image: Rc::new(image_allocation.into()),
+        }
+    };
+    debug_utils::name_vulkan_object(device, image_view.inner, format_args!("{}", debug_identifier));
+
+    Ok(image_view)
+}
+
+#[profiling::function]
+pub fn load_ntex(
+    device: &Rc<Device>,
+    uploader: &mut Uploader,
+    arena: &mut VulkanArena<ForImages>,
+    bytes: &[u8],
+    kind: TextureKind,
+    debug_identifier: &str,
+) -> Result<ImageView, ImageLoadingError> {
+    let ntex::NtexData {
+        width,
+        height,
+        format,
+        pixels,
+        mip_ranges,
+    } = ntex::decode(bytes).map_err(ImageLoadingError::Ntex)?;
+    let format = kind.convert_format(format);
+    let extent = *vk::Extent3D::builder().width(width).height(height).depth(1);
+    let &mut Uploader {
+        graphics_queue_family,
+        transfer_queue_family,
+        ..
+    } = uploader;
+
+    let staging_buffer = {
+        profiling::scope!("allocate and create staging buffer");
+        let buffer_size = pixels.len() as vk::DeviceSize;
+        let buffer_create_info = vk::BufferCreateInfo::builder()
+            .size(buffer_size)
+            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        uploader
+            .staging_arena
+            .create_buffer(
+                *buffer_create_info,
+                pixels,
+                None,
+                format_args!("staging buffer for {}", debug_identifier),
+            )
+            .map_err(ImageLoadingError::StagingBufferCreation)?
+    };
+
+    let image_allocation = {
+        profiling::scope!("allocate gpu texture");
+        let image_info = vk::ImageCreateInfo::builder()
+            .image_type(vk::ImageType::TYPE_2D)
+            .extent(extent)
+            .mip_levels(mip_ranges.len() as u32)
+            .array_layers(1)
+            .format(format)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        arena
+            .create_image(*image_info, format_args!("{}", debug_identifier))
+            .map_err(ImageLoadingError::ImageCreation)?
+    };
+
+    uploader
+        .start_upload(
+            staging_buffer,
+            format_args!("{}", debug_identifier),
+            |device, staging_buffer, command_buffer| {
+                let mut current_mip_level_extent = extent;
+                for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
+                    profiling::scope!("vk::cmd_copy_buffer_to_image");
+                    let subresource_range = vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_mip_level(mip_level as u32)
+                        .level_count(1)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .build();
+                    let barrier_from_undefined_to_transfer_dst = vk::ImageMemoryBarrier::builder()
+                        .old_layout(vk::ImageLayout::UNDEFINED)
+                        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .image(image_allocation.inner)
+                        .subresource_range(subresource_range)
+                        .src_access_mask(vk::AccessFlags::empty())
+                        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                        .build();
+                    unsafe {
+                        device.cmd_pipeline_barrier(
+                            command_buffer,
+                            vk::PipelineStageFlags::TOP_OF_PIPE,
+                            vk::PipelineStageFlags::TRANSFER,
+                            vk::DependencyFlags::empty(),
+                            &[],
+                            &[],
+                            &[barrier_from_undefined_to_transfer_dst],
+                        );
+                    }
+                    let subresource_layers_dst = vk::ImageSubresourceLayers::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .mip_level(mip_level as u32)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .build();
+                    // NOTE: Only works for square block sizes. May cause issues down the line.
+                    let texel_size = (mip_range.len() as f32).sqrt() as u32;
+                    let image_copy_region = vk::BufferImageCopy::builder()
+                        .buffer_offset(mip_range.start as vk::DeviceSize)
+                        .buffer_row_length(current_mip_level_extent.width.max(texel_size))
+                        .buffer_image_height(current_mip_level_extent.height.max(texel_size))
+                        .image_subresource(subresource_layers_dst)
+                        .image_extent(current_mip_level_extent)
+                        .build();
+                    unsafe {
+                        device.cmd_copy_buffer_to_image(
+                            command_buffer,
+                            staging_buffer.inner,
+                            image_allocation.inner,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            &[image_copy_region],
+                        );
+                    }
+                    current_mip_level_extent.width = (current_mip_level_extent.width / 2).max(1);
+                    current_mip_level_extent.height = (current_mip_level_extent.height / 2).max(1);
+                    current_mip_level_extent.depth = (current_mip_level_extent.depth / 2).max(1);
+                }
+            },
+            |device, command_buffer| {
+                for mip_level in 0..mip_ranges.len() {
+                    profiling::scope!("record transfer->shader barrier");
+                    let subresource_range = vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_mip_level(mip_level as u32)
+                        .level_count(1)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .build();
+                    let barrier_from_transfer_dst_to_shader = vk::ImageMemoryBarrier::builder()
+                        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                        .src_queue_family_index(transfer_queue_family)
+                        .dst_queue_family_index(graphics_queue_family)
+                        .image(image_allocation.inner)
+                        .subresource_range(subresource_range)
+                        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                        .build();
+                    unsafe {
+                        device.cmd_pipeline_barrier(
+                            command_buffer,
+                            vk::PipelineStageFlags::TRANSFER,
+                            vk::PipelineStageFlags::FRAGMENT_SHADER,
+                            vk::DependencyFlags::empty(),
+                            &[],
+                            &[],
+                            &[barrier_from_transfer_dst_to_shader],
+                        );
+                    }
+                }
+            },
+        )
+        .map_err(ImageLoadingError::StartTextureUpload)?;
 
     let image_view = {
         let subresource_range = vk::ImageSubresourceRange::builder()
@@ -411,7 +472,8 @@ pub fn load_ntex(
             .format(format)
             .subresource_range(subresource_range);
 
-        let image_view = unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanImageViewCreation)?;
+        let image_view =
+            unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(ImageLoadingError::ImageViewCreation)?;
         ImageView {
             inner: image_view,
             device: device.clone(),

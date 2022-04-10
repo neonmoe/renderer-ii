@@ -1,6 +1,6 @@
 //! An arena allocator for managing GPU memory.
 use crate::debug_utils;
-use crate::error::Error;
+use crate::uploader::UploadError;
 use crate::vulkan_raii::{Buffer, Device, DeviceMemory, Image};
 use crate::{display_utils, PhysicalDevice, Uploader};
 use ash::vk;
@@ -9,6 +9,39 @@ use std::fmt::{Arguments, Debug};
 use std::marker::PhantomData;
 use std::ptr;
 use std::rc::Rc;
+
+#[derive(thiserror::Error, Debug)]
+pub enum VulkanArenaError {
+    #[error("no heap with the required flags (id: {0}, flags: {1:?})")]
+    MissingMemoryType(String, vk::MemoryPropertyFlags),
+    #[error("no heap with specified flags has enough memory (id: {0}, flags: {1:?}, size: {2})")]
+    HeapsOutOfMemory(String, vk::MemoryPropertyFlags, display_utils::Bytes),
+    #[error("vulkan memory allocation failed (id: {1}, size: {2})")]
+    Allocate(#[source] vk::Result, String, display_utils::Bytes),
+    #[error("mapping vulkan memory failed (id: {1}, size: {2})")]
+    Map(#[source] vk::Result, String, display_utils::Bytes),
+    #[error("tried to reset arena while some resources allocated from it are still in use ({0} refs)")]
+    NotResettable(usize),
+    #[error("arena {identifier} ({used}/{total} bytes used) cannot fit {required} bytes")]
+    OutOfMemory {
+        identifier: String,
+        used: vk::DeviceSize,
+        total: vk::DeviceSize,
+        required: vk::DeviceSize,
+    },
+    #[error("tried to write to arena without HOST_VISIBLE | HOST_COHERENT without providing an uploader for staging memory")]
+    NotWritable,
+    #[error("failed to start upload for transferring the staging memory to device local memory")]
+    Upload(#[source] UploadError),
+    #[error("failed to create buffer {0:?} (probably out of host or device memory)")]
+    BufferCreation(#[source] vk::Result),
+    #[error("failed to bind buffer to arena memory (probably out of host or device memory)")]
+    BufferBinding(#[source] vk::Result),
+    #[error("failed to create image {0:?} (probably out of host or device memory)")]
+    ImageCreation(#[source] vk::Result),
+    #[error("failed to bind image to arena memory (probably out of host or device memory)")]
+    ImageBinding(#[source] vk::Result),
+}
 
 pub trait ArenaType {
     fn mappable() -> bool;
@@ -59,16 +92,11 @@ impl<T: ArenaType> VulkanArena<T> {
         optimal_flags: vk::MemoryPropertyFlags,
         fallback_flags: vk::MemoryPropertyFlags,
         debug_identifier_args: Arguments,
-    ) -> Result<VulkanArena<T>, Error> {
+    ) -> Result<VulkanArena<T>, VulkanArenaError> {
         profiling::scope!("gpu memory arena creation");
         let debug_identifier = format!("{}", debug_identifier_args);
-        let (memory_type_index, memory_flags) = get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size)
-            .map_err(|err| match err {
-                MissingMemoryTypeError::MemoryTypeMissing => Error::VulkanNoMatchingHeap(debug_identifier.clone(), fallback_flags),
-                MissingMemoryTypeError::OutOfMemory => {
-                    Error::VulkanHeapsOutOfMemory(debug_identifier.clone(), fallback_flags, display_utils::Bytes(size))
-                }
-            })?;
+        let (memory_type_index, memory_flags) =
+            get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size, &debug_identifier)?;
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
             .memory_type_index(memory_type_index);
@@ -76,16 +104,18 @@ impl<T: ArenaType> VulkanArena<T> {
             profiling::scope!("vk::allocate_memory");
             log::trace!("vk::allocate_memory({} bytes, index {})", size, memory_type_index);
             unsafe { device.allocate_memory(&alloc_info, None) }
-                .map_err(|err| Error::VulkanAllocate(err, debug_identifier.clone(), size))?
+                .map_err(|err| VulkanArenaError::Allocate(err, debug_identifier.clone(), display_utils::Bytes(size)))?
         };
         debug_utils::name_vulkan_object(device, memory, debug_identifier_args);
 
-        let mapped_memory_ptr =
-            if T::mappable() && memory_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT) {
-                unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }.map_err(Error::VulkanMapMemory)? as *mut u8
-            } else {
-                ptr::null_mut()
-            };
+        let mapped_memory_ptr = if T::mappable()
+            && memory_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+        {
+            unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }
+                .map_err(|err| VulkanArenaError::Map(err, debug_identifier.clone(), display_utils::Bytes(size)))? as *mut u8
+        } else {
+            ptr::null_mut()
+        };
 
         let memory = Rc::new(DeviceMemory::new(memory, device.clone(), size));
         // IN_USE gets bumped by DeviceMemory::new, subtract it back down because none of it is actually in use.
@@ -106,9 +136,11 @@ impl<T: ArenaType> VulkanArena<T> {
     /// Attempts to reset the arena, marking all graphics memory owned by it as
     /// usable again. If some of the memory allocated from this arena is still
     /// in use, Err is returned and the arena is not reset.
-    pub fn reset(&mut self) -> Result<(), Error> {
-        if Rc::strong_count(&self.memory) > 1 + self.pinned_buffers.len() {
-            Err(Error::ArenaNotResettable)
+    pub fn reset(&mut self) -> Result<(), VulkanArenaError> {
+        let total_refs = Rc::strong_count(&self.memory);
+        let internal_refs = 1 + self.pinned_buffers.len();
+        if total_refs > internal_refs {
+            Err(VulkanArenaError::NotResettable(total_refs - internal_refs))
         } else {
             self.pinned_buffers.clear();
             // Everything created from this arena no longer exists, so none of the memory is in use anymore.
@@ -134,9 +166,9 @@ impl VulkanArena<ForBuffers> {
         src: &[u8],
         uploader: Option<&mut Uploader>,
         name: Arguments,
-    ) -> Result<Buffer, Error> {
+    ) -> Result<Buffer, VulkanArenaError> {
         profiling::scope!("vulkan buffer creation");
-        let buffer = unsafe { self.device.create_buffer(&buffer_create_info, None) }.map_err(Error::VulkanBufferCreation)?;
+        let buffer = unsafe { self.device.create_buffer(&buffer_create_info, None) }.map_err(VulkanArenaError::BufferCreation)?;
         let buffer_memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         let alignment = buffer_memory_requirements.alignment;
 
@@ -146,7 +178,7 @@ impl VulkanArena<ForBuffers> {
 
         if self.total_size - offset < size {
             unsafe { self.device.destroy_buffer(buffer, None) };
-            return Err(Error::ArenaOutOfMemory {
+            return Err(VulkanArenaError::OutOfMemory {
                 identifier: self.debug_identifier.clone(),
                 used: offset,
                 total: self.total_size,
@@ -154,7 +186,7 @@ impl VulkanArena<ForBuffers> {
             });
         }
 
-        match unsafe { self.device.bind_buffer_memory(buffer, self.memory.inner, offset) }.map_err(Error::VulkanBufferBinding) {
+        match unsafe { self.device.bind_buffer_memory(buffer, self.memory.inner, offset) }.map_err(VulkanArenaError::BufferBinding) {
             Ok(_) => {}
             Err(err) => {
                 unsafe { self.device.destroy_buffer(buffer, None) };
@@ -181,61 +213,63 @@ impl VulkanArena<ForBuffers> {
                     ..
                 } = uploader;
 
-                uploader.start_upload(
-                    staging_buffer,
-                    name,
-                    |device, staging_buffer, command_buffer| {
-                        profiling::scope!("record buffer copy cmd from staging");
-                        let barrier_from_graphics_to_transfer = vk::BufferMemoryBarrier::builder()
-                            .buffer(buffer)
-                            .offset(0)
-                            .size(vk::WHOLE_SIZE)
-                            .src_queue_family_index(graphics_queue_family)
-                            .dst_queue_family_index(transfer_queue_family)
-                            .src_access_mask(vk::AccessFlags::NONE)
-                            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                            .build();
-                        unsafe {
-                            device.cmd_pipeline_barrier(
-                                command_buffer,
-                                vk::PipelineStageFlags::TOP_OF_PIPE,
-                                vk::PipelineStageFlags::TRANSFER,
-                                vk::DependencyFlags::empty(),
-                                &[],
-                                &[barrier_from_graphics_to_transfer],
-                                &[],
-                            );
-                        }
-                        let (src, dst) = (staging_buffer.inner, buffer);
-                        let copy_regions = [vk::BufferCopy::builder().size(size).build()];
-                        unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
-                    },
-                    |device, command_buffer| {
-                        profiling::scope!("vk::cmd_pipeline_barrier");
-                        let barrier_from_transfer_to_graphics = vk::BufferMemoryBarrier::builder()
-                            .buffer(buffer)
-                            .offset(0)
-                            .size(vk::WHOLE_SIZE)
-                            .src_queue_family_index(transfer_queue_family)
-                            .dst_queue_family_index(graphics_queue_family)
-                            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                            .dst_access_mask(vk::AccessFlags::VERTEX_ATTRIBUTE_READ)
-                            .build();
-                        unsafe {
-                            device.cmd_pipeline_barrier(
-                                command_buffer,
-                                vk::PipelineStageFlags::TRANSFER,
-                                vk::PipelineStageFlags::VERTEX_INPUT,
-                                vk::DependencyFlags::empty(),
-                                &[],
-                                &[barrier_from_transfer_to_graphics],
-                                &[],
-                            );
-                        }
-                    },
-                )?;
+                uploader
+                    .start_upload(
+                        staging_buffer,
+                        name,
+                        |device, staging_buffer, command_buffer| {
+                            profiling::scope!("record buffer copy cmd from staging");
+                            let barrier_from_graphics_to_transfer = vk::BufferMemoryBarrier::builder()
+                                .buffer(buffer)
+                                .offset(0)
+                                .size(vk::WHOLE_SIZE)
+                                .src_queue_family_index(graphics_queue_family)
+                                .dst_queue_family_index(transfer_queue_family)
+                                .src_access_mask(vk::AccessFlags::NONE)
+                                .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                                .build();
+                            unsafe {
+                                device.cmd_pipeline_barrier(
+                                    command_buffer,
+                                    vk::PipelineStageFlags::TOP_OF_PIPE,
+                                    vk::PipelineStageFlags::TRANSFER,
+                                    vk::DependencyFlags::empty(),
+                                    &[],
+                                    &[barrier_from_graphics_to_transfer],
+                                    &[],
+                                );
+                            }
+                            let (src, dst) = (staging_buffer.inner, buffer);
+                            let copy_regions = [vk::BufferCopy::builder().size(size).build()];
+                            unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
+                        },
+                        |device, command_buffer| {
+                            profiling::scope!("vk::cmd_pipeline_barrier");
+                            let barrier_from_transfer_to_graphics = vk::BufferMemoryBarrier::builder()
+                                .buffer(buffer)
+                                .offset(0)
+                                .size(vk::WHOLE_SIZE)
+                                .src_queue_family_index(transfer_queue_family)
+                                .dst_queue_family_index(graphics_queue_family)
+                                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                                .dst_access_mask(vk::AccessFlags::VERTEX_ATTRIBUTE_READ)
+                                .build();
+                            unsafe {
+                                device.cmd_pipeline_barrier(
+                                    command_buffer,
+                                    vk::PipelineStageFlags::TRANSFER,
+                                    vk::PipelineStageFlags::VERTEX_INPUT,
+                                    vk::DependencyFlags::empty(),
+                                    &[],
+                                    &[barrier_from_transfer_to_graphics],
+                                    &[],
+                                );
+                            }
+                        },
+                    )
+                    .map_err(VulkanArenaError::Upload)?;
             } else {
-                return Err(Error::ArenaNotWritable);
+                return Err(VulkanArenaError::NotWritable);
             }
         } else {
             profiling::scope!("writing buffer data");
@@ -257,9 +291,9 @@ impl VulkanArena<ForBuffers> {
 }
 
 impl VulkanArena<ForImages> {
-    pub fn create_image(&mut self, image_create_info: vk::ImageCreateInfo, name: Arguments) -> Result<Image, Error> {
+    pub fn create_image(&mut self, image_create_info: vk::ImageCreateInfo, name: Arguments) -> Result<Image, VulkanArenaError> {
         profiling::scope!("vulkan image creation");
-        let image = unsafe { self.device.create_image(&image_create_info, None) }.map_err(Error::VulkanImageCreation)?;
+        let image = unsafe { self.device.create_image(&image_create_info, None) }.map_err(VulkanArenaError::ImageCreation)?;
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
         let alignment = image_memory_requirements.alignment;
 
@@ -268,7 +302,7 @@ impl VulkanArena<ForImages> {
 
         if self.total_size - offset < size {
             unsafe { self.device.destroy_image(image, None) };
-            return Err(Error::ArenaOutOfMemory {
+            return Err(VulkanArenaError::OutOfMemory {
                 identifier: self.debug_identifier.clone(),
                 used: offset,
                 total: self.total_size,
@@ -276,7 +310,7 @@ impl VulkanArena<ForImages> {
             });
         }
 
-        match unsafe { self.device.bind_image_memory(image, self.memory.inner, offset) }.map_err(Error::VulkanImageBinding) {
+        match unsafe { self.device.bind_image_memory(image, self.memory.inner, offset) }.map_err(VulkanArenaError::ImageBinding) {
             Ok(_) => {}
             Err(err) => {
                 unsafe { self.device.destroy_image(image, None) };
@@ -298,19 +332,14 @@ impl VulkanArena<ForImages> {
     }
 }
 
-#[derive(Debug)]
-pub enum MissingMemoryTypeError {
-    MemoryTypeMissing,
-    OutOfMemory,
-}
-
 fn get_memory_type_index(
     instance: &Instance,
     physical_device: &PhysicalDevice,
     optimal_flags: vk::MemoryPropertyFlags,
     fallback_flags: vk::MemoryPropertyFlags,
     size: vk::DeviceSize,
-) -> Result<(u32, vk::MemoryPropertyFlags), MissingMemoryTypeError> {
+    debug_identifier: &str,
+) -> Result<(u32, vk::MemoryPropertyFlags), VulkanArenaError> {
     let budget_supported = physical_device.extension_supported("VK_EXT_memory_budget");
     let mut memory_properties = vk::PhysicalDeviceMemoryProperties2::builder();
     let mut budget_props = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
@@ -354,9 +383,13 @@ fn get_memory_type_index(
     }
 
     if valid_type_found {
-        Err(MissingMemoryTypeError::OutOfMemory)
+        Err(VulkanArenaError::HeapsOutOfMemory(
+            debug_identifier.to_string(),
+            fallback_flags,
+            display_utils::Bytes(size),
+        ))
     } else {
-        Err(MissingMemoryTypeError::MemoryTypeMissing)
+        Err(VulkanArenaError::MissingMemoryType(debug_identifier.to_string(), fallback_flags))
     }
 }
 

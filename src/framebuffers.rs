@@ -1,9 +1,23 @@
-use crate::arena::VulkanArena;
+use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::debug_utils;
 use crate::vulkan_raii::{AnyImage, Device, Framebuffer, ImageView};
-use crate::{Error, PhysicalDevice, Pipelines, Swapchain};
+use crate::{PhysicalDevice, Pipelines, Swapchain};
 use ash::{vk, Instance};
 use std::rc::Rc;
+
+#[derive(thiserror::Error, Debug)]
+pub enum FramebufferCreationError {
+    #[error("failed to create vulkan arena for storing framebuffer images")]
+    Arena(#[source] VulkanArenaError),
+    #[error("failed to create temp image to query framebuffer memory requirements")]
+    QueryImage(#[source] vk::Result),
+    #[error("failed to create image view from framebuffer image")]
+    ImageView(#[source] vk::Result),
+    #[error("failed to create and allocate framebuffer image")]
+    Image(#[source] VulkanArenaError),
+    #[error("failed to create framebuffer object")]
+    ObjectCreation(#[source] vk::Result),
+}
 
 pub struct Framebuffers {
     pub extent: vk::Extent2D,
@@ -17,7 +31,7 @@ impl Framebuffers {
         physical_device: &PhysicalDevice,
         pipelines: &Pipelines,
         swapchain: &Swapchain,
-    ) -> Result<Framebuffers, Error> {
+    ) -> Result<Framebuffers, FramebufferCreationError> {
         profiling::scope!("framebuffers creation");
 
         let swapchain_format = physical_device.swapchain_format;
@@ -48,7 +62,7 @@ impl Framebuffers {
         {
             profiling::scope!("framebuffer memory requirements querying");
             for framebuffer_image_info in color_image_infos.iter().chain(depth_image_infos.iter()) {
-                let image = unsafe { device.create_image(framebuffer_image_info, None) }.map_err(Error::VulkanImageCreation)?;
+                let image = unsafe { device.create_image(framebuffer_image_info, None) }.map_err(FramebufferCreationError::QueryImage)?;
                 debug_utils::name_vulkan_object(device, image, format_args!("memory requirement querying temp img"));
                 let reqs = unsafe { device.get_image_memory_requirements(image) };
                 let size_mod = framebuffer_size % reqs.alignment;
@@ -68,10 +82,11 @@ impl Framebuffers {
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
             format_args!("framebuffer arena ({width}x{height}, {swapchain_format:?}, {frame_count} frames)"),
-        )?;
+        )
+        .map_err(FramebufferCreationError::Arena)?;
 
         let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
-            move |image: Rc<AnyImage>| -> Result<ImageView, Error> {
+            move |image: Rc<AnyImage>| -> Result<ImageView, FramebufferCreationError> {
                 let subresource_range = vk::ImageSubresourceRange {
                     aspect_mask,
                     base_mip_level: 0,
@@ -87,7 +102,7 @@ impl Framebuffers {
                     ..Default::default()
                 };
                 let image_view =
-                    unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(Error::VulkanSwapchainImageViewCreation)?;
+                    unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(FramebufferCreationError::ImageView)?;
                 Ok(ImageView {
                     inner: image_view,
                     device: device.clone(),
@@ -96,7 +111,7 @@ impl Framebuffers {
             }
         };
 
-        // TODO(med): Add another set of images to render to, to allow for post processing
+        // TODO: Add another set of images to render to, to allow for post processing
         // Also, consider: render to a linear/higher depth image, then map to SRGB for the swapchain?
         let swapchain_image_views = swapchain
             .images
@@ -107,8 +122,12 @@ impl Framebuffers {
 
         let color_images = color_image_infos
             .into_iter()
-            .map(|create_info| framebuffer_arena.create_image(create_info, format_args!("")))
-            .collect::<Result<Vec<_>, Error>>()?;
+            .map(|create_info| {
+                framebuffer_arena
+                    .create_image(create_info, format_args!(""))
+                    .map_err(FramebufferCreationError::Image)
+            })
+            .collect::<Result<Vec<_>, FramebufferCreationError>>()?;
         let color_image_views = color_images
             .into_iter()
             .map(|image| Rc::new(AnyImage::from(image)))
@@ -117,8 +136,12 @@ impl Framebuffers {
 
         let depth_images = depth_image_infos
             .into_iter()
-            .map(|create_info| framebuffer_arena.create_image(create_info, format_args!("")))
-            .collect::<Result<Vec<_>, Error>>()?;
+            .map(|create_info| {
+                framebuffer_arena
+                    .create_image(create_info, format_args!(""))
+                    .map_err(FramebufferCreationError::Image)
+            })
+            .collect::<Result<Vec<_>, FramebufferCreationError>>()?;
         let depth_image_views = depth_images
             .into_iter()
             .map(|image| Rc::new(AnyImage::from(image)))
@@ -154,8 +177,8 @@ impl Framebuffers {
                     .width(width)
                     .height(height)
                     .layers(1);
-                let framebuffer =
-                    unsafe { device.create_framebuffer(&framebuffer_create_info, None) }.map_err(Error::VulkanFramebufferCreation)?;
+                let framebuffer = unsafe { device.create_framebuffer(&framebuffer_create_info, None) }
+                    .map_err(FramebufferCreationError::ObjectCreation)?;
                 debug_utils::name_vulkan_object(device, framebuffer, format_args!("main fb {}/{frame_count}", i + 1));
                 Ok(Framebuffer {
                     inner: framebuffer,
@@ -164,7 +187,7 @@ impl Framebuffers {
                     attachments: vec![color_image_view, depth_image_view, swapchain_image_view],
                 })
             })
-            .collect::<Result<Vec<Framebuffer>, Error>>()?;
+            .collect::<Result<Vec<Framebuffer>, FramebufferCreationError>>()?;
 
         Ok(Framebuffers {
             extent: vk::Extent2D { width, height },

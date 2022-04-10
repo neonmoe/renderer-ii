@@ -1,16 +1,16 @@
-use crate::arena::VulkanArena;
-use crate::descriptors::{GltfFactors, PipelineSpecificData};
-use crate::image_loading::{self, TextureKind};
+use crate::arena::{VulkanArena, VulkanArenaError};
+use crate::descriptors::{DescriptorError, GltfFactors, PipelineSpecificData};
+use crate::image_loading::{self, ImageLoadingError, TextureKind};
 use crate::mesh::Mesh;
 use crate::vk;
 use crate::vulkan_raii::{Buffer, Device, ImageView};
-use crate::{Descriptors, Error, ForBuffers, ForImages, Material, PipelineIndex, Uploader};
+use crate::{Descriptors, ForBuffers, ForImages, Material, PipelineIndex, Uploader};
 use glam::{Mat4, Quat, Vec3, Vec4};
 use memmap2::{Advice, Mmap, MmapOptions};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 
 mod gltf_json;
@@ -23,6 +23,58 @@ const GLTF_SHORT: i32 = 5122;
 const GLTF_UNSIGNED_SHORT: i32 = 5123;
 const GLTF_UNSIGNED_INT: i32 = 5125;
 const GLTF_FLOAT: i32 = 5126;
+
+#[derive(thiserror::Error, Debug)]
+pub enum GltfLoadingError {
+    #[error("not a glb file")]
+    InvalidGlbHeader,
+    #[error("glb header length mismatch")]
+    InvalidGlbLength,
+    #[error("glb chunk length mismatch")]
+    InvalidGlbChunkLength,
+    #[error("invalid glb chunk type")]
+    InvalidGlbChunkType,
+    #[error("too many glb json chunks")]
+    TooManyGlbJsonChunks,
+    #[error("too many glb binary chunks")]
+    TooManyGlbBinaryChunks,
+    #[error("glb json is not valid utf-8")]
+    InvalidGlbJson(#[source] std::str::Utf8Error),
+    #[error("glb json chunk missing")]
+    MissingGlbJson,
+    #[error("failed to deserialize gltf json")]
+    JsonDeserialization(#[source] serde_json::Error),
+    #[error("unsupported gltf minimum version ({0}), 2.0 is supported")]
+    UnsupportedGltfVersion(String),
+    #[error("gltf has buffer without an uri but no glb BIN buffer")]
+    GlbBinMissing,
+    #[error("given gltf/glb file cannot be read")]
+    MissingFile(#[source] std::io::Error),
+    #[error("gltf refers to external data ({0}) but no directory was given in from_gltf/from_glb")]
+    MissingDirectory(String),
+    #[error("could not open resource file for gltf at {1}")]
+    OpenFile(#[source] std::io::Error, std::path::PathBuf),
+    #[error("could not map resource file into memory for gltf at {1}")]
+    MapFile(#[source] std::io::Error, std::path::PathBuf),
+    #[error("failed to create a buffer for gltf from a file {1}")]
+    BufferCreationFromFile(#[source] VulkanArenaError, std::path::PathBuf),
+    #[error("failed to create a buffer for gltf from the internal glb buffer")]
+    BufferCreationFromGlb(#[source] VulkanArenaError),
+    #[error("failed to create a buffer for gltf from the material parameters")]
+    BufferCreationFromMaterialParameters(#[source] VulkanArenaError),
+    #[error("failed to load image {1}")]
+    ImageLoading(#[source] ImageLoadingError, String),
+    #[error("failed to create material")]
+    MaterialCreation(#[source] DescriptorError),
+    #[error("gltf node has multiple parents, which is not allowed by the 2.0 spec")]
+    InvalidNodeGraph,
+    #[error("gltf has an out-of-bounds index ({0})")]
+    Oob(&'static str),
+    #[error("gltf does not conform to the 2.0 spec: {0}")]
+    Spec(&'static str),
+    #[error("unimplemented gltf feature: {0}")]
+    Misc(&'static str),
+}
 
 struct Node {
     mesh: Option<usize>,
@@ -50,7 +102,7 @@ impl Gltf {
         arenas: (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
         glb_path: &Path,
         resource_path: &Path,
-    ) -> Result<Gltf, Error> {
+    ) -> Result<Gltf, GltfLoadingError> {
         fn read_u32(bytes: &[u8]) -> u32 {
             debug_assert!(bytes.len() == 4);
             if let [a, b, c, d] = *bytes {
@@ -60,11 +112,11 @@ impl Gltf {
             }
         }
 
-        let glb = fs::read(glb_path).map_err(Error::GltfMissingFile)?;
+        let glb = fs::read(glb_path).map_err(GltfLoadingError::MissingFile)?;
 
         const MAGIC_GLTF: u32 = 0x46546C67;
         if glb.len() < 12 || read_u32(&glb[0..4]) != MAGIC_GLTF {
-            return Err(Error::InvalidGlbHeader);
+            return Err(GltfLoadingError::InvalidGlbHeader);
         }
         let version = read_u32(&glb[4..8]);
         let length = read_u32(&glb[8..12]) as usize;
@@ -72,7 +124,7 @@ impl Gltf {
             log::warn!(".glb file is not version 2, but trying to read anyway");
         }
         if length != glb.len() {
-            return Err(Error::InvalidGlbLength);
+            return Err(GltfLoadingError::InvalidGlbLength);
         }
 
         let mut next_chunk = &glb[12..];
@@ -81,7 +133,7 @@ impl Gltf {
         while next_chunk.len() >= 8 {
             let chunk_length = read_u32(&next_chunk[0..4]) as usize;
             if chunk_length > next_chunk.len() - 8 {
-                return Err(Error::InvalidGlbChunkLength);
+                return Err(GltfLoadingError::InvalidGlbChunkLength);
             }
             let chunk_bytes = &next_chunk[8..chunk_length + 8];
 
@@ -91,26 +143,26 @@ impl Gltf {
             match chunk_type {
                 MAGIC_JSON => {
                     if json.is_some() {
-                        return Err(Error::TooManyGlbJsonChunks);
+                        return Err(GltfLoadingError::TooManyGlbJsonChunks);
                     }
-                    json = Some(std::str::from_utf8(chunk_bytes).map_err(Error::InvalidGlbJson)?);
+                    json = Some(std::str::from_utf8(chunk_bytes).map_err(GltfLoadingError::InvalidGlbJson)?);
                 }
                 MAGIC_BIN => {
                     if buffer.is_some() {
-                        return Err(Error::TooManyGlbBinaryChunks);
+                        return Err(GltfLoadingError::TooManyGlbBinaryChunks);
                     }
                     buffer = Some(chunk_bytes);
                 }
-                _ => return Err(Error::InvalidGlbChunkType),
+                _ => return Err(GltfLoadingError::InvalidGlbChunkType),
             }
 
             next_chunk = &next_chunk[chunk_length + 8..];
         }
 
-        let buffer = buffer.ok_or(Error::GltfMisc("glb buffer is required"))?;
+        let buffer = buffer.ok_or(GltfLoadingError::Misc("glb buffer is required"))?;
 
-        let json = json.ok_or(Error::MissingGlbJson)?;
-        let gltf: gltf_json::GltfJson = serde_json::from_str(json).map_err(Error::GltfJsonDeserialization)?;
+        let json = json.ok_or(GltfLoadingError::MissingGlbJson)?;
+        let gltf: gltf_json::GltfJson = serde_json::from_str(json).map_err(GltfLoadingError::JsonDeserialization)?;
         create_gltf(device, uploader, descriptors, arenas, gltf, (glb_path, resource_path), Some(buffer))
     }
 
@@ -126,9 +178,9 @@ impl Gltf {
         arenas: (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
         gltf_path: &Path,
         resource_path: &Path,
-    ) -> Result<Gltf, Error> {
-        let gltf = fs::read_to_string(gltf_path).map_err(Error::GltfMissingFile)?;
-        let gltf: gltf_json::GltfJson = serde_json::from_str(&gltf).map_err(Error::GltfJsonDeserialization)?;
+    ) -> Result<Gltf, GltfLoadingError> {
+        let gltf = fs::read_to_string(gltf_path).map_err(GltfLoadingError::MissingFile)?;
+        let gltf: gltf_json::GltfJson = serde_json::from_str(&gltf).map_err(GltfLoadingError::JsonDeserialization)?;
         create_gltf(device, uploader, descriptors, arenas, gltf, (gltf_path, resource_path), None)
     }
 
@@ -146,34 +198,34 @@ fn create_gltf(
     gltf: gltf_json::GltfJson,
     (gltf_path, resource_path): (&Path, &Path),
     bin_buffer: Option<&[u8]>,
-) -> Result<Gltf, Error> {
+) -> Result<Gltf, GltfLoadingError> {
     if let Some(min_version) = &gltf.asset.min_version {
         let min_version_f32 = str::parse::<f32>(min_version);
         if min_version_f32 != Ok(2.0) {
-            return Err(Error::UnsupportedGltfVersion(min_version.clone()));
+            return Err(GltfLoadingError::UnsupportedGltfVersion(min_version.clone()));
         }
     } else if let Ok(version) = str::parse::<f32>(&gltf.asset.version) {
         if !(2.0..3.0).contains(&version) {
-            return Err(Error::UnsupportedGltfVersion(gltf.asset.version));
+            return Err(GltfLoadingError::UnsupportedGltfVersion(gltf.asset.version));
         }
     } else {
         log::warn!("Could not parse glTF version {}, assuming 2.0.", gltf.asset.version);
     }
 
-    let scene_index = gltf.scene.ok_or(Error::GltfMisc("gltf does not have a scene"))?;
-    let scenes = gltf.scenes.as_ref().ok_or(Error::GltfMisc("scenes missing"))?;
-    let scene = scenes.get(scene_index).ok_or(Error::GltfOob("scene"))?;
-    let root_nodes = scene.nodes.clone().ok_or(Error::GltfMisc("no nodes in scene"))?;
+    let scene_index = gltf.scene.ok_or(GltfLoadingError::Misc("gltf does not have a scene"))?;
+    let scenes = gltf.scenes.as_ref().ok_or(GltfLoadingError::Misc("scenes missing"))?;
+    let scene = scenes.get(scene_index).ok_or(GltfLoadingError::Oob("scene"))?;
+    let root_nodes = scene.nodes.clone().ok_or(GltfLoadingError::Misc("no nodes in scene"))?;
 
     let mut memmap_holder = None;
-    fn load_file(memmap_holder: &mut Option<Mmap>, path: PathBuf, range: Option<Range<usize>>) -> Result<&[u8], Error> {
-        let file = File::open(&path).map_err(|err| Error::GltfOpenFile(err, path.clone()))?;
+    fn load_file<'a>(memmap_holder: &'a mut Option<Mmap>, path: &Path, range: Option<Range<usize>>) -> Result<&'a [u8], GltfLoadingError> {
+        let file = File::open(&path).map_err(|err| GltfLoadingError::OpenFile(err, path.to_owned()))?;
         let mut memmap_options = MmapOptions::new();
         if let Some(range) = range {
             memmap_options.offset(range.start as u64);
             memmap_options.len(range.count());
         }
-        let memmap = unsafe { memmap_options.map(&file) }.map_err(|err| Error::GltfMapFile(err, path.clone()))?;
+        let memmap = unsafe { memmap_options.map(&file) }.map_err(|err| GltfLoadingError::MapFile(err, path.to_owned()))?;
         let _ = memmap.advise(Advice::Sequential);
         let _ = memmap.advise(Advice::WillNeed);
         *memmap_holder = Some(memmap);
@@ -184,7 +236,7 @@ fn create_gltf(
     for buffer in &gltf.buffers {
         if let Some(uri) = buffer.uri.as_ref() {
             let path = resource_path.join(uri);
-            let data = load_file(&mut memmap_holder, path, None)?;
+            let data = load_file(&mut memmap_holder, &path, None)?;
             let buffer_create_info = vk::BufferCreateInfo::builder()
                 .size(data.len() as vk::DeviceSize)
                 .usage(
@@ -195,12 +247,14 @@ fn create_gltf(
                 )
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .build();
-            let buffer = buffer_arena.create_buffer(
-                buffer_create_info,
-                data,
-                Some(uploader),
-                format_args!("{} ({})", uri, gltf_path.display()),
-            )?;
+            let buffer = buffer_arena
+                .create_buffer(
+                    buffer_create_info,
+                    data,
+                    Some(uploader),
+                    format_args!("{} ({})", uri, gltf_path.display()),
+                )
+                .map_err(|err| GltfLoadingError::BufferCreationFromFile(err, path))?;
             buffers.push(Rc::new(buffer));
         } else {
             match bin_buffer {
@@ -215,15 +269,17 @@ fn create_gltf(
                         )
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
                         .build();
-                    let buffer = buffer_arena.create_buffer(
-                        buffer_create_info,
-                        data,
-                        Some(uploader),
-                        format_args!("glb buffer ({})", gltf_path.display()),
-                    )?;
+                    let buffer = buffer_arena
+                        .create_buffer(
+                            buffer_create_info,
+                            data,
+                            Some(uploader),
+                            format_args!("glb buffer ({})", gltf_path.display()),
+                        )
+                        .map_err(GltfLoadingError::BufferCreationFromGlb)?;
                     buffers.push(Rc::new(buffer));
                 }
-                None => return Err(Error::GlbBinMissing),
+                None => return Err(GltfLoadingError::GlbBinMissing),
             }
         }
     }
@@ -233,7 +289,7 @@ fn create_gltf(
         let mut primitives = Vec::with_capacity(mesh.primitives.len());
         for primitive in &mesh.primitives {
             let mesh = create_primitive(&gltf, &buffers, primitive)?;
-            let material_index = primitive.material.ok_or(Error::GltfMisc("material missing"))?;
+            let material_index = primitive.material.ok_or(GltfLoadingError::Misc("material missing"))?;
             primitives.push((mesh, material_index));
         }
         meshes.push(primitives);
@@ -271,32 +327,35 @@ fn create_gltf(
         for material in &gltf.materials {
             if let Some(pbr) = &material.pbr_metallic_roughness {
                 if let Some(base_color) = &pbr.base_color_texture {
-                    let texture = gltf.textures.get(base_color.index).ok_or(Error::GltfOob("texture"))?;
+                    let texture = gltf.textures.get(base_color.index).ok_or(GltfLoadingError::Oob("texture"))?;
                     if let Some(image_index) = texture.source {
                         image_texture_kinds.insert(image_index, TextureKind::SrgbColor);
                     }
                 }
                 if let Some(metallic_roughness) = &pbr.metallic_roughness_texture {
-                    let texture = gltf.textures.get(metallic_roughness.index).ok_or(Error::GltfOob("texture"))?;
+                    let texture = gltf
+                        .textures
+                        .get(metallic_roughness.index)
+                        .ok_or(GltfLoadingError::Oob("texture"))?;
                     if let Some(image_index) = texture.source {
                         image_texture_kinds.insert(image_index, TextureKind::LinearColor);
                     }
                 }
             }
             if let Some(normal) = &material.normal_texture {
-                let texture = gltf.textures.get(normal.index).ok_or(Error::GltfOob("texture"))?;
+                let texture = gltf.textures.get(normal.index).ok_or(GltfLoadingError::Oob("texture"))?;
                 if let Some(image_index) = texture.source {
                     image_texture_kinds.insert(image_index, TextureKind::NormalMap);
                 }
             }
             if let Some(emissive) = &material.emissive_texture {
-                let texture = gltf.textures.get(emissive.index).ok_or(Error::GltfOob("texture"))?;
+                let texture = gltf.textures.get(emissive.index).ok_or(GltfLoadingError::Oob("texture"))?;
                 if let Some(image_index) = texture.source {
                     image_texture_kinds.insert(image_index, TextureKind::SrgbColor);
                 }
             }
             if let Some(occlusion) = &material.occlusion_texture {
-                let texture = gltf.textures.get(occlusion.index).ok_or(Error::GltfOob("texture"))?;
+                let texture = gltf.textures.get(occlusion.index).ok_or(GltfLoadingError::Oob("texture"))?;
                 if let Some(image_index) = texture.source {
                     image_texture_kinds.insert(image_index, TextureKind::LinearColor);
                 }
@@ -312,46 +371,55 @@ fn create_gltf(
         if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
             image_load = match mime_type.as_str() {
                 "image/prs.ntex" => image_loading::load_ntex,
-                _ => return Err(Error::GltfSpec("mime type of texture is not image/prs.ntex")),
+                _ => return Err(GltfLoadingError::Spec("mime type of texture is not image/prs.ntex")),
             };
-            let buffer_view = gltf.buffer_views.get(*buffer_view).ok_or(Error::GltfOob("texture buffer view"))?;
-            let buffer = gltf.buffers.get(buffer_view.buffer).ok_or(Error::GltfOob("texture buffer"))?;
+            let buffer_view = gltf
+                .buffer_views
+                .get(*buffer_view)
+                .ok_or(GltfLoadingError::Oob("texture buffer view"))?;
+            let buffer = gltf
+                .buffers
+                .get(buffer_view.buffer)
+                .ok_or(GltfLoadingError::Oob("texture buffer"))?;
             let buffer_offset = buffer_view.byte_offset.unwrap_or(0);
             let buffer_size = buffer_view.byte_length;
             let buffer_bytes = if let Some(uri) = buffer.uri.as_ref() {
                 let path = resource_path.join(uri);
-                load_file(&mut memmap_holder, path, Some(buffer_offset..buffer_offset + buffer_size))?
+                load_file(&mut memmap_holder, &path, Some(buffer_offset..buffer_offset + buffer_size))?
             } else {
-                bin_buffer.ok_or(Error::GlbBinMissing)?
+                bin_buffer.ok_or(GltfLoadingError::GlbBinMissing)?
             };
             if buffer_offset + buffer_size >= buffer_bytes.len() {
-                return Err(Error::GltfOob("texture buffer view bytes"));
+                return Err(GltfLoadingError::Oob("texture buffer view bytes"));
             }
             bytes = &buffer_bytes[buffer_offset..buffer_offset + buffer_size];
         } else if let Some(uri) = &image.uri {
             let mime_type = if uri.ends_with(".ntex") {
                 "image/prs.ntex"
             } else {
-                return Err(Error::GltfMisc("image uri does not end in .ntex"));
+                return Err(GltfLoadingError::Misc("image uri does not end in .ntex"));
             };
             image_load = match mime_type {
                 "image/prs.ntex" => image_loading::load_ntex,
-                _ => return Err(Error::GltfSpec("mime type of texture is not image/prs.ntex")),
+                _ => return Err(GltfLoadingError::Spec("mime type of texture is not image/prs.ntex")),
             };
             let path = resource_path.join(uri);
-            bytes = load_file(&mut memmap_holder, path, None)?;
+            bytes = load_file(&mut memmap_holder, &path, None)?;
         } else {
-            return Err(Error::GltfSpec("image does not have an uri nor a mimetype + buffer view"));
+            return Err(GltfLoadingError::Spec("image does not have an uri nor a mimetype + buffer view"));
         };
 
         let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
         let name = image.uri.as_deref().unwrap_or("glb binary buffer");
-        images.push(Rc::new(image_load(device, uploader, image_arena, bytes, kind, name)?));
+        images.push(Rc::new(
+            image_load(device, uploader, image_arena, bytes, kind, name)
+                .map_err(|err| GltfLoadingError::ImageLoading(err, name.to_string()))?,
+        ));
     }
 
     let mut material_factors = Vec::with_capacity(gltf.materials.len());
     for mat in &gltf.materials {
-        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
+        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
         material_factors.push(GltfFactors {
             base_color: pbr
                 .base_color_factor
@@ -372,12 +440,14 @@ fn create_gltf(
         .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .build();
-    let factors_buffer = buffer_arena.create_buffer(
-        buffer_create_info,
-        factors_slice,
-        Some(uploader),
-        format_args!("material parameters ({})", gltf_path.display()),
-    )?;
+    let factors_buffer = buffer_arena
+        .create_buffer(
+            buffer_create_info,
+            factors_slice,
+            Some(uploader),
+            format_args!("material parameters ({})", gltf_path.display()),
+        )
+        .map_err(GltfLoadingError::BufferCreationFromMaterialParameters)?;
     let factors_buffer = Rc::new(factors_buffer);
 
     let mut materials = Vec::with_capacity(gltf.materials.len());
@@ -385,12 +455,12 @@ fn create_gltf(
         let mktex = |images: &[Rc<ImageView>], texture_info: &gltf_json::TextureInfo| {
             let texture = match gltf.textures.get(texture_info.index) {
                 Some(tex) => tex,
-                None => return Some(Err(Error::GltfOob("texture"))),
+                None => return Some(Err(GltfLoadingError::Oob("texture"))),
             };
             let image_index = texture.source?;
             let image_view = match images.get(image_index) {
                 Some(image_view) => image_view,
-                None => return Some(Err(Error::GltfOob("image"))),
+                None => return Some(Err(GltfLoadingError::Oob("image"))),
             };
             Some(Ok(image_view.clone()))
         };
@@ -405,7 +475,7 @@ fn create_gltf(
             };
         }
 
-        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(Error::GltfMisc("pbr missing"))?;
+        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
         let base_color = handle_optional_result!(pbr.base_color_texture.as_ref().and_then(|tex| mktex(&images, tex)));
         let metallic_roughness = handle_optional_result!(pbr.metallic_roughness_texture.as_ref().and_then(|tex| mktex(&images, tex)));
         let normal = handle_optional_result!(mat.normal_texture.as_ref().and_then(|tex| mktex(&images, tex)));
@@ -415,18 +485,16 @@ fn create_gltf(
         let factors_size = std::mem::size_of::<GltfFactors>() as u64;
         let factors = (factors_buffer.clone(), factors_size * i as u64, factors_size);
 
-        materials.push(Material::new(
-            descriptors,
-            PipelineIndex::Gltf,
-            PipelineSpecificData::Gltf {
-                base_color,
-                metallic_roughness,
-                normal,
-                occlusion,
-                emissive,
-                factors,
-            },
-        )?);
+        let pipeline_specific_data = PipelineSpecificData::Gltf {
+            base_color,
+            metallic_roughness,
+            normal,
+            occlusion,
+            emissive,
+            factors,
+        };
+        materials
+            .push(Material::new(descriptors, PipelineIndex::Gltf, pipeline_specific_data).map_err(GltfLoadingError::MaterialCreation)?);
     }
 
     {
@@ -436,7 +504,7 @@ fn create_gltf(
         queue.extend_from_slice(&root_nodes);
         while let Some(node) = queue.pop() {
             if visited_nodes[node] {
-                return Err(Error::GltfInvalidNodeGraph);
+                return Err(GltfLoadingError::InvalidNodeGraph);
             } else {
                 visited_nodes[node] = true;
                 if let Some(children) = &nodes[node].children {
@@ -457,45 +525,47 @@ fn create_gltf(
 }
 
 #[profiling::function]
-fn create_primitive(gltf: &gltf_json::GltfJson, buffers: &[Rc<Buffer>], primitive: &gltf_json::Primitive) -> Result<Mesh, Error> {
-    let index_accessor = primitive.indices.ok_or(Error::GltfMisc("missing indices"))?;
+fn create_primitive(
+    gltf: &gltf_json::GltfJson,
+    buffers: &[Rc<Buffer>],
+    primitive: &gltf_json::Primitive,
+) -> Result<Mesh, GltfLoadingError> {
+    let index_accessor = primitive.indices.ok_or(GltfLoadingError::Misc("missing indices"))?;
     let (index_buffer, index_buffer_offset, index_buffer_size) =
         get_slice_from_accessor(gltf, buffers, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
 
     let pos_accessor = *primitive
         .attributes
         .get("POSITION")
-        .ok_or(Error::GltfMisc("missing position attributes"))?;
+        .ok_or(GltfLoadingError::Misc("missing position attributes"))?;
     let (pos_buffer, pos_offset, _) = get_slice_from_accessor(gltf, buffers, pos_accessor, GLTF_FLOAT, "VEC3")?;
 
     let tex_accessor = *primitive
         .attributes
         .get("TEXCOORD_0")
-        .ok_or(Error::GltfMisc("missing UV0 attributes"))?;
+        .ok_or(GltfLoadingError::Misc("missing UV0 attributes"))?;
     let (tex_buffer, tex_offset, _) = get_slice_from_accessor(gltf, buffers, tex_accessor, GLTF_FLOAT, "VEC2")?;
 
     let normal_accessor = *primitive
         .attributes
         .get("NORMAL")
-        .ok_or(Error::GltfMisc("missing normal attributes"))?;
+        .ok_or(GltfLoadingError::Misc("missing normal attributes"))?;
     let (normal_buffer, normal_offset, _) = get_slice_from_accessor(gltf, buffers, normal_accessor, GLTF_FLOAT, "VEC3")?;
 
     let tangent_accessor = *primitive
         .attributes
         .get("TANGENT")
-        .ok_or(Error::GltfMisc("missing tangent attributes"))?;
+        .ok_or(GltfLoadingError::Misc("missing tangent attributes"))?;
     let (tangent_buffer, tangent_offset, _) = get_slice_from_accessor(gltf, buffers, tangent_accessor, GLTF_FLOAT, "VEC4")?;
 
-    let mesh = Mesh::new::<u16>(
+    Ok(Mesh::new::<u16>(
         PipelineIndex::Gltf,
         vec![pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
         vec![pos_offset, tex_offset, normal_offset, tangent_offset],
         index_buffer,
         index_buffer_offset,
         index_buffer_size,
-    )?;
-
-    Ok(mesh)
+    ))
 }
 
 #[profiling::function]
@@ -505,32 +575,32 @@ fn get_slice_from_accessor<'buffer>(
     accessor: usize,
     ctype: i32,
     atype: &str,
-) -> Result<(Rc<Buffer>, vk::DeviceSize, vk::DeviceSize), Error> {
-    let accessor = gltf.accessors.get(accessor).ok_or(Error::GltfOob("accessor"))?;
+) -> Result<(Rc<Buffer>, vk::DeviceSize, vk::DeviceSize), GltfLoadingError> {
+    let accessor = gltf.accessors.get(accessor).ok_or(GltfLoadingError::Oob("accessor"))?;
     if accessor.component_type != ctype {
-        return Err(Error::GltfMisc("unexpected component type"));
+        return Err(GltfLoadingError::Misc("unexpected component type"));
     }
     if accessor.attribute_type != atype {
-        return Err(Error::GltfMisc("unexpected attribute type"));
+        return Err(GltfLoadingError::Misc("unexpected attribute type"));
     }
     let view = match accessor.buffer_view {
         Some(view) => view,
-        None => return Err(Error::GltfMisc("no buffer view")),
+        None => return Err(GltfLoadingError::Misc("no buffer view")),
     };
-    let view = gltf.buffer_views.get(view).ok_or(Error::GltfOob("buffer view"))?;
-    let buffer = buffers.get(view.buffer).ok_or(Error::GltfOob("buffer"))?;
+    let view = gltf.buffer_views.get(view).ok_or(GltfLoadingError::Oob("buffer view"))?;
+    let buffer = buffers.get(view.buffer).ok_or(GltfLoadingError::Oob("buffer"))?;
     let offset = view.byte_offset.unwrap_or(0) + accessor.byte_offset.unwrap_or(0);
     let length = view.byte_length;
     let stride = stride_for(ctype, atype);
     match view.byte_stride {
-        Some(x) if x != stride => return Err(Error::GltfMisc("wrong stride")),
+        Some(x) if x != stride => return Err(GltfLoadingError::Misc("wrong stride")),
         _ => {}
     }
     if (offset + length) as vk::DeviceSize > buffer.size {
-        return Err(Error::GltfOob("buffer offset + length"));
+        return Err(GltfLoadingError::Oob("buffer offset + length"));
     }
     if accessor.count != length / stride {
-        return Err(Error::GltfOob("count != byte length / stride"));
+        return Err(GltfLoadingError::Oob("count != byte length / stride"));
     }
     Ok((buffer.clone(), offset as vk::DeviceSize, length as vk::DeviceSize))
 }

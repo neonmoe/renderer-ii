@@ -22,6 +22,7 @@ const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [PipelineI
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PipelineIndex {
     Gltf,
+    // TODO: Transparent materials
     #[doc(hidden)]
     Count,
 }

@@ -25,7 +25,7 @@ mod framebuffers;
 pub use framebuffers::Framebuffers;
 
 mod descriptors;
-pub use descriptors::{Descriptors, Material, PbrDefaults};
+pub use descriptors::{Descriptors, Material};
 
 mod device;
 pub use device::create_device;
@@ -39,7 +39,8 @@ pub use error::Error;
 mod gltf;
 pub use gltf::{Gltf, MeshIter};
 
-pub mod image_loading;
+mod image_loading;
+pub use image_loading::PbrDefaults;
 
 mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
@@ -93,8 +94,8 @@ pub mod display_utils {
                 bytes if bytes < KIBI => write!(fmt, "{:.0} bytes", bytes as f32),
                 bytes if bytes < MEBI => write!(fmt, "{:.2} KiB", bytes as f32 / KIBI as f32),
                 bytes if bytes < GIBI => write!(fmt, "{:.2} MiB", bytes as f32 / MEBI as f32),
-                bytes if bytes < TIBI => write!(fmt, "{:.2} GiB", bytes as f32 / MEBI as f32),
-                bytes => write!(fmt, "{:.3} TiB", bytes as f32 / GIBI as f32),
+                bytes if bytes < TIBI => write!(fmt, "{:.2} GiB", bytes as f32 / GIBI as f32),
+                bytes => write!(fmt, "{:.3} TiB", bytes as f32 / TIBI as f32),
             }
         }
     }
@@ -109,7 +110,7 @@ mod surface {
 
     pub fn create_surface(entry: &Entry, instance: &Instance, window: &dyn HasRawWindowHandle) -> Result<Surface, Error> {
         profiling::scope!("window surface creation");
-        let surface = unsafe { ash_window::create_surface(entry, instance, window, None) }.map_err(Error::VulkanSurfaceCreation)?;
+        let surface = unsafe { ash_window::create_surface(entry, instance, window, None) }.map_err(Error::SurfaceCreation)?;
         let surface_ext = khr::Surface::new(entry, instance);
         Ok(Surface {
             inner: surface,

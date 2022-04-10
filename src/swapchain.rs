@@ -1,9 +1,21 @@
 use crate::debug_utils;
 use crate::vulkan_raii::{self, AnyImage, Device, Surface};
-use crate::{Error, PhysicalDevice};
+use crate::PhysicalDevice;
 use ash::extensions::khr;
 use ash::{vk, Entry, Instance};
 use std::rc::Rc;
+
+#[derive(thiserror::Error, Debug)]
+pub enum SwapchainError {
+    #[error("failed to get swapchain images")]
+    GetSwapchainImages(#[source] vk::Result),
+    #[error("failed to get present modes supported by the physical device")]
+    GetPhysicalDevicePresentModes(#[source] vk::Result),
+    #[error("failed to get surface capabilities (for resolution) from the physical device")]
+    GetPhysicalDeviceSurfaceCapabilities(#[source] vk::Result),
+    #[error("failed to create swapchain (window issues?)")]
+    SwapchainCreation(#[source] vk::Result),
+}
 
 pub struct SwapchainSettings {
     pub extent: vk::Extent2D,
@@ -25,7 +37,7 @@ impl Swapchain {
         physical_device: &PhysicalDevice,
         old_swapchain: Option<&Swapchain>,
         settings: &SwapchainSettings,
-    ) -> Result<Swapchain, Error> {
+    ) -> Result<Swapchain, SwapchainError> {
         profiling::scope!("swapchain creation");
 
         let surface_ext = khr::Surface::new(entry, instance);
@@ -52,7 +64,7 @@ impl Swapchain {
         let swapchain_format = physical_device.swapchain_format;
         let vk::Extent2D { width, height } = extent;
         let images = unsafe { swapchain_ext.get_swapchain_images(swapchain.inner) }
-            .map_err(Error::VulkanGetSwapchainImages)?
+            .map_err(SwapchainError::GetSwapchainImages)?
             .into_iter()
             .map(|image| Rc::new(AnyImage::Swapchain(image, swapchain.clone())))
             .collect::<Vec<_>>();
@@ -102,12 +114,12 @@ fn create_swapchain(
     physical_device: &PhysicalDevice,
     queue_family_indices: &[u32],
     settings: &SwapchainSettings,
-) -> Result<(vk::SwapchainKHR, vk::Extent2D), Error> {
+) -> Result<(vk::SwapchainKHR, vk::Extent2D), SwapchainError> {
     let present_modes = unsafe { surface_ext.get_physical_device_surface_present_modes(physical_device.inner, surface) }
-        .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)?;
+        .map_err(SwapchainError::GetPhysicalDevicePresentModes)?;
     let mut present_mode = vk::PresentModeKHR::FIFO;
     if settings.immediate_present {
-        // TODO(med): Remove immediate present, use proper gpu profiling instead.
+        // TODO: Remove immediate present, add proper gpu profiling instead.
         if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
             present_mode = vk::PresentModeKHR::MAILBOX;
         } else if present_modes.contains(&vk::PresentModeKHR::IMMEDIATE) {
@@ -118,7 +130,7 @@ fn create_swapchain(
     let surface_capabilities = unsafe {
         surface_ext
             .get_physical_device_surface_capabilities(physical_device.inner, surface)
-            .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
+            .map_err(SwapchainError::GetPhysicalDeviceSurfaceCapabilities)
     }?;
     let unset_extent = vk::Extent2D {
         width: u32::MAX,
@@ -156,7 +168,7 @@ fn create_swapchain(
     if let Some(old_swapchain) = old_swapchain {
         swapchain_create_info = swapchain_create_info.old_swapchain(old_swapchain);
     }
-    let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }.map_err(Error::VulkanSwapchainCreation)?;
+    let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }.map_err(SwapchainError::SwapchainCreation)?;
 
     Ok((swapchain, swapchain_create_info.image_extent))
 }

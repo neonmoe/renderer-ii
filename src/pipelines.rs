@@ -1,9 +1,19 @@
 use crate::debug_utils;
 use crate::pipeline_parameters::{PipelineMap, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, Device, PipelineLayout, RenderPass};
-use crate::{Descriptors, Error, PhysicalDevice};
+use crate::{Descriptors, PhysicalDevice};
 use ash::vk;
 use std::rc::Rc;
+
+#[derive(thiserror::Error, Debug)]
+pub enum PipelineCreationError {
+    #[error("failed to create vulkan render pass object")]
+    RenderPass(#[source] vk::Result),
+    #[error("failed to create shader module (compilation issue?)")]
+    ShaderModule(#[source] vk::Result),
+    #[error("failed to create vulkan pipeline object")]
+    Object(#[source] vk::Result),
+}
 
 pub struct Pipelines {
     pub(crate) attachment_sample_count: vk::SampleCountFlags,
@@ -12,7 +22,11 @@ pub struct Pipelines {
 }
 
 impl Pipelines {
-    pub fn new(device: &Rc<Device>, physical_device: &PhysicalDevice, descriptors: &Descriptors) -> Result<Pipelines, Error> {
+    pub fn new(
+        device: &Rc<Device>,
+        physical_device: &PhysicalDevice,
+        descriptors: &Descriptors,
+    ) -> Result<Pipelines, PipelineCreationError> {
         let attachment_sample_count = vk::SampleCountFlags::TYPE_8;
         let final_render_pass = create_render_pass(
             device,
@@ -33,7 +47,7 @@ impl Pipelines {
             attachment_sample_count,
         )?;
         let mut vk_pipelines_iter = vk_pipelines.into_iter();
-        let pipelines = PipelineMap::new::<Error, _>(|name| {
+        let pipelines = PipelineMap::new::<PipelineCreationError, _>(|name| {
             let pipeline = vk_pipelines_iter.next().unwrap();
             debug_utils::name_vulkan_object(device, pipeline, format_args!("{name:?}"));
             Ok(vulkan_raii::Pipeline {
@@ -56,7 +70,7 @@ fn create_render_pass(
     swapchain_format: vk::Format,
     depth_format: vk::Format,
     attachment_sample_count: vk::SampleCountFlags,
-) -> Result<vk::RenderPass, Error> {
+) -> Result<vk::RenderPass, PipelineCreationError> {
     let color_attachment = vk::AttachmentDescription::builder()
         .format(swapchain_format)
         .samples(attachment_sample_count)
@@ -105,7 +119,7 @@ fn create_render_pass(
     let subpasses = [subpass.build()];
 
     let render_pass_create_info = vk::RenderPassCreateInfo::builder().attachments(&attachments).subpasses(&subpasses);
-    unsafe { device.create_render_pass(&render_pass_create_info, None) }.map_err(Error::VulkanRenderPassCreation)
+    unsafe { device.create_render_pass(&render_pass_create_info, None) }.map_err(PipelineCreationError::RenderPass)
 }
 
 #[profiling::function]
@@ -114,11 +128,11 @@ fn create_pipelines(
     render_pass: vk::RenderPass,
     pipeline_layouts: &PipelineMap<PipelineLayout>,
     attachment_sample_count: vk::SampleCountFlags,
-) -> Result<Vec<vk::Pipeline>, Error> {
+) -> Result<Vec<vk::Pipeline>, PipelineCreationError> {
     let mut all_shader_modules = Vec::with_capacity(PIPELINE_PARAMETERS.len() * 2);
-    let mut create_shader_module = |filename: &'static str, spirv: &'static [u32]| -> Result<vk::ShaderModule, Error> {
+    let mut create_shader_module = |filename: &'static str, spirv: &'static [u32]| -> Result<vk::ShaderModule, PipelineCreationError> {
         let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
-        let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(Error::VulkanShaderModuleCreation)?;
+        let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(PipelineCreationError::ShaderModule)?;
         debug_utils::name_vulkan_object(device, shader_module, format_args!("{}", filename));
         all_shader_modules.push(shader_module);
         Ok(shader_module)
@@ -137,7 +151,7 @@ fn create_pipelines(
                 .name(cstr!("main"));
             Ok([vert_shader_stage_create_info.build(), frag_shader_stage_create_info.build()])
         })
-        .collect::<Result<Vec<[vk::PipelineShaderStageCreateInfo; 2]>, Error>>()?;
+        .collect::<Result<Vec<[vk::PipelineShaderStageCreateInfo; 2]>, PipelineCreationError>>()?;
 
     let vertex_input_per_pipeline = PIPELINE_PARAMETERS
         .iter()
@@ -207,7 +221,7 @@ fn create_pipelines(
         unsafe {
             device
                 .create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_infos, None)
-                .map_err(|(_, err)| Error::VulkanGraphicsPipelineCreation(err))
+                .map_err(|(_, err)| PipelineCreationError::Object(err))
         }?
     };
 

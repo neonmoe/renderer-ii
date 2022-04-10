@@ -132,9 +132,10 @@ fn fallible_main() -> anyhow::Result<()> {
         None,
         &swapchain_settings,
     )?;
+    let mut swapchain_frames = swapchain.frame_count();
     let mut framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, physical_device, &pipelines, &swapchain)?;
-    let mut renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, swapchain.frame_count())?;
-    descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain.frame_count())?;
+    let mut renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, swapchain_frames)?;
+    descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain_frames)?;
 
     let mut frame_processing_durations = Vec::with_capacity(10_000);
 
@@ -183,7 +184,6 @@ fn fallible_main() -> anyhow::Result<()> {
             profiling::scope!("handle resize");
             device.wait_idle()?;
             let (width, height) = window.vulkan_drawable_size();
-            drop(renderer);
             drop(framebuffers);
             let old_swapchain = swapchain;
             swapchain_settings.extent = neonvk::vk::Extent2D { width, height };
@@ -199,9 +199,10 @@ fn fallible_main() -> anyhow::Result<()> {
             assert!(old_swapchain.no_external_refs());
             drop(old_swapchain);
             framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, physical_device, &pipelines, &swapchain)?;
-            renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, swapchain.frame_count())?;
-            if swapchain.frame_count() != descriptors.frame_count {
+            if swapchain.frame_count() != swapchain_frames {
+                renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, swapchain.frame_count())?;
                 descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain.frame_count())?;
+                swapchain_frames = swapchain.frame_count();
             }
             size_changed = false;
         }
@@ -230,8 +231,10 @@ fn fallible_main() -> anyhow::Result<()> {
             renderer.present_frame(frame_index, &swapchain)
         } {
             Ok(_) => {}
-            Err(neonvk::Error::VulkanSwapchainOutOfDate(_)) => size_changed = true,
-            Err(err) => log::warn!("Error during regular frame present: {}", err),
+            Err(err) => {
+                log::error!("Error during regular frame present: {}", err);
+                break 'running;
+            }
         }
 
         {

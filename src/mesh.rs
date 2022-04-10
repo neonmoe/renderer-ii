@@ -1,5 +1,5 @@
 use crate::vulkan_raii::Buffer;
-use crate::{Error, PipelineIndex};
+use crate::PipelineIndex;
 use ash::vk;
 use std::rc::Rc;
 
@@ -24,9 +24,9 @@ impl Mesh {
         index_buffer: Rc<Buffer>,
         index_buffer_offset: vk::DeviceSize,
         index_buffer_size: vk::DeviceSize,
-    ) -> Result<Mesh, Error> {
+    ) -> Mesh {
         profiling::scope!("new_mesh");
-        Ok(Mesh {
+        Mesh {
             pipeline,
             vertex_buffers,
             vertices_offsets,
@@ -34,7 +34,7 @@ impl Mesh {
             index_buffer_offset,
             index_count: (index_buffer_size / std::mem::size_of::<I>() as u64) as u32,
             index_type: I::vk_index_type(),
-        })
+        }
     }
 }
 

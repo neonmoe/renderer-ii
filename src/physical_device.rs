@@ -1,8 +1,16 @@
-use crate::{physical_device_features, Error};
+use crate::physical_device_features;
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
 use std::ffi::CStr;
+
+#[derive(thiserror::Error, Debug)]
+pub enum PhysicalDeviceEnumerationError {
+    #[error("failed to enumerate vulkan physical devices")]
+    Enumeration(#[source] vk::Result),
+    #[error("failed to query surface support")]
+    SurfaceQuery(#[source] vk::Result),
+}
 
 /// A unique id for every distinct GPU.
 pub struct GpuId([u8; 16]);
@@ -52,17 +60,21 @@ impl PhysicalDevice {
 /// Returns a list of GPUs that have the required capabilities. They
 /// are also ordered by performance, based on a heuristic (mostly:
 /// discrete gpu > integrated gpu > virtual gpu > cpu).
-pub fn get_physical_devices(entry: &Entry, instance: &Instance, surface: vk::SurfaceKHR) -> Result<Vec<PhysicalDevice>, Error> {
+pub fn get_physical_devices(
+    entry: &Entry,
+    instance: &Instance,
+    surface: vk::SurfaceKHR,
+) -> Result<Vec<PhysicalDevice>, PhysicalDeviceEnumerationError> {
     profiling::scope!("physical device enumeration");
     let surface_ext = khr::Surface::new(entry, instance);
     let physical_devices = {
         profiling::scope!("vk::enumerate_physical_devices");
-        unsafe { instance.enumerate_physical_devices() }.map_err(Error::VulkanEnumeratePhysicalDevices)?
+        unsafe { instance.enumerate_physical_devices() }.map_err(PhysicalDeviceEnumerationError::Enumeration)?
     };
     let mut capable_physical_devices = physical_devices
         .into_iter()
         .filter_map(|physical_device| filter_capable_device(instance, &surface_ext, surface, physical_device))
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect::<Result<Vec<_>, PhysicalDeviceEnumerationError>>()?;
     capable_physical_devices.sort_by(|a, b| {
         let type_score = |properties: &vk::PhysicalDeviceProperties| match properties.device_type {
             vk::PhysicalDeviceType::DISCRETE_GPU => 30,
@@ -84,7 +96,7 @@ fn filter_capable_device(
     surface_ext: &khr::Surface,
     surface: vk::SurfaceKHR,
     physical_device: vk::PhysicalDevice,
-) -> Option<Result<PhysicalDevice, Error>> {
+) -> Option<Result<PhysicalDevice, PhysicalDeviceEnumerationError>> {
     profiling::scope!("physical device capability checks");
 
     let properties = unsafe {
@@ -161,12 +173,14 @@ fn filter_capable_device(
         return None;
     };
 
+    // TODO: Add check for compressed image format support
+
     let (swapchain_format, swapchain_color_space) = {
         let surface_formats = match unsafe {
             profiling::scope!("vk::get_physical_device_surface_formats");
             surface_ext
                 .get_physical_device_surface_formats(physical_device, surface)
-                .map_err(Error::VulkanPhysicalDeviceSurfaceQuery)
+                .map_err(PhysicalDeviceEnumerationError::SurfaceQuery)
         } {
             Ok(formats) => formats,
             Err(err) => return Some(Err(err)),

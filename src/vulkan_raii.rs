@@ -28,11 +28,12 @@ impl Drop for Device {
     }
 }
 impl Device {
-    /// Wait until the device is idle. Should be called before
-    /// swapchain recreation and after the game loop is over.
+    /// Wait until the device is idle. Should be called before swapchain
+    /// recreation and after the game loop is over to make sure none of the
+    /// resources are in use before destroying anything.
     #[profiling::function]
     pub fn wait_idle(&self) -> Result<(), crate::Error> {
-        unsafe { self.inner.device_wait_idle() }.map_err(crate::Error::VulkanDeviceWaitIdle)
+        unsafe { self.inner.device_wait_idle() }.map_err(crate::Error::DeviceWaitIdle)
     }
 }
 
