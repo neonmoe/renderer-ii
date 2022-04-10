@@ -11,18 +11,18 @@ ash = { version = "0.37", default-features = false, features = ["linked", "debug
 ash-window = { version = "0.10" }
 raw-window-handle = { version = "0.3.4" }
 shaders = { path = "shaders" }
-glam = { version = "0.19", features = ["bytemuck"] }
+glam = { version = "0.20", features = ["bytemuck"] }
 serde = { version = "1.0" }
 serde_derive = { version = "1.0" }
 serde_json = { version = "1.0" }
-bytemuck = { version = "1.7" }
+bytemuck = { version = "1.9" }
 typed-arena = { version = "2.0" }
-once_cell = { version = "1.9" }
+once_cell = { version = "1.10" }
 memmap2 = { version = "0.5" }
 
 # TODO(cleanup): Move anyhow, sdl2 to dev deps
 # Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.
-sdl2 = { version = "0.34", features = ["raw-window-handle"] }
+sdl2 = { version = "0.35", features = ["raw-window-handle"] }
 anyhow = { version = "1.0" }
 
 [features]
