@@ -2,6 +2,14 @@ use crate::Error;
 use ash::vk;
 use ash::{Device, Instance};
 
+#[derive(Debug)]
+pub struct SupportedFeatures {
+    sampler_anisotropy: bool,
+    texture_array_dynamic_indexing: bool,
+    partially_bound_descriptors: bool,
+    extended_dynamic_state: bool,
+}
+
 pub fn create_device_with_feature_requirements(
     instance: &Instance,
     physical_device: vk::PhysicalDevice,
@@ -23,7 +31,8 @@ pub fn create_device_with_feature_requirements(
     }
 }
 
-pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalDevice) -> bool {
+/// Returns Ok(()) if the physical device does have the required features.
+pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalDevice) -> Result<(), SupportedFeatures> {
     let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default();
     let mut extended_dynamic_state_features = vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT::default();
     let mut features = vk::PhysicalDeviceFeatures2::builder()
@@ -32,8 +41,19 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
         .build();
     unsafe { instance.get_physical_device_features2(physical_device, &mut features) };
     // Note: requirements should match what is requested in create_device_with_feature_requirements
-    features.features.sampler_anisotropy == vk::TRUE
-        && features.features.shader_sampled_image_array_dynamic_indexing == vk::TRUE
-        && descriptor_indexing_features.descriptor_binding_partially_bound == vk::TRUE
-        && extended_dynamic_state_features.extended_dynamic_state == vk::TRUE
+    let features = SupportedFeatures {
+        sampler_anisotropy: features.features.sampler_anisotropy == vk::TRUE,
+        texture_array_dynamic_indexing: features.features.shader_sampled_image_array_dynamic_indexing == vk::TRUE,
+        partially_bound_descriptors: descriptor_indexing_features.descriptor_binding_partially_bound == vk::TRUE,
+        extended_dynamic_state: extended_dynamic_state_features.extended_dynamic_state == vk::TRUE,
+    };
+    if features.sampler_anisotropy
+        && features.texture_array_dynamic_indexing
+        && features.partially_bound_descriptors
+        && features.extended_dynamic_state
+    {
+        Ok(())
+    } else {
+        Err(features)
+    }
 }

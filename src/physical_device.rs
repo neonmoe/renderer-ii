@@ -1,4 +1,4 @@
-use crate::physical_device_features;
+use crate::physical_device_features::{self, SupportedFeatures};
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
@@ -10,6 +10,22 @@ pub enum PhysicalDeviceEnumerationError {
     Enumeration(#[source] vk::Result),
     #[error("failed to query surface support")]
     SurfaceQuery(#[source] vk::Result),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum PhysicalDeviceRejectionReason {
+    #[error("required vulkan version {0}.{1} is not supported")]
+    VulkanVersion(u32, u32),
+    #[error("physical device does not support all the required device features: {0:#?}")]
+    DeviceRequirements(SupportedFeatures),
+    #[error("physical device does not support the device extension: {0}")]
+    Extension(&'static str),
+    #[error("the texture format {0:?} is not supported with flags {1:?}")]
+    TextureFormatSupport(vk::Format, vk::FormatFeatureFlags),
+    #[error("the physical device does not support {0:?} nor {1:?}, which should not be possible according to the spec")]
+    DepthFormatSupport(vk::Format, vk::Format),
+    #[error("graphics, surface, or transfer queue family not found")]
+    QueueFamilyMissing,
 }
 
 /// A unique id for every distinct GPU.
@@ -64,31 +80,38 @@ pub fn get_physical_devices(
     entry: &Entry,
     instance: &Instance,
     surface: vk::SurfaceKHR,
-) -> Result<Vec<PhysicalDevice>, PhysicalDeviceEnumerationError> {
+) -> Result<Vec<Result<PhysicalDevice, PhysicalDeviceRejectionReason>>, PhysicalDeviceEnumerationError> {
     profiling::scope!("physical device enumeration");
     let surface_ext = khr::Surface::new(entry, instance);
     let physical_devices = {
         profiling::scope!("vk::enumerate_physical_devices");
         unsafe { instance.enumerate_physical_devices() }.map_err(PhysicalDeviceEnumerationError::Enumeration)?
     };
-    let mut capable_physical_devices = physical_devices
+    let mut enumerated_physical_devices = physical_devices
         .into_iter()
-        .filter_map(|physical_device| filter_capable_device(instance, &surface_ext, surface, physical_device))
-        .collect::<Result<Vec<_>, PhysicalDeviceEnumerationError>>()?;
-    capable_physical_devices.sort_by(|a, b| {
-        let type_score = |properties: &vk::PhysicalDeviceProperties| match properties.device_type {
-            vk::PhysicalDeviceType::DISCRETE_GPU => 30,
-            vk::PhysicalDeviceType::INTEGRATED_GPU => 20,
-            vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
-            vk::PhysicalDeviceType::CPU => 0,
-            _ => 0,
-        };
-        let queue_score = |gfx, surf| if gfx == surf { 1 } else { 0 };
-        let a_score = type_score(&a.properties) + queue_score(a.graphics_queue_family.index, a.surface_queue_family.index);
-        let b_score = type_score(&b.properties) + queue_score(b.graphics_queue_family.index, b.surface_queue_family.index);
+        .map(|physical_device| filter_capable_device(instance, &surface_ext, surface, physical_device))
+        .collect::<Result<Vec<Result<_, PhysicalDeviceRejectionReason>>, PhysicalDeviceEnumerationError>>()?;
+    enumerated_physical_devices.sort_by(|a, b| {
+        let a_score;
+        let b_score;
+        if let (Ok(a), Ok(b)) = (a, b) {
+            let type_score = |properties: &vk::PhysicalDeviceProperties| match properties.device_type {
+                vk::PhysicalDeviceType::DISCRETE_GPU => 30,
+                vk::PhysicalDeviceType::INTEGRATED_GPU => 20,
+                vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
+                vk::PhysicalDeviceType::CPU => 0,
+                _ => 0,
+            };
+            let queue_score = |gfx, surf| if gfx == surf { 1 } else { 0 };
+            a_score = type_score(&a.properties) + queue_score(a.graphics_queue_family.index, a.surface_queue_family.index);
+            b_score = type_score(&b.properties) + queue_score(b.graphics_queue_family.index, b.surface_queue_family.index);
+        } else {
+            a_score = if a.is_ok() { 100 } else { 0 };
+            b_score = if b.is_ok() { 100 } else { 0 };
+        }
         b_score.cmp(&a_score)
     });
-    Ok(capable_physical_devices)
+    Ok(enumerated_physical_devices)
 }
 
 fn filter_capable_device(
@@ -96,7 +119,7 @@ fn filter_capable_device(
     surface_ext: &khr::Surface,
     surface: vk::SurfaceKHR,
     physical_device: vk::PhysicalDevice,
-) -> Option<Result<PhysicalDevice, PhysicalDeviceEnumerationError>> {
+) -> Result<Result<PhysicalDevice, PhysicalDeviceRejectionReason>, PhysicalDeviceEnumerationError> {
     profiling::scope!("physical device capability checks");
 
     let properties = unsafe {
@@ -104,16 +127,16 @@ fn filter_capable_device(
         instance.get_physical_device_properties(physical_device)
     };
     if properties.api_version < vk::API_VERSION_1_3 {
-        return None;
+        return Ok(Err(PhysicalDeviceRejectionReason::VulkanVersion(1, 3)));
     }
 
     let extensions = get_extensions(instance, physical_device);
     if extensions.iter().all(|s| s != "VK_KHR_swapchain") {
-        return None;
+        return Ok(Err(PhysicalDeviceRejectionReason::Extension("VK_KHR_swapchain")));
     }
 
-    if !physical_device_features::has_required_features(instance, physical_device) {
-        return None;
+    if let Err(reqs) = physical_device_features::has_required_features(instance, physical_device) {
+        return Ok(Err(PhysicalDeviceRejectionReason::DeviceRequirements(reqs)));
     }
 
     let queue_families = unsafe {
@@ -150,40 +173,52 @@ fn filter_capable_device(
         }
     }
 
-    let has_feature = |format: vk::Format, feature: vk::FormatFeatureFlags| -> bool {
+    let format_supported = |format: vk::Format, flags: vk::FormatFeatureFlags| -> Result<(), PhysicalDeviceRejectionReason> {
         let format_properties = unsafe {
             profiling::scope!("vk::get_physical_device_format_properties");
             instance.get_physical_device_format_properties(physical_device, format)
         };
-        format_properties.optimal_tiling_features.contains(feature)
+        if format_properties.optimal_tiling_features.contains(flags) {
+            Ok(())
+        } else {
+            Err(PhysicalDeviceRejectionReason::TextureFormatSupport(format, flags))
+        }
     };
 
-    if !has_feature(vk::Format::R8G8B8A8_SRGB, vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR) {
-        return None;
+    let texture_usage_features =
+        vk::FormatFeatureFlags::SAMPLED_IMAGE | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR | vk::FormatFeatureFlags::TRANSFER_DST;
+    if let Err(err) = format_supported(vk::Format::R8G8B8A8_SRGB, texture_usage_features)
+        .and(format_supported(vk::Format::R8G8B8A8_UNORM, texture_usage_features))
+        .and(format_supported(vk::Format::R8G8B8A8_SNORM, texture_usage_features))
+        .and(format_supported(vk::Format::BC6H_SFLOAT_BLOCK, texture_usage_features))
+        .and(format_supported(vk::Format::BC6H_UFLOAT_BLOCK, texture_usage_features))
+        .and(format_supported(vk::Format::BC7_UNORM_BLOCK, texture_usage_features))
+        .and(format_supported(vk::Format::BC7_SRGB_BLOCK, texture_usage_features))
+    {
+        return Ok(Err(err));
     }
 
     // From the spec:
     // VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT feature...
     // ...must be supported for at least one of VK_FORMAT_D24_UNORM_S8_UINT and VK_FORMAT_D32_SFLOAT_S8_UINT.
-    let depth_format = if has_feature(vk::Format::D24_UNORM_S8_UINT, vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT) {
-        vk::Format::D24_UNORM_S8_UINT
-    } else if has_feature(vk::Format::D32_SFLOAT_S8_UINT, vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT) {
-        vk::Format::D32_SFLOAT_S8_UINT
+    let depth_formats = [vk::Format::D24_UNORM_S8_UINT, vk::Format::D32_SFLOAT_S8_UINT];
+    let depth_format = if format_supported(depth_formats[0], vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT).is_ok() {
+        depth_formats[0]
+    } else if format_supported(depth_formats[1], vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT).is_ok() {
+        depth_formats[1]
     } else {
-        return None;
+        return Ok(Err(PhysicalDeviceRejectionReason::DepthFormatSupport(
+            depth_formats[0],
+            depth_formats[1],
+        )));
     };
 
-    // TODO: Add check for compressed image format support
-
     let (swapchain_format, swapchain_color_space) = {
-        let surface_formats = match unsafe {
+        let surface_formats = unsafe {
             profiling::scope!("vk::get_physical_device_surface_formats");
             surface_ext
                 .get_physical_device_surface_formats(physical_device, surface)
-                .map_err(PhysicalDeviceEnumerationError::SurfaceQuery)
-        } {
-            Ok(formats) => formats,
-            Err(err) => return Some(Err(err)),
+                .map_err(PhysicalDeviceEnumerationError::SurfaceQuery)?
         };
         if let Some(format) = surface_formats.iter().find(|format| is_uncompressed_srgb(format.format)) {
             (format.format, format.color_space)
@@ -207,7 +242,7 @@ fn filter_capable_device(
         let name = format!("{}{}", name, pd_type);
         let uuid = GpuId(properties.pipeline_cache_uuid);
 
-        Some(Ok(PhysicalDevice {
+        Ok(Ok(PhysicalDevice {
             name,
             uuid,
             inner: physical_device,
@@ -221,7 +256,7 @@ fn filter_capable_device(
             extensions,
         }))
     } else {
-        None
+        Ok(Err(PhysicalDeviceRejectionReason::QueueFamilyMissing))
     }
 }
 

@@ -35,7 +35,6 @@ impl Drop for Instance {
 impl Instance {
     pub fn new(window: &dyn HasRawWindowHandle) -> Result<Instance, InstanceCreationError> {
         profiling::scope!("vulkan instance creation");
-        // TODO: Missing Vulkan is not gracefully handled.
         let entry = Entry::linked();
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))

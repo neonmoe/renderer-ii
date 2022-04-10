@@ -58,23 +58,23 @@ fn fallible_main() -> anyhow::Result<()> {
 
     let instance = neonvk::Instance::new(&window)?;
     let surface = Rc::new(neonvk::create_surface(&instance.entry, &instance.inner, &window)?);
-    let physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner)?;
-    let physical_device = &physical_devices[0];
-    let device = Rc::new(neonvk::create_device(&instance.inner, physical_device)?);
+    let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner)?;
+    let physical_device = physical_devices.remove(0)?;
+    let device = Rc::new(neonvk::create_device(&instance.inner, &physical_device)?);
 
     let mut uploader = neonvk::Uploader::new(
         &instance.inner,
         &device,
         device.graphics_queue,
         device.transfer_queue,
-        physical_device,
+        &physical_device,
         300_000_000,
         "sandbox assets",
     )?;
     let mut assets_buffers_arena = neonvk::VulkanArena::new(
         &instance.inner,
         &device,
-        physical_device,
+        &physical_device,
         12_000_000,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL
             | neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -85,7 +85,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut assets_textures_arena = neonvk::VulkanArena::new(
         &instance.inner,
         &device,
-        physical_device,
+        &physical_device,
         100_000_000,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -118,7 +118,7 @@ fn fallible_main() -> anyhow::Result<()> {
         drop(uploader);
     }
 
-    let pipelines = neonvk::Pipelines::new(&device, physical_device, &descriptors)?;
+    let pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors)?;
     let mut swapchain_settings = neonvk::SwapchainSettings {
         extent: neonvk::vk::Extent2D { width, height },
         immediate_present: false,
@@ -128,13 +128,13 @@ fn fallible_main() -> anyhow::Result<()> {
         &instance.inner,
         &surface,
         &device,
-        physical_device,
+        &physical_device,
         None,
         &swapchain_settings,
     )?;
     let mut swapchain_frames = swapchain.frame_count();
-    let mut framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, physical_device, &pipelines, &swapchain)?;
-    let mut renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, swapchain_frames)?;
+    let mut framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
+    let mut renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain_frames)?;
     descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain_frames)?;
 
     let mut frame_processing_durations = Vec::with_capacity(10_000);
@@ -192,15 +192,15 @@ fn fallible_main() -> anyhow::Result<()> {
                 &instance.inner,
                 &surface,
                 &device,
-                physical_device,
+                &physical_device,
                 Some(&old_swapchain),
                 &swapchain_settings,
             )?;
             assert!(old_swapchain.no_external_refs());
             drop(old_swapchain);
-            framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, physical_device, &pipelines, &swapchain)?;
+            framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
             if swapchain.frame_count() != swapchain_frames {
-                renderer = neonvk::Renderer::new(&instance.inner, &device, physical_device, swapchain.frame_count())?;
+                renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain.frame_count())?;
                 descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain.frame_count())?;
                 swapchain_frames = swapchain.frame_count();
             }
