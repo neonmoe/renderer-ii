@@ -17,12 +17,14 @@ pub struct PushConstantStruct {
 unsafe impl bytemuck::Zeroable for PushConstantStruct {}
 unsafe impl bytemuck::Pod for PushConstantStruct {}
 
-const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [PipelineIndex::Gltf];
+const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] =
+    [PipelineIndex::GltfOpaque, PipelineIndex::GltfClipped, PipelineIndex::GltfBlended];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PipelineIndex {
-    Gltf,
-    // TODO: Transparent materials
+    GltfOpaque,
+    GltfClipped,
+    GltfBlended,
     #[doc(hidden)]
     Count,
 }
@@ -30,7 +32,7 @@ pub enum PipelineIndex {
 impl PipelineIndex {
     /// A pipeline whose first descriptor set is written to and read
     /// from, where the shared descriptor set is concerned.
-    pub const SHARED_DESCRIPTOR_PIPELINE: PipelineIndex = PipelineIndex::Gltf;
+    pub const SHARED_DESCRIPTOR_PIPELINE: PipelineIndex = PipelineIndex::GltfOpaque;
 }
 
 /// Maps every PipelineIndex to a T.
@@ -48,7 +50,7 @@ impl<T> Drop for PipelineMap<T> {
 
 impl<T> PipelineMap<T> {
     pub fn new<E, F: FnMut(PipelineIndex) -> Result<T, E>>(mut f: F) -> Result<PipelineMap<T>, E> {
-        let mut buffer = [MaybeUninit::uninit(); PipelineIndex::Count as usize];
+        let mut buffer = [MaybeUninit::uninit(), MaybeUninit::uninit(), MaybeUninit::uninit()];
         for (value, pipeline) in buffer.iter_mut().zip(ALL_PIPELINES) {
             value.write(f(pipeline)?);
         }
@@ -87,7 +89,10 @@ pub(crate) struct DescriptorSetLayoutParams {
     pub binding_flags: vk::DescriptorBindingFlags,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct PipelineParameters {
+    pub alpha_to_coverage: bool,
+    pub blended: bool,
     pub vertex_shader: &'static [u32],
     pub vertex_shader_name: &'static str,
     pub fragment_shader: &'static [u32],
@@ -144,118 +149,138 @@ static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescri
     },
 ];
 
+static GLTF_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
+    alpha_to_coverage: false,
+    blended: false,
+    vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
+    vertex_shader_name: "shaders/textured.vert",
+    fragment_shader: shaders::include_spirv!("shaders/textured.frag"),
+    fragment_shader_name: "shaders/textured.frag",
+    bindings: &[
+        INSTANCED_TRANSFORM_BINDING_0,
+        vk::VertexInputBindingDescription {
+            binding: 1,
+            stride: mem::size_of::<Vec3>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        },
+        vk::VertexInputBindingDescription {
+            binding: 2,
+            stride: mem::size_of::<Vec2>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        },
+        vk::VertexInputBindingDescription {
+            binding: 3,
+            stride: mem::size_of::<Vec3>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        },
+        vk::VertexInputBindingDescription {
+            binding: 4,
+            stride: mem::size_of::<Vec4>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        },
+    ],
+    attributes: &[
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[2],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[3],
+        vk::VertexInputAttributeDescription {
+            binding: 1,
+            location: 4,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: 0,
+        },
+        vk::VertexInputAttributeDescription {
+            binding: 2,
+            location: 5,
+            format: vk::Format::R32G32_SFLOAT,
+            offset: 0,
+        },
+        vk::VertexInputAttributeDescription {
+            binding: 3,
+            location: 6,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: 0,
+        },
+        vk::VertexInputAttributeDescription {
+            binding: 4,
+            location: 7,
+            format: vk::Format::R32G32B32A32_SFLOAT,
+            offset: 0,
+        },
+    ],
+    descriptor_sets: &[
+        SHARED_DESCRIPTOR_SET_0,
+        &[
+            DescriptorSetLayoutParams {
+                binding: 0,
+                descriptor_type: vk::DescriptorType::SAMPLER,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+            },
+            DescriptorSetLayoutParams {
+                binding: 1,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+            },
+            DescriptorSetLayoutParams {
+                binding: 2,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+            },
+            DescriptorSetLayoutParams {
+                binding: 3,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+            },
+            DescriptorSetLayoutParams {
+                binding: 4,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+            },
+            DescriptorSetLayoutParams {
+                binding: 5,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+            },
+            DescriptorSetLayoutParams {
+                binding: 6,
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+            },
+        ],
+    ],
+};
+
+static GLTF_CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
+    alpha_to_coverage: true,
+    blended: false,
+    ..GLTF_OPAQUE_PARAMETERS
+};
+
+static GLTF_BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
+    alpha_to_coverage: false,
+    blended: true,
+    ..GLTF_OPAQUE_PARAMETERS
+};
+
 pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = PipelineMap {
-    buffer: [MaybeUninit::new(PipelineParameters {
-        vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
-        vertex_shader_name: "shaders/textured.vert",
-        fragment_shader: shaders::include_spirv!("shaders/textured.frag"),
-        fragment_shader_name: "shaders/textured.frag",
-        bindings: &[
-            INSTANCED_TRANSFORM_BINDING_0,
-            vk::VertexInputBindingDescription {
-                binding: 1,
-                stride: mem::size_of::<Vec3>() as u32,
-                input_rate: vk::VertexInputRate::VERTEX,
-            },
-            vk::VertexInputBindingDescription {
-                binding: 2,
-                stride: mem::size_of::<Vec2>() as u32,
-                input_rate: vk::VertexInputRate::VERTEX,
-            },
-            vk::VertexInputBindingDescription {
-                binding: 3,
-                stride: mem::size_of::<Vec3>() as u32,
-                input_rate: vk::VertexInputRate::VERTEX,
-            },
-            vk::VertexInputBindingDescription {
-                binding: 4,
-                stride: mem::size_of::<Vec4>() as u32,
-                input_rate: vk::VertexInputRate::VERTEX,
-            },
-        ],
-        attributes: &[
-            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
-            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
-            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[2],
-            INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[3],
-            vk::VertexInputAttributeDescription {
-                binding: 1,
-                location: 4,
-                format: vk::Format::R32G32B32_SFLOAT,
-                offset: 0,
-            },
-            vk::VertexInputAttributeDescription {
-                binding: 2,
-                location: 5,
-                format: vk::Format::R32G32_SFLOAT,
-                offset: 0,
-            },
-            vk::VertexInputAttributeDescription {
-                binding: 3,
-                location: 6,
-                format: vk::Format::R32G32B32_SFLOAT,
-                offset: 0,
-            },
-            vk::VertexInputAttributeDescription {
-                binding: 4,
-                location: 7,
-                format: vk::Format::R32G32B32A32_SFLOAT,
-                offset: 0,
-            },
-        ],
-        descriptor_sets: &[
-            SHARED_DESCRIPTOR_SET_0,
-            &[
-                DescriptorSetLayoutParams {
-                    binding: 0,
-                    descriptor_type: vk::DescriptorType::SAMPLER,
-                    descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                    binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-                },
-                DescriptorSetLayoutParams {
-                    binding: 1,
-                    descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: MAX_TEXTURE_COUNT,
-                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                    binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-                },
-                DescriptorSetLayoutParams {
-                    binding: 2,
-                    descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: MAX_TEXTURE_COUNT,
-                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                    binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-                },
-                DescriptorSetLayoutParams {
-                    binding: 3,
-                    descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: MAX_TEXTURE_COUNT,
-                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                    binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-                },
-                DescriptorSetLayoutParams {
-                    binding: 4,
-                    descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: MAX_TEXTURE_COUNT,
-                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                    binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-                },
-                DescriptorSetLayoutParams {
-                    binding: 5,
-                    descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: MAX_TEXTURE_COUNT,
-                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                    binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-                },
-                DescriptorSetLayoutParams {
-                    binding: 6,
-                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                    descriptor_count: MAX_TEXTURE_COUNT,
-                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                    binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-                },
-            ],
-        ],
-    })],
+    buffer: [
+        MaybeUninit::new(GLTF_OPAQUE_PARAMETERS),
+        MaybeUninit::new(GLTF_CLIPPED_PARAMETERS),
+        MaybeUninit::new(GLTF_BLENDED_PARAMETERS),
+    ],
 };

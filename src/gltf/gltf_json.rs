@@ -12,7 +12,9 @@ pub struct GltfJson {
     #[serde(rename = "bufferViews")]
     pub buffer_views: Vec<BufferView>,
     pub buffers: Vec<Buffer>,
+    #[serde(default)]
     pub textures: Vec<Texture>,
+    #[serde(default)]
     pub images: Vec<Image>,
     pub materials: Vec<Material>,
 }
@@ -112,6 +114,26 @@ pub struct Material {
     pub emissive_texture: Option<TextureInfo>,
     #[serde(rename = "emissiveFactor")]
     pub emissive_factor: Option<[f32; 3]>,
+    #[serde(rename = "alphaMode", default)]
+    pub alpha_mode: AlphaMode,
+    #[serde(rename = "alphaCutoff")]
+    pub alpha_cutoff: Option<f32>,
+}
+
+#[derive(Deserialize, PartialEq)]
+pub enum AlphaMode {
+    #[serde(rename = "OPAQUE")]
+    Opaque,
+    #[serde(rename = "MASK")]
+    Mask,
+    #[serde(rename = "BLEND")]
+    Blend,
+}
+
+impl Default for AlphaMode {
+    fn default() -> Self {
+        AlphaMode::Opaque
+    }
 }
 
 #[derive(Deserialize)]

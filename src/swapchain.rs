@@ -119,7 +119,6 @@ fn create_swapchain(
         .map_err(SwapchainError::GetPhysicalDevicePresentModes)?;
     let mut present_mode = vk::PresentModeKHR::FIFO;
     if settings.immediate_present {
-        // TODO: Remove immediate present, add proper gpu profiling instead.
         if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
             present_mode = vk::PresentModeKHR::MAILBOX;
         } else if present_modes.contains(&vk::PresentModeKHR::IMMEDIATE) {

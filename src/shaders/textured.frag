@@ -17,7 +17,7 @@ layout(set = 1, binding = 5) uniform texture2D emissive[MAX_TEXTURE_COUNT];
 layout(set = 1, binding = 6) uniform GltfFactors {
     vec4 base_color;
     vec4 emissive;
-    vec4 metallic_roughness;
+    vec4 metallic_roughness_alpha_cutoff;
 }
 factors[MAX_TEXTURE_COUNT];
 
@@ -30,7 +30,9 @@ push_constant;
 void main() {
     vec4 base_color_factor = factors[push_constant.texture_index].base_color;
     vec3 emissive_factor = factors[push_constant.texture_index].emissive.xyz;
-    vec2 metallic_roughness_factor = factors[push_constant.texture_index].metallic_roughness.xy;
+    vec2 metallic_roughness_factor =
+        factors[push_constant.texture_index].metallic_roughness_alpha_cutoff.xy;
+    float alpha_cutoff = factors[push_constant.texture_index].metallic_roughness_alpha_cutoff.z;
     vec4 base_color =
         texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
     vec2 metallic_roughness =
@@ -40,11 +42,15 @@ void main() {
     vec3 emissive =
         texture(sampler2D(emissive[push_constant.texture_index], tex_sampler), in_uv).xyz;
 
+    base_color *= base_color_factor;
+    if (base_color.a <= alpha_cutoff) {
+        discard;
+    }
+
     vec3 bitangent = in_tangent.w * cross(in_normal, in_tangent.xyz);
     mat3 tangent_to_world = mat3(in_tangent.xyz, bitangent, in_normal);
     vec3 normal = tangent_to_world * normal_tex.xyz;
 
-    base_color *= base_color_factor;
     emissive *= emissive_factor;
     metallic_roughness *= metallic_roughness_factor;
 
@@ -54,7 +60,7 @@ void main() {
     default:
         float brightness =
             max(0.0, dot(normal, normalize(vec3(-1.0, 1.0, 1.0)))) * 0.6 + 0.3 * occlusion.r;
-        out_color = brightness * base_color;
+        out_color = vec4(brightness * base_color.rgb, base_color.a);
         break;
     // Debugging cases, selectable with keys 1-5 in the sandbox:
     case 1:

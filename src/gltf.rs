@@ -420,6 +420,13 @@ fn create_gltf(
     let mut material_factors = Vec::with_capacity(gltf.materials.len());
     for mat in &gltf.materials {
         let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
+        let metallic_factor = pbr.metallic_factor.unwrap_or(1.0);
+        let roughness_factor = pbr.roughness_factor.unwrap_or(1.0);
+        let alpha_cutoff = if mat.alpha_mode == gltf_json::AlphaMode::Mask {
+            mat.alpha_cutoff.unwrap_or(0.5)
+        } else {
+            0.0
+        };
         material_factors.push(GltfFactors {
             base_color: pbr
                 .base_color_factor
@@ -431,7 +438,7 @@ fn create_gltf(
                 .as_ref()
                 .map(|&[r, g, b]| Vec4::new(r, g, b, 0.0))
                 .unwrap_or(Vec4::ZERO),
-            metallic_roughness: Vec4::new(pbr.metallic_factor.unwrap_or(1.0), pbr.roughness_factor.unwrap_or(1.0), 0.0, 0.0),
+            metallic_roughness_alpha_cutoff: Vec4::new(metallic_factor, roughness_factor, alpha_cutoff, 0.0),
         });
     }
     let factors_slice = bytemuck::cast_slice(&material_factors);
@@ -493,8 +500,12 @@ fn create_gltf(
             emissive,
             factors,
         };
-        materials
-            .push(Material::new(descriptors, PipelineIndex::Gltf, pipeline_specific_data).map_err(GltfLoadingError::MaterialCreation)?);
+        let pipeline = match mat.alpha_mode {
+            gltf_json::AlphaMode::Opaque => PipelineIndex::GltfOpaque,
+            gltf_json::AlphaMode::Mask => PipelineIndex::GltfClipped,
+            gltf_json::AlphaMode::Blend => PipelineIndex::GltfBlended,
+        };
+        materials.push(Material::new(descriptors, pipeline, pipeline_specific_data).map_err(GltfLoadingError::MaterialCreation)?);
     }
 
     {
@@ -530,6 +541,17 @@ fn create_primitive(
     buffers: &[Rc<Buffer>],
     primitive: &gltf_json::Primitive,
 ) -> Result<Mesh, GltfLoadingError> {
+    let pipeline = if let Some(material_index) = primitive.material {
+        let material = gltf.materials.get(material_index).ok_or(GltfLoadingError::Oob("material"))?;
+        match material.alpha_mode {
+            gltf_json::AlphaMode::Opaque => PipelineIndex::GltfOpaque,
+            gltf_json::AlphaMode::Mask => PipelineIndex::GltfClipped,
+            gltf_json::AlphaMode::Blend => PipelineIndex::GltfBlended,
+        }
+    } else {
+        PipelineIndex::GltfOpaque
+    };
+
     let index_accessor = primitive.indices.ok_or(GltfLoadingError::Misc("missing indices"))?;
     let (index_buffer, index_buffer_offset, index_buffer_size) =
         get_slice_from_accessor(gltf, buffers, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
@@ -559,7 +581,7 @@ fn create_primitive(
     let (tangent_buffer, tangent_offset, _) = get_slice_from_accessor(gltf, buffers, tangent_accessor, GLTF_FLOAT, "VEC4")?;
 
     Ok(Mesh::new::<u16>(
-        PipelineIndex::Gltf,
+        pipeline,
         vec![pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
         vec![pos_offset, tex_offset, normal_offset, tangent_offset],
         index_buffer,

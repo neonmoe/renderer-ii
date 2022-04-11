@@ -50,12 +50,12 @@ pub enum PipelineSpecificData {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GltfFactors {
-    /// (r, g, b, _). Vec4 to make sure there's no padding/alignment issues.
+    /// (r, g, b, a).
     pub base_color: Vec4,
     /// (r, g, b, _). Vec4 to make sure there's no padding/alignment issues.
     pub emissive: Vec4,
-    /// (metallic, roughness, _, _). Vec4 to make sure there's no padding.
-    pub metallic_roughness: Vec4,
+    /// (metallic, roughness, alpha_cutoff, _). Vec4 to make sure there's no padding.
+    pub metallic_roughness_alpha_cutoff: Vec4,
 }
 // Mat4's are Pods, therefore they are Zeroable, therefore this is too.
 unsafe impl Zeroable for GltfFactors {}
