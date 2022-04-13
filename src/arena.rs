@@ -174,7 +174,6 @@ impl VulkanArena<ForBuffers> {
 
         let offset = align_up(self.offset, alignment);
         let size = buffer_memory_requirements.size;
-        debug_assert_eq!(size, align_up(src.len() as vk::DeviceSize, alignment));
 
         if self.total_size - offset < size {
             unsafe { self.device.destroy_buffer(buffer, None) };

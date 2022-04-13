@@ -35,6 +35,14 @@ fn reverse_z_rh_infinite_projection(fov: f32, aspect_ratio: f32, near: f32) -> M
     Mat4::from_cols_array(&[sx, 0.0, 0.0, 0.0, 0.0, -sy, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, near, 0.0])
 }
 
+#[allow(dead_code)]
+fn z_rh_infinite_projection(fov: f32, aspect_ratio: f32, near: f32) -> Mat4 {
+    let sy = 1.0 / (fov / 2.0).tan();
+    let sx = sy / aspect_ratio;
+    let near = -2.0 * near;
+    Mat4::from_cols_array(&[sx, 0.0, 0.0, 0.0, 0.0, -sy, 0.0, 0.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0, near, 0.0])
+}
+
 #[derive(Default)]
 pub struct Camera {}
 
