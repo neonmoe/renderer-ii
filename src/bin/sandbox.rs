@@ -13,6 +13,8 @@ static LOGGER: Logger = Logger;
 enum SandboxError {
     #[error("sdl error: {0}")]
     Sdl(String),
+    #[error("MSAA sample count not supported: {0:?}")]
+    MsaaSampleCountNotSupported(neonvk::vk::SampleCountFlags),
 }
 
 fn assert_last_drop<T>(t: Rc<T>) {
@@ -61,6 +63,21 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner)?;
     let physical_device = physical_devices.remove(0)?;
     let device = Rc::new(neonvk::create_device(&instance.inner, &physical_device)?);
+
+    let msaa_samples = neonvk::vk::SampleCountFlags::TYPE_4;
+    if !physical_device
+        .properties
+        .limits
+        .framebuffer_color_sample_counts
+        .contains(msaa_samples)
+    {
+        return Err(SandboxError::MsaaSampleCountNotSupported(msaa_samples).into());
+    }
+
+    // TODO: Add size estimation system for allocations
+    // Two reasons:
+    // - Accurate arena sizes for minimizing allocations
+    // - For display in an options menu
 
     let mut uploader = neonvk::Uploader::new(
         &instance.inner,
@@ -131,7 +148,7 @@ fn fallible_main() -> anyhow::Result<()> {
         None,
         &swapchain_settings,
     )?;
-    let mut pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, None)?;
+    let mut pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, msaa_samples, None)?;
     let mut swapchain_frames = swapchain.frame_count();
     let mut framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
     let mut renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain_frames)?;
@@ -199,7 +216,14 @@ fn fallible_main() -> anyhow::Result<()> {
                 )?;
                 assert!(old_swapchain.no_external_refs());
                 drop(old_swapchain);
-                pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, Some(pipelines))?;
+                pipelines = neonvk::Pipelines::new(
+                    &device,
+                    &physical_device,
+                    &descriptors,
+                    swapchain.extent,
+                    msaa_samples,
+                    Some(pipelines),
+                )?;
                 framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
                 if swapchain.frame_count() != swapchain_frames {
                     renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain.frame_count())?;

@@ -1,5 +1,6 @@
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::debug_utils;
+use crate::pipelines::AttachmentLayout;
 use crate::vulkan_raii::{AnyImage, Device, Framebuffer, ImageView};
 use crate::{PhysicalDevice, Pipelines, Swapchain};
 use ash::{vk, Instance};
@@ -170,10 +171,14 @@ impl Framebuffers {
             .zip(swapchain_image_views.into_iter())
             .map(|(((i, color_image_view), depth_image_view), swapchain_image_view)| {
                 profiling::scope!("one frame's framebuffers' creation");
-                let attachments = [color_image_view.inner, depth_image_view.inner, swapchain_image_view.inner];
+                let attachments = [swapchain_image_view.inner, depth_image_view.inner, color_image_view.inner];
+                let attachments = match pipelines.render_pass_layout {
+                    AttachmentLayout::SingleSampled => &attachments[0..2],
+                    AttachmentLayout::MultiSampled => &attachments[0..3],
+                };
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(pipelines.render_pass.inner)
-                    .attachments(&attachments)
+                    .attachments(attachments)
                     .width(width)
                     .height(height)
                     .layers(1);

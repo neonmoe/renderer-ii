@@ -128,7 +128,7 @@ fn filter_capable_device(
     };
     if properties.api_version < vk::API_VERSION_1_3 {
         return Ok(Err(PhysicalDeviceRejectionReason::VulkanVersion(1, 3)));
-    }
+    };
 
     let extensions = get_extensions(instance, physical_device);
     if extensions.iter().all(|s| s != "VK_KHR_swapchain") {
