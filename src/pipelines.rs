@@ -26,6 +26,7 @@ impl Pipelines {
         device: &Rc<Device>,
         physical_device: &PhysicalDevice,
         descriptors: &Descriptors,
+        extent: vk::Extent2D,
     ) -> Result<Pipelines, PipelineCreationError> {
         let attachment_sample_count = vk::SampleCountFlags::TYPE_8;
         let final_render_pass = create_render_pass(
@@ -45,6 +46,7 @@ impl Pipelines {
             final_render_pass.inner,
             &descriptors.pipeline_layouts,
             attachment_sample_count,
+            extent,
         )?;
         let mut vk_pipelines_iter = vk_pipelines.into_iter();
         let pipelines = PipelineMap::new::<PipelineCreationError, _>(|name| {
@@ -128,6 +130,7 @@ fn create_pipelines(
     render_pass: vk::RenderPass,
     pipeline_layouts: &PipelineMap<PipelineLayout>,
     attachment_sample_count: vk::SampleCountFlags,
+    extent: vk::Extent2D,
 ) -> Result<Vec<vk::Pipeline>, PipelineCreationError> {
     let mut all_shader_modules = Vec::with_capacity(PIPELINE_PARAMETERS.len() * 2);
     let mut create_shader_module = |filename: &'static str, spirv: &'static [u32]| -> Result<vk::ShaderModule, PipelineCreationError> {
@@ -221,9 +224,16 @@ fn create_pipelines(
             .depth_write_enable(true)
             .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL);
 
-        let viewport_create_info = vk::PipelineViewportStateCreateInfo::default();
-        let dynamic_states = [vk::DynamicState::VIEWPORT_WITH_COUNT, vk::DynamicState::SCISSOR_WITH_COUNT];
-        let dynamic_state_create_info = vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
+        let viewports = [vk::Viewport::builder()
+            .width(extent.width as f32)
+            .height(extent.height as f32)
+            .min_depth(0.0)
+            .max_depth(1.0)
+            .build()];
+        let scissors = [vk::Rect2D::builder().extent(extent).build()];
+        let viewport_create_info = vk::PipelineViewportStateCreateInfo::builder()
+            .viewports(&viewports)
+            .scissors(&scissors);
 
         let mut pipeline_create_infos = Vec::with_capacity(pipeline_layouts.len());
         for (i, pipeline_layout) in pipeline_layouts.iter().enumerate() {
@@ -236,7 +246,6 @@ fn create_pipelines(
                 .multisample_state(&multisample_create_infos[i])
                 .depth_stencil_state(&pipeline_depth_stencil_create_info)
                 .color_blend_state(&color_blend_create_infos[i])
-                .dynamic_state(&dynamic_state_create_info)
                 .layout(pipeline_layout.inner)
                 .render_pass(render_pass)
                 .subpass(0)

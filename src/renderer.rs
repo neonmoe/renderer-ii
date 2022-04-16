@@ -197,12 +197,12 @@ impl Renderer {
         frame_index: FrameIndex,
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
-        canvas: &Framebuffers,
+        framebuffers: &Framebuffers,
         scene: &Scene,
         debug_value: u32,
     ) -> Result<(), RendererError> {
         let fi = frame_index.index;
-        let vk::Extent2D { width, height } = canvas.extent;
+        let vk::Extent2D { width, height } = framebuffers.extent;
 
         let global_transforms = &[scene.camera.create_global_transforms(width as f32, height as f32)];
         let global_transforms = bytemuck::cast_slice(global_transforms);
@@ -221,7 +221,7 @@ impl Renderer {
         descriptors.write_descriptors(frame_index, &global_transforms_buffer);
         self.temp_arena[fi].add_buffer(global_transforms_buffer);
 
-        let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, canvas, scene, debug_value)?;
+        let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, framebuffers, scene, debug_value)?;
 
         let signal_semaphores = [self.ready_for_present[fi].inner];
         let command_buffers = [command_buffer];
@@ -320,16 +320,6 @@ impl Renderer {
                 .begin_command_buffer(command_buffer, &begin_info)
                 .map_err(RendererError::CommandBufferBegin)?;
         }
-
-        let viewports = [vk::Viewport::builder()
-            .width(framebuffers.extent.width as f32)
-            .height(framebuffers.extent.height as f32)
-            .min_depth(0.0)
-            .max_depth(1.0)
-            .build()];
-        let scissors = [vk::Rect2D::builder().extent(framebuffers.extent).build()];
-        unsafe { self.device.cmd_set_viewport_with_count(command_buffer, &viewports) };
-        unsafe { self.device.cmd_set_scissor_with_count(command_buffer, &scissors) };
 
         let render_area = vk::Rect2D::builder().extent(framebuffers.extent).build();
         let mut depth_clear_value = vk::ClearValue::default();

@@ -118,7 +118,6 @@ fn fallible_main() -> anyhow::Result<()> {
         drop(uploader);
     }
 
-    let pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors)?;
     let mut swapchain_settings = neonvk::SwapchainSettings {
         extent: neonvk::vk::Extent2D { width, height },
         immediate_present: false,
@@ -132,6 +131,7 @@ fn fallible_main() -> anyhow::Result<()> {
         None,
         &swapchain_settings,
     )?;
+    let mut pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent)?;
     let mut swapchain_frames = swapchain.frame_count();
     let mut framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
     let mut renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain_frames)?;
@@ -141,7 +141,7 @@ fn fallible_main() -> anyhow::Result<()> {
 
     window.show();
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
-    let mut size_changed = false;
+    let mut resize_timestamp = None;
     let mut debug_value = 0;
     'running: loop {
         let update_start_time = Instant::now();
@@ -158,7 +158,7 @@ fn fallible_main() -> anyhow::Result<()> {
                     keycode: Some(Keycode::I), ..
                 } => {
                     swapchain_settings.immediate_present = !swapchain_settings.immediate_present;
-                    size_changed = true;
+                    resize_timestamp = Some(Instant::now());
                 }
 
                 Event::KeyDown { keycode, .. } => match keycode {
@@ -174,37 +174,41 @@ fn fallible_main() -> anyhow::Result<()> {
                 Event::Window {
                     win_event: WindowEvent::SizeChanged(_, _),
                     ..
-                } => size_changed = true,
+                } => resize_timestamp = Some(Instant::now()),
 
                 _ => {}
             }
         }
 
-        if size_changed {
-            profiling::scope!("handle resize");
-            device.wait_idle()?;
-            let (width, height) = window.vulkan_drawable_size();
-            drop(framebuffers);
-            let old_swapchain = swapchain;
-            swapchain_settings.extent = neonvk::vk::Extent2D { width, height };
-            swapchain = neonvk::Swapchain::new(
-                &instance.entry,
-                &instance.inner,
-                &surface,
-                &device,
-                &physical_device,
-                Some(&old_swapchain),
-                &swapchain_settings,
-            )?;
-            assert!(old_swapchain.no_external_refs());
-            drop(old_swapchain);
-            framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
-            if swapchain.frame_count() != swapchain_frames {
-                renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain.frame_count())?;
-                descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain.frame_count())?;
-                swapchain_frames = swapchain.frame_count();
+        if let Some(resize_instant) = resize_timestamp {
+            if (Instant::now() - resize_instant) > Duration::from_millis(300) {
+                profiling::scope!("handle resize");
+                device.wait_idle()?;
+                drop(framebuffers);
+                drop(pipelines);
+                let (width, height) = window.vulkan_drawable_size();
+                let old_swapchain = swapchain;
+                swapchain_settings.extent = neonvk::vk::Extent2D { width, height };
+                swapchain = neonvk::Swapchain::new(
+                    &instance.entry,
+                    &instance.inner,
+                    &surface,
+                    &device,
+                    &physical_device,
+                    Some(&old_swapchain),
+                    &swapchain_settings,
+                )?;
+                assert!(old_swapchain.no_external_refs());
+                drop(old_swapchain);
+                pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent)?;
+                framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
+                if swapchain.frame_count() != swapchain_frames {
+                    renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain.frame_count())?;
+                    descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain.frame_count())?;
+                    swapchain_frames = swapchain.frame_count();
+                }
+                resize_timestamp = None;
             }
-            size_changed = false;
         }
 
         let mut scene = neonvk::Scene::default();
