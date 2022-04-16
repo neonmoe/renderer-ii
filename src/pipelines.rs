@@ -1,6 +1,6 @@
 use crate::debug_utils;
 use crate::pipeline_parameters::{PipelineMap, PIPELINE_PARAMETERS};
-use crate::vulkan_raii::{self, Device, PipelineLayout, RenderPass};
+use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout, RenderPass};
 use crate::{Descriptors, PhysicalDevice};
 use ash::vk;
 use std::rc::Rc;
@@ -19,6 +19,7 @@ pub struct Pipelines {
     pub(crate) attachment_sample_count: vk::SampleCountFlags,
     pub(crate) render_pass: Rc<RenderPass>,
     pub(crate) pipelines: PipelineMap<vulkan_raii::Pipeline>,
+    pipeline_cache: Option<PipelineCache>,
 }
 
 impl Pipelines {
@@ -27,6 +28,7 @@ impl Pipelines {
         physical_device: &PhysicalDevice,
         descriptors: &Descriptors,
         extent: vk::Extent2D,
+        old_pipelines: Option<Pipelines>,
     ) -> Result<Pipelines, PipelineCreationError> {
         let attachment_sample_count = vk::SampleCountFlags::TYPE_8;
         let final_render_pass = create_render_pass(
@@ -41,12 +43,13 @@ impl Pipelines {
             device: device.clone(),
         });
 
-        let vk_pipelines = create_pipelines(
+        let (vk_pipelines, pipeline_cache) = create_pipelines(
             device,
             final_render_pass.inner,
             &descriptors.pipeline_layouts,
             attachment_sample_count,
             extent,
+            old_pipelines.and_then(|pipelines| pipelines.pipeline_cache),
         )?;
         let mut vk_pipelines_iter = vk_pipelines.into_iter();
         let pipelines = PipelineMap::new::<PipelineCreationError, _>(|name| {
@@ -62,6 +65,7 @@ impl Pipelines {
             attachment_sample_count,
             render_pass: final_render_pass,
             pipelines,
+            pipeline_cache,
         })
     }
 }
@@ -126,12 +130,13 @@ fn create_render_pass(
 
 #[profiling::function]
 fn create_pipelines(
-    device: &Device,
+    device: &Rc<Device>,
     render_pass: vk::RenderPass,
     pipeline_layouts: &PipelineMap<PipelineLayout>,
     attachment_sample_count: vk::SampleCountFlags,
     extent: vk::Extent2D,
-) -> Result<Vec<vk::Pipeline>, PipelineCreationError> {
+    mut pipeline_cache: Option<PipelineCache>,
+) -> Result<(Vec<vk::Pipeline>, Option<PipelineCache>), PipelineCreationError> {
     let mut all_shader_modules = Vec::with_capacity(PIPELINE_PARAMETERS.len() * 2);
     let mut create_shader_module = |filename: &'static str, spirv: &'static [u32]| -> Result<vk::ShaderModule, PipelineCreationError> {
         let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
@@ -235,6 +240,19 @@ fn create_pipelines(
             .viewports(&viewports)
             .scissors(&scissors);
 
+        pipeline_cache = pipeline_cache.or_else(|| {
+            // NOTE: Access to the PipelineCache is synchronized because
+            // Pipelines-structs are created on one thread, and the cache is
+            // per-Pipelines. Old Pipelines can't be inherited by multiple
+            // Pipelines because they get moved, and Rust's ownership semantics
+            // take care of the rest.
+            let create_info = vk::PipelineCacheCreateInfo::builder().flags(vk::PipelineCacheCreateFlags::EXTERNALLY_SYNCHRONIZED);
+            let pipeline_cache = unsafe { device.create_pipeline_cache(&create_info, None) }.ok()?;
+            Some(PipelineCache {
+                inner: pipeline_cache,
+                device: device.clone(),
+            })
+        });
         let mut pipeline_create_infos = Vec::with_capacity(pipeline_layouts.len());
         for (i, pipeline_layout) in pipeline_layouts.iter().enumerate() {
             let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
@@ -254,7 +272,11 @@ fn create_pipelines(
         }
         unsafe {
             device
-                .create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_infos, None)
+                .create_graphics_pipelines(
+                    pipeline_cache.as_ref().map(|pc| pc.inner).unwrap_or_else(vk::PipelineCache::null),
+                    &pipeline_create_infos,
+                    None,
+                )
                 .map_err(|(_, err)| PipelineCreationError::Object(err))
         }?
     };
@@ -263,5 +285,5 @@ fn create_pipelines(
         unsafe { device.destroy_shader_module(shader_module, None) };
     }
 
-    Ok(pipelines)
+    Ok((pipelines, pipeline_cache))
 }

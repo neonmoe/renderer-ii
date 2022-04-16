@@ -252,3 +252,9 @@ pub struct Fence {
     pub device: Rc<Device>,
 }
 trivial_drop_impl!(Fence, destroy_fence);
+
+pub struct PipelineCache {
+    pub inner: vk::PipelineCache,
+    pub device: Rc<Device>,
+}
+trivial_drop_impl!(PipelineCache, destroy_pipeline_cache);

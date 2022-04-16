@@ -131,7 +131,7 @@ fn fallible_main() -> anyhow::Result<()> {
         None,
         &swapchain_settings,
     )?;
-    let mut pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent)?;
+    let mut pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, None)?;
     let mut swapchain_frames = swapchain.frame_count();
     let mut framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
     let mut renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain_frames)?;
@@ -181,11 +181,10 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         if let Some(resize_instant) = resize_timestamp {
-            if (Instant::now() - resize_instant) > Duration::from_millis(300) {
+            if (Instant::now() - resize_instant) > Duration::from_millis(100) {
                 profiling::scope!("handle resize");
                 device.wait_idle()?;
                 drop(framebuffers);
-                drop(pipelines);
                 let (width, height) = window.vulkan_drawable_size();
                 let old_swapchain = swapchain;
                 swapchain_settings.extent = neonvk::vk::Extent2D { width, height };
@@ -200,7 +199,7 @@ fn fallible_main() -> anyhow::Result<()> {
                 )?;
                 assert!(old_swapchain.no_external_refs());
                 drop(old_swapchain);
-                pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent)?;
+                pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, Some(pipelines))?;
                 framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
                 if swapchain.frame_count() != swapchain_frames {
                     renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain.frame_count())?;
