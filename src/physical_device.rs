@@ -4,6 +4,8 @@ use ash::vk;
 use ash::{Entry, Instance};
 use std::ffi::CStr;
 
+pub const HDR_COLOR_ATTACHMENT_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
+
 #[derive(thiserror::Error, Debug)]
 pub enum PhysicalDeviceEnumerationError {
     #[error("failed to enumerate vulkan physical devices")]
@@ -187,13 +189,18 @@ fn filter_capable_device(
 
     let texture_usage_features =
         vk::FormatFeatureFlags::SAMPLED_IMAGE | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR | vk::FormatFeatureFlags::TRANSFER_DST;
-    if let Err(err) = format_supported(vk::Format::R8G8B8A8_SRGB, texture_usage_features)
-        .and(format_supported(vk::Format::R8G8B8A8_UNORM, texture_usage_features))
-        .and(format_supported(vk::Format::R8G8B8A8_SNORM, texture_usage_features))
-        .and(format_supported(vk::Format::BC6H_SFLOAT_BLOCK, texture_usage_features))
-        .and(format_supported(vk::Format::BC6H_UFLOAT_BLOCK, texture_usage_features))
-        .and(format_supported(vk::Format::BC7_UNORM_BLOCK, texture_usage_features))
-        .and(format_supported(vk::Format::BC7_SRGB_BLOCK, texture_usage_features))
+    if let Err(err) = format_supported(vk::Format::R8G8B8A8_SRGB, texture_usage_features) // Uncompressed textures
+        .and(format_supported(vk::Format::R8G8B8A8_UNORM, texture_usage_features)) // Uncompressed textures
+        .and(format_supported(vk::Format::R8G8B8A8_SNORM, texture_usage_features)) // Uncompressed textures
+        .and(format_supported(vk::Format::BC6H_SFLOAT_BLOCK, texture_usage_features)) // Compressed textures
+        .and(format_supported(vk::Format::BC6H_UFLOAT_BLOCK, texture_usage_features)) // Compressed textures
+        .and(format_supported(vk::Format::BC7_UNORM_BLOCK, texture_usage_features)) // Compressed textures
+        .and(format_supported(vk::Format::BC7_SRGB_BLOCK, texture_usage_features)) // Compressed textures
+        .and(format_supported(
+            // HDR color attachments (needs to have values above 1.0)
+            HDR_COLOR_ATTACHMENT_FORMAT,
+            vk::FormatFeatureFlags::COLOR_ATTACHMENT,
+        ))
     {
         return Ok(Err(err));
     }

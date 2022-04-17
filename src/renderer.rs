@@ -218,7 +218,7 @@ impl Renderer {
                 format_args!("uniform (view+proj matrices)"),
             )
             .map_err(RendererError::CameraTransformUniformCreation)?;
-        descriptors.write_descriptors(frame_index, &global_transforms_buffer);
+        descriptors.write_descriptors(frame_index, &global_transforms_buffer, &framebuffers.inner[fi]);
         self.temp_arena[fi].add_buffer(global_transforms_buffer);
 
         let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, framebuffers, scene, debug_value)?;
@@ -428,6 +428,28 @@ impl Renderer {
 
                 temp_arena.add_buffer(transform_buffer);
             }
+        }
+
+        unsafe {
+            profiling::scope!("vk::cmd_next_subpass");
+            self.device.cmd_next_subpass(command_buffer, vk::SubpassContents::INLINE);
+        }
+
+        {
+            profiling::scope!("record tonemapping subpass");
+            let pl_index = PipelineIndex::RenderResolutionPostProcess;
+            let bind_point = vk::PipelineBindPoint::GRAPHICS;
+            unsafe {
+                self.device
+                    .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines.get(pl_index).inner)
+            };
+            let layout = descriptors.pipeline_layouts.get(pl_index).inner;
+            let descriptor_sets = descriptors.descriptor_sets(frame_index, pl_index);
+            unsafe {
+                self.device
+                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 0, descriptor_sets, &[])
+            };
+            unsafe { self.device.cmd_draw(command_buffer, 3, 1, 0, 0) };
         }
 
         unsafe {

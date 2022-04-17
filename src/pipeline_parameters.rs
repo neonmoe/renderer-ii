@@ -17,14 +17,23 @@ pub struct PushConstantStruct {
 unsafe impl bytemuck::Zeroable for PushConstantStruct {}
 unsafe impl bytemuck::Pod for PushConstantStruct {}
 
-const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] =
-    [PipelineIndex::GltfOpaque, PipelineIndex::GltfClipped, PipelineIndex::GltfBlended];
+const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
+    PipelineIndex::GltfOpaque,
+    PipelineIndex::GltfClipped,
+    PipelineIndex::GltfBlended,
+    PipelineIndex::RenderResolutionPostProcess,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PipelineIndex {
+    /// Opaque geometry pass.
     GltfOpaque,
+    /// Alpha-to-coverage "fake transparent" geometry pass.
     GltfClipped,
+    /// Transparent geomtry pass.
     GltfBlended,
+    /// Post-processing pass before MSAA resolve and up/downsampling.
+    RenderResolutionPostProcess,
     #[doc(hidden)]
     Count,
 }
@@ -50,7 +59,12 @@ impl<T> Drop for PipelineMap<T> {
 
 impl<T> PipelineMap<T> {
     pub fn new<E, F: FnMut(PipelineIndex) -> Result<T, E>>(mut f: F) -> Result<PipelineMap<T>, E> {
-        let mut buffer = [MaybeUninit::uninit(), MaybeUninit::uninit(), MaybeUninit::uninit()];
+        let mut buffer = [
+            MaybeUninit::uninit(),
+            MaybeUninit::uninit(),
+            MaybeUninit::uninit(),
+            MaybeUninit::uninit(),
+        ];
         for (value, pipeline) in buffer.iter_mut().zip(ALL_PIPELINES) {
             value.write(f(pipeline)?);
         }
@@ -93,6 +107,9 @@ pub(crate) struct DescriptorSetLayoutParams {
 pub(crate) struct PipelineParameters {
     pub alpha_to_coverage: bool,
     pub blended: bool,
+    pub depth_test: bool,
+    pub depth_write: bool,
+    pub subpass: u32,
     pub vertex_shader: &'static [u32],
     pub vertex_shader_name: &'static str,
     pub fragment_shader: &'static [u32],
@@ -152,6 +169,9 @@ static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescri
 static GLTF_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,
     blended: false,
+    depth_test: true,
+    depth_write: true,
+    subpass: 0,
     vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
     vertex_shader_name: "shaders/textured.vert",
     fragment_shader: shaders::include_spirv!("shaders/textured.frag"),
@@ -217,7 +237,7 @@ static GLTF_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
                 descriptor_type: vk::DescriptorType::SAMPLER,
                 descriptor_count: 1,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+                binding_flags: vk::DescriptorBindingFlags::empty(),
             },
             DescriptorSetLayoutParams {
                 binding: 1,
@@ -267,14 +287,33 @@ static GLTF_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
 
 static GLTF_CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: true,
-    blended: false,
     ..GLTF_OPAQUE_PARAMETERS
 };
 
 static GLTF_BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
-    alpha_to_coverage: false,
     blended: true,
     ..GLTF_OPAQUE_PARAMETERS
+};
+
+static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
+    alpha_to_coverage: false,
+    blended: false,
+    depth_test: false,
+    depth_write: false,
+    subpass: 1,
+    vertex_shader: shaders::include_spirv!("shaders/fullscreen.vert"),
+    vertex_shader_name: "shaders/fullscreen.vert",
+    fragment_shader: shaders::include_spirv!("shaders/render_res_pp.frag"),
+    fragment_shader_name: "shaders/render_res_pp.frag",
+    bindings: &[],
+    attributes: &[],
+    descriptor_sets: &[&[DescriptorSetLayoutParams {
+        binding: 0,
+        descriptor_type: vk::DescriptorType::INPUT_ATTACHMENT,
+        descriptor_count: 1,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::empty(),
+    }]],
 };
 
 pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = PipelineMap {
@@ -282,5 +321,6 @@ pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = Pipelin
         MaybeUninit::new(GLTF_OPAQUE_PARAMETERS),
         MaybeUninit::new(GLTF_CLIPPED_PARAMETERS),
         MaybeUninit::new(GLTF_BLENDED_PARAMETERS),
+        MaybeUninit::new(RENDER_RESOLUTION_POST_PROCESS),
     ],
 };

@@ -2,7 +2,9 @@ use crate::image_loading::PbrDefaults;
 use crate::pipeline_parameters::{
     DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS,
 };
-use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
+use crate::vulkan_raii::{
+    Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, Framebuffer, ImageView, PipelineLayout, Sampler,
+};
 use crate::{debug_utils, FrameIndex};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
@@ -337,8 +339,9 @@ impl Descriptors {
         })
     }
 
-    pub(crate) fn write_descriptors(&mut self, frame_index: FrameIndex, global_transforms_buffer: &Buffer) {
+    pub(crate) fn write_descriptors(&mut self, frame_index: FrameIndex, global_transforms_buffer: &Buffer, framebuffer: &Framebuffer) {
         profiling::scope!("updating descriptors");
+
         let mut materials_needing_update = Vec::new();
         for (pipeline, material_slots) in self.material_slots_per_pipeline.iter_with_pipeline() {
             for (i, material_slot) in material_slots.iter().enumerate() {
@@ -352,6 +355,16 @@ impl Descriptors {
         }
 
         let mut pending_writes = Vec::with_capacity(materials_needing_update.len() * 6 + 1);
+
+        // TODO: Write hdr image view as an image descriptor (with a null sampler)
+        let framebuffer_hdr_view = [framebuffer.attachments[0].inner];
+        self.set_uniform_images(
+            frame_index,
+            PipelineIndex::RenderResolutionPostProcess,
+            &mut pending_writes,
+            (0, 0, 0),
+            &framebuffer_hdr_view,
+        );
 
         let shared_pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
         let global_transforms_buffer = (global_transforms_buffer.inner, 0, vk::WHOLE_SIZE);

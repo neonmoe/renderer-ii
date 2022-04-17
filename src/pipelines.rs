@@ -1,4 +1,5 @@
 use crate::debug_utils;
+use crate::physical_device::HDR_COLOR_ATTACHMENT_FORMAT;
 use crate::pipeline_parameters::{PipelineMap, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout, RenderPass};
 use crate::{Descriptors, PhysicalDevice};
@@ -6,9 +7,16 @@ use ash::vk;
 use std::rc::Rc;
 
 pub(crate) enum AttachmentLayout {
-    /// Attachments: present color, depth
+    /// Attachments:
+    /// - hdr color,
+    /// - depth,
+    /// - tonemapped color (presented),
     SingleSampled,
-    /// Attachments: present color (resolved), depth (multisampled), color (multisampled)
+    /// Attachments:
+    /// - hdr color (multisampled),
+    /// - depth (multisampled),
+    /// - tonemapped color (multisampled, resolve source),
+    /// - present color (resolved, presented),
     MultiSampled,
 }
 
@@ -86,6 +94,20 @@ fn create_render_pass(
     depth_format: vk::Format,
     attachment_sample_count: vk::SampleCountFlags,
 ) -> Result<(vk::RenderPass, AttachmentLayout), PipelineCreationError> {
+    let hdr_attachment = vk::AttachmentDescription::builder()
+        .format(HDR_COLOR_ATTACHMENT_FORMAT)
+        .samples(attachment_sample_count)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    let hdr_pass_color_attachment_references = [vk::AttachmentReference::builder()
+        .attachment(0)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .build()];
+
     let depth_attachment = vk::AttachmentDescription::builder()
         .format(depth_format)
         .samples(attachment_sample_count)
@@ -100,8 +122,22 @@ fn create_render_pass(
         .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
         .build();
 
+    let hdr_subpass = vk::SubpassDescription::builder()
+        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+        .color_attachments(&hdr_pass_color_attachment_references)
+        .depth_stencil_attachment(&depth_attachment_reference);
+
+    let hdr_to_tonemapped_subpass_dependency = vk::SubpassDependency::builder()
+        .src_subpass(0)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+        .dst_subpass(1)
+        .dst_stage_mask(vk::PipelineStageFlags::FRAGMENT_SHADER)
+        .dst_access_mask(vk::AccessFlags::INPUT_ATTACHMENT_READ)
+        .dependency_flags(vk::DependencyFlags::BY_REGION);
+
     if attachment_sample_count == vk::SampleCountFlags::TYPE_1 {
-        let color_attachment = vk::AttachmentDescription::builder()
+        let tonemapped_color_attachment = vk::AttachmentDescription::builder()
             .format(swapchain_format)
             .samples(attachment_sample_count)
             .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -110,23 +146,50 @@ fn create_render_pass(
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-        let color_attachment_references = [vk::AttachmentReference::builder()
-            .attachment(0)
+        let tonemapping_pass_color_attachment_references = [vk::AttachmentReference::builder()
+            .attachment(2)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .build()];
 
-        let subpass = vk::SubpassDescription::builder()
-            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-            .color_attachments(&color_attachment_references)
-            .depth_stencil_attachment(&depth_attachment_reference);
+        let hdr_pass_input_attachment_references = [vk::AttachmentReference::builder()
+            .attachment(0)
+            .layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .build()];
 
-        let attachments = [color_attachment.build(), depth_attachment.build()];
-        let subpasses = [subpass.build()];
-        let render_pass_create_info = vk::RenderPassCreateInfo::builder().attachments(&attachments).subpasses(&subpasses);
+        let tonemapping_subpass = vk::SubpassDescription::builder()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(&tonemapping_pass_color_attachment_references)
+            .input_attachments(&hdr_pass_input_attachment_references);
+
+        let attachments = [
+            hdr_attachment.build(),
+            depth_attachment.build(),
+            tonemapped_color_attachment.build(),
+        ];
+        let subpasses = [hdr_subpass.build(), tonemapping_subpass.build()];
+        let dependencies = [hdr_to_tonemapped_subpass_dependency.build()];
+        let render_pass_create_info = vk::RenderPassCreateInfo::builder()
+            .attachments(&attachments)
+            .subpasses(&subpasses)
+            .dependencies(&dependencies);
         let render_pass =
             unsafe { device.create_render_pass(&render_pass_create_info, None) }.map_err(PipelineCreationError::RenderPass)?;
         Ok((render_pass, AttachmentLayout::SingleSampled))
     } else {
+        let tonemapped_color_attachment = vk::AttachmentDescription::builder()
+            .format(swapchain_format)
+            .samples(attachment_sample_count)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        let tonemapping_pass_color_attachment_references = [vk::AttachmentReference::builder()
+            .attachment(2)
+            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .build()];
+
         let resolve_attachment = vk::AttachmentDescription::builder()
             .format(swapchain_format)
             .samples(vk::SampleCountFlags::TYPE_1)
@@ -137,33 +200,33 @@ fn create_render_pass(
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
         let resolve_attachment_references = [vk::AttachmentReference::builder()
+            .attachment(3)
+            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .build()];
+
+        let hdr_pass_input_attachment_references = [vk::AttachmentReference::builder()
             .attachment(0)
-            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
             .build()];
 
-        let color_attachment = vk::AttachmentDescription::builder()
-            .format(swapchain_format)
-            .samples(attachment_sample_count)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::DONT_CARE)
-            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-        let color_attachment_references = [vk::AttachmentReference::builder()
-            .attachment(2)
-            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .build()];
-
-        let subpass = vk::SubpassDescription::builder()
+        let tonemapping_subpass = vk::SubpassDescription::builder()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-            .color_attachments(&color_attachment_references)
-            .depth_stencil_attachment(&depth_attachment_reference)
-            .resolve_attachments(&resolve_attachment_references);
+            .color_attachments(&tonemapping_pass_color_attachment_references)
+            .resolve_attachments(&resolve_attachment_references)
+            .input_attachments(&hdr_pass_input_attachment_references);
 
-        let attachments = [resolve_attachment.build(), depth_attachment.build(), color_attachment.build()];
-        let subpasses = [subpass.build()];
-        let render_pass_create_info = vk::RenderPassCreateInfo::builder().attachments(&attachments).subpasses(&subpasses);
+        let attachments = [
+            hdr_attachment.build(),
+            depth_attachment.build(),
+            tonemapped_color_attachment.build(),
+            resolve_attachment.build(),
+        ];
+        let subpasses = [hdr_subpass.build(), tonemapping_subpass.build()];
+        let dependencies = [hdr_to_tonemapped_subpass_dependency.build()];
+        let render_pass_create_info = vk::RenderPassCreateInfo::builder()
+            .attachments(&attachments)
+            .subpasses(&subpasses)
+            .dependencies(&dependencies);
         let render_pass =
             unsafe { device.create_render_pass(&render_pass_create_info, None) }.map_err(PipelineCreationError::RenderPass)?;
         Ok((render_pass, AttachmentLayout::MultiSampled))
@@ -264,10 +327,16 @@ fn create_pipelines(
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .line_width(1.0);
 
-    let pipeline_depth_stencil_create_info = vk::PipelineDepthStencilStateCreateInfo::builder()
-        .depth_test_enable(true)
-        .depth_write_enable(true)
-        .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL);
+    let pipeline_depth_stencil_create_infos = PIPELINE_PARAMETERS
+        .iter()
+        .map(|params| {
+            vk::PipelineDepthStencilStateCreateInfo::builder()
+                .depth_test_enable(params.depth_test)
+                .depth_write_enable(params.depth_write)
+                .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL)
+                .build()
+        })
+        .collect::<Vec<vk::PipelineDepthStencilStateCreateInfo>>();
 
     let viewports = [vk::Viewport::builder()
         .width(extent.width as f32)
@@ -279,6 +348,8 @@ fn create_pipelines(
     let viewport_create_info = vk::PipelineViewportStateCreateInfo::builder()
         .viewports(&viewports)
         .scissors(&scissors);
+
+    let subpasses = PIPELINE_PARAMETERS.iter().map(|params| params.subpass).collect::<Vec<_>>();
 
     pipeline_cache = pipeline_cache.or_else(|| {
         // NOTE: Access to the PipelineCache is synchronized because
@@ -302,11 +373,11 @@ fn create_pipelines(
             .viewport_state(&viewport_create_info)
             .rasterization_state(&rasterization_create_info)
             .multisample_state(&multisample_create_infos[i])
-            .depth_stencil_state(&pipeline_depth_stencil_create_info)
+            .depth_stencil_state(&pipeline_depth_stencil_create_infos[i])
             .color_blend_state(&color_blend_create_infos[i])
             .layout(pipeline_layout.inner)
             .render_pass(render_pass)
-            .subpass(0)
+            .subpass(subpasses[i])
             .build();
         pipeline_create_infos.push(pipeline_create_info);
     }
