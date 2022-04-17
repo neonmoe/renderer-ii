@@ -5,6 +5,7 @@ use ash::{Device, Instance};
 #[derive(Debug)]
 pub struct SupportedFeatures {
     sampler_anisotropy: bool,
+    sample_rate_shading: bool,
     texture_array_dynamic_indexing: bool,
     partially_bound_descriptors: bool,
     extended_dynamic_state: bool,
@@ -19,6 +20,7 @@ pub fn create_device_with_feature_requirements(
     // Note: requested features should match what is checked in has_required_features
     let features = vk::PhysicalDeviceFeatures::builder()
         .sampler_anisotropy(true)
+        .sample_rate_shading(true)
         .shader_sampled_image_array_dynamic_indexing(true);
     let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::builder().descriptor_binding_partially_bound(true);
     let mut extended_dynamic_state_features = vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT::builder().extended_dynamic_state(true);
@@ -49,12 +51,14 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
     // Note: requirements should match what is requested in create_device_with_feature_requirements
     let features = SupportedFeatures {
         sampler_anisotropy: features.features.sampler_anisotropy == vk::TRUE,
+        sample_rate_shading: features.features.sample_rate_shading == vk::TRUE,
         texture_array_dynamic_indexing: features.features.shader_sampled_image_array_dynamic_indexing == vk::TRUE,
         partially_bound_descriptors: descriptor_indexing_features.descriptor_binding_partially_bound == vk::TRUE,
         extended_dynamic_state: extended_dynamic_state_features.extended_dynamic_state == vk::TRUE,
         pipeline_creation_cache_control: pipeline_creation_cache_control_features.pipeline_creation_cache_control == vk::TRUE,
     };
     if features.sampler_anisotropy
+        && features.sample_rate_shading
         && features.texture_array_dynamic_indexing
         && features.partially_bound_descriptors
         && features.extended_dynamic_state

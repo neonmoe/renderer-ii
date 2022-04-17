@@ -356,7 +356,7 @@ impl Descriptors {
 
         let mut pending_writes = Vec::with_capacity(materials_needing_update.len() * 6 + 1);
 
-        // TODO: Write hdr image view as an image descriptor (with a null sampler)
+        // 0 is the index of the HDR attachment.
         let framebuffer_hdr_view = [framebuffer.attachments[0].inner];
         self.set_uniform_images(
             frame_index,

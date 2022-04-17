@@ -282,6 +282,8 @@ fn create_pipelines(
             vk::PipelineMultisampleStateCreateInfo::builder()
                 .rasterization_samples(attachment_sample_count)
                 .alpha_to_coverage_enable(params.alpha_to_coverage)
+                .sample_shading_enable(params.sample_shading)
+                .min_sample_shading(params.min_sample_shading_factor)
                 .build()
         })
         .collect::<Vec<vk::PipelineMultisampleStateCreateInfo>>();
