@@ -10,6 +10,9 @@ use ash::vk;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+// TODO: I don't think Device needs to be wrapped in an Rc.
+// It's the resources that need to be synchronized, the device is just a way to call Vulkan stuff. Maybe.
+// I'd imagine that's why ash::Device is Clone.
 pub struct Device {
     pub inner: ash::Device,
     pub graphics_queue: vk::Queue,
@@ -169,9 +172,7 @@ pub struct Framebuffer {
     pub inner: vk::Framebuffer,
     pub device: Rc<Device>,
     pub render_pass: Rc<RenderPass>,
-    // NOTE: Not an Rc because every attachment image view probably
-    // maps to just one framebuffer.
-    pub attachments: Vec<ImageView>,
+    pub attachments: Vec<Rc<ImageView>>,
 }
 trivial_drop_impl!(Framebuffer, destroy_framebuffer);
 

@@ -109,7 +109,7 @@ fn fallible_main() -> anyhow::Result<()> {
         format_args!("sandbox assets (textures)"),
     )?;
     let pbr_defaults = neonvk::PbrDefaults::new(&device, &mut uploader, &mut assets_textures_arena)?;
-    let mut descriptors = neonvk::Descriptors::new(&device, physical_device.properties, pbr_defaults, 1)?;
+    let mut descriptors = neonvk::Descriptors::new(&device, physical_device.properties, pbr_defaults)?;
 
     let sponza_model;
     {
@@ -149,10 +149,8 @@ fn fallible_main() -> anyhow::Result<()> {
         &swapchain_settings,
     )?;
     let mut pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, msaa_samples, None)?;
-    let mut swapchain_frames = swapchain.frame_count();
     let mut framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
-    let mut renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain_frames)?;
-    descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain_frames)?;
+    let mut renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device)?;
 
     let mut frame_processing_durations = Vec::with_capacity(10_000);
 
@@ -225,11 +223,6 @@ fn fallible_main() -> anyhow::Result<()> {
                     Some(pipelines),
                 )?;
                 framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
-                if swapchain.frame_count() != swapchain_frames {
-                    renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device, swapchain.frame_count())?;
-                    descriptors = neonvk::Descriptors::from_existing(descriptors, swapchain.frame_count())?;
-                    swapchain_frames = swapchain.frame_count();
-                }
                 resize_timestamp = None;
             }
         }
@@ -248,7 +241,7 @@ fn fallible_main() -> anyhow::Result<()> {
             renderer.wait_frame(&swapchain)?
         };
         let render_start_time = Instant::now();
-        match renderer.render_frame(frame_index, &mut descriptors, &pipelines, &framebuffers, &scene, debug_value) {
+        match renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &scene, debug_value) {
             Ok(_) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
         }

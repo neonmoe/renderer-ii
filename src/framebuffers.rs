@@ -37,7 +37,6 @@ impl Framebuffers {
         profiling::scope!("framebuffers creation");
 
         let swapchain_format = physical_device.swapchain_format;
-        let frame_count = swapchain.frame_count();
         let vk::Extent2D { width, height } = swapchain.extent;
 
         let create_image_info = |format: vk::Format, usage: vk::ImageUsageFlags| {
@@ -53,33 +52,25 @@ impl Framebuffers {
                 .build()
         };
 
-        let hdr_image_infos = (0..frame_count)
-            .map(|_| {
-                create_image_info(
-                    HDR_COLOR_ATTACHMENT_FORMAT,
-                    vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::INPUT_ATTACHMENT,
-                )
-            })
-            .collect::<Vec<_>>();
-        let depth_image_infos = (0..frame_count)
-            .map(|_| create_image_info(physical_device.depth_format, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT))
-            .collect::<Vec<_>>();
-        let resolve_src_image_infos = match pipelines.render_pass_layout {
-            AttachmentLayout::SingleSampled => vec![],
-            AttachmentLayout::MultiSampled => (0..frame_count)
-                .map(|_| create_image_info(swapchain_format, vk::ImageUsageFlags::COLOR_ATTACHMENT))
-                .collect::<Vec<_>>(),
+        let hdr_image_info = create_image_info(
+            HDR_COLOR_ATTACHMENT_FORMAT,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::INPUT_ATTACHMENT,
+        );
+        let depth_image_info = create_image_info(physical_device.depth_format, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT);
+        let resolve_src_image_info = match pipelines.render_pass_layout {
+            AttachmentLayout::SingleSampled => None,
+            AttachmentLayout::MultiSampled => Some(create_image_info(swapchain_format, vk::ImageUsageFlags::COLOR_ATTACHMENT)),
         };
 
         let mut framebuffer_size = 0;
         {
             profiling::scope!("framebuffer memory requirements querying");
-            for framebuffer_image_info in hdr_image_infos
-                .iter()
-                .chain(depth_image_infos.iter())
-                .chain(resolve_src_image_infos.iter())
-            {
-                let image = unsafe { device.create_image(framebuffer_image_info, None) }.map_err(FramebufferCreationError::QueryImage)?;
+            let mut image_infos = vec![hdr_image_info, depth_image_info];
+            if let Some(resolve_src_image_info) = resolve_src_image_info {
+                image_infos.push(resolve_src_image_info);
+            }
+            for framebuffer_image_info in image_infos {
+                let image = unsafe { device.create_image(&framebuffer_image_info, None) }.map_err(FramebufferCreationError::QueryImage)?;
                 debug_utils::name_vulkan_object(device, image, format_args!("memory requirement querying temp img"));
                 let reqs = unsafe { device.get_image_memory_requirements(image) };
                 let size_mod = framebuffer_size % reqs.alignment;
@@ -98,139 +89,121 @@ impl Framebuffers {
             framebuffer_size,
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            format_args!("framebuffer arena ({width}x{height}, {swapchain_format:?}, {frame_count} frames)"),
+            format_args!("framebuffer arena ({width}x{height}, {swapchain_format:?})"),
         )
         .map_err(FramebufferCreationError::Arena)?;
 
-        let create_image_view = |aspect_mask: vk::ImageAspectFlags, format: vk::Format| {
-            move |image: Rc<AnyImage>| -> Result<ImageView, FramebufferCreationError> {
-                let subresource_range = vk::ImageSubresourceRange {
-                    aspect_mask,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                };
-                let image_view_create_info = vk::ImageViewCreateInfo {
-                    image: image.inner(),
-                    view_type: vk::ImageViewType::TYPE_2D,
-                    format,
-                    subresource_range,
-                    ..Default::default()
-                };
-                let image_view =
-                    unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(FramebufferCreationError::ImageView)?;
-                Ok(ImageView {
-                    inner: image_view,
-                    device: device.clone(),
-                    image,
-                })
-            }
+        let create_image_view = |image: Rc<AnyImage>,
+                                 aspect_mask: vk::ImageAspectFlags,
+                                 format: vk::Format|
+         -> Result<Rc<ImageView>, FramebufferCreationError> {
+            let subresource_range = vk::ImageSubresourceRange {
+                aspect_mask,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            };
+            let image_view_create_info = vk::ImageViewCreateInfo {
+                image: image.inner(),
+                view_type: vk::ImageViewType::TYPE_2D,
+                format,
+                subresource_range,
+                ..Default::default()
+            };
+            let image_view =
+                unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(FramebufferCreationError::ImageView)?;
+            Ok(Rc::new(ImageView {
+                inner: image_view,
+                device: device.clone(),
+                image,
+            }))
         };
 
         let swapchain_image_views = swapchain
             .images
             .iter()
-            .cloned()
-            .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain_format))
+            .map(|image| create_image_view(image.clone(), vk::ImageAspectFlags::COLOR, swapchain_format))
             .collect::<Result<Vec<_>, _>>()?;
-
-        let hdr_images = hdr_image_infos
-            .into_iter()
-            .map(|create_info| {
-                framebuffer_arena
-                    .create_image(create_info, format_args!(""))
-                    .map_err(FramebufferCreationError::Image)
-            })
-            .collect::<Result<Vec<_>, FramebufferCreationError>>()?;
-        let hdr_image_views = hdr_images
-            .into_iter()
-            .map(|image| Rc::new(AnyImage::from(image)))
-            .map(create_image_view(vk::ImageAspectFlags::COLOR, HDR_COLOR_ATTACHMENT_FORMAT))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let depth_images = depth_image_infos
-            .into_iter()
-            .map(|create_info| {
-                framebuffer_arena
-                    .create_image(create_info, format_args!(""))
-                    .map_err(FramebufferCreationError::Image)
-            })
-            .collect::<Result<Vec<_>, FramebufferCreationError>>()?;
-        let depth_image_views = depth_images
-            .into_iter()
-            .map(|image| Rc::new(AnyImage::from(image)))
-            .map(create_image_view(vk::ImageAspectFlags::DEPTH, physical_device.depth_format))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let resolve_src_images = resolve_src_image_infos
-            .into_iter()
-            .map(|create_info| {
-                framebuffer_arena
-                    .create_image(create_info, format_args!(""))
-                    .map_err(FramebufferCreationError::Image)
-            })
-            .collect::<Result<Vec<_>, FramebufferCreationError>>()?;
-        let resolve_src_image_views = resolve_src_images
-            .into_iter()
-            .map(|image| Rc::new(AnyImage::from(image)))
-            .map(create_image_view(vk::ImageAspectFlags::COLOR, swapchain_format))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        for i in 0..frame_count as usize {
-            let sc = &swapchain_image_views[i];
-            let hdr = &hdr_image_views[i];
-            let depth = &depth_image_views[i];
+        for (i, sc) in swapchain_image_views.iter().enumerate() {
+            let frame_count = swapchain_image_views.len();
             let nth = i + 1;
             debug_utils::name_vulkan_object(device, sc.inner, format_args!("swapchain (frame {nth}/{frame_count})"));
             debug_utils::name_vulkan_object(device, sc.image.inner(), format_args!("swapchain (frame {nth}/{frame_count})"));
-            debug_utils::name_vulkan_object(device, hdr.inner, format_args!("hdr fb (frame {nth}/{frame_count})"));
-            debug_utils::name_vulkan_object(device, hdr.image.inner(), format_args!("hdr fb (frame {nth}/{frame_count})"));
-            debug_utils::name_vulkan_object(device, depth.inner, format_args!("depth fb (frame {nth}/{frame_count})"));
-            debug_utils::name_vulkan_object(device, depth.image.inner(), format_args!("depth fb (frame {nth}/{frame_count})"));
-            if let AttachmentLayout::MultiSampled = pipelines.render_pass_layout {
-                let tm = &resolve_src_image_views[i];
-                debug_utils::name_vulkan_object(device, tm.inner, format_args!("tonemapped fb (frame {nth}/{frame_count})"));
-                debug_utils::name_vulkan_object(device, tm.image.inner(), format_args!("tonemapped fb (frame {nth}/{frame_count})"));
-            }
         }
 
-        let mut hdr_image_views = hdr_image_views.into_iter();
-        let mut depth_image_views = depth_image_views.into_iter();
-        let mut resolve_src_image_views = resolve_src_image_views.into_iter();
-        let mut swapchain_image_views = swapchain_image_views.into_iter();
-        let mut framebuffers = Vec::with_capacity(frame_count as usize);
-        for i in 0..frame_count as usize {
-            profiling::scope!("one frame's framebuffer creation");
-            let attachments = match pipelines.render_pass_layout {
-                AttachmentLayout::SingleSampled => vec![
-                    hdr_image_views.next().unwrap(),
-                    depth_image_views.next().unwrap(),
-                    swapchain_image_views.next().unwrap(),
-                ],
-                AttachmentLayout::MultiSampled => vec![
-                    hdr_image_views.next().unwrap(),
-                    depth_image_views.next().unwrap(),
-                    resolve_src_image_views.next().unwrap(),
-                    swapchain_image_views.next().unwrap(),
-                ],
-            };
-            let raw_attachments = attachments.iter().map(|image_view| image_view.inner).collect::<Vec<_>>();
-            let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
-                .render_pass(pipelines.render_pass.inner)
-                .attachments(&raw_attachments)
-                .width(width)
-                .height(height)
-                .layers(1);
-            let framebuffer =
-                unsafe { device.create_framebuffer(&framebuffer_create_info, None) }.map_err(FramebufferCreationError::ObjectCreation)?;
-            debug_utils::name_vulkan_object(device, framebuffer, format_args!("main fb {}/{frame_count}", i + 1));
-            framebuffers.push(Framebuffer {
-                inner: framebuffer,
-                device: device.clone(),
-                render_pass: pipelines.render_pass.clone(),
-                attachments,
-            });
+        let hdr_image = framebuffer_arena
+            .create_image(hdr_image_info, format_args!(""))
+            .map_err(FramebufferCreationError::Image)?;
+        let hdr_image_view = create_image_view(
+            Rc::new(AnyImage::from(hdr_image)),
+            vk::ImageAspectFlags::COLOR,
+            HDR_COLOR_ATTACHMENT_FORMAT,
+        )?;
+        debug_utils::name_vulkan_object(device, hdr_image_view.inner, format_args!("hdr fb"));
+        debug_utils::name_vulkan_object(device, hdr_image_view.image.inner(), format_args!("hdr fb"));
+
+        let depth_image = framebuffer_arena
+            .create_image(depth_image_info, format_args!(""))
+            .map_err(FramebufferCreationError::Image)?;
+        let depth_image_view = create_image_view(
+            Rc::new(AnyImage::from(depth_image)),
+            vk::ImageAspectFlags::DEPTH,
+            physical_device.depth_format,
+        )?;
+        debug_utils::name_vulkan_object(device, depth_image_view.inner, format_args!("depth fb"));
+        debug_utils::name_vulkan_object(device, depth_image_view.image.inner(), format_args!("depth fb"));
+
+        let resolve_src_image_view = if let Some(create_info) = resolve_src_image_info {
+            let image = framebuffer_arena
+                .create_image(create_info, format_args!(""))
+                .map_err(FramebufferCreationError::Image)?;
+            let image_view = create_image_view(Rc::new(AnyImage::from(image)), vk::ImageAspectFlags::COLOR, swapchain_format)?;
+            Some(image_view)
+        } else {
+            None
+        };
+        if let Some(image_view) = &resolve_src_image_view {
+            debug_utils::name_vulkan_object(device, image_view.inner, format_args!("tonemapped fb"));
+            debug_utils::name_vulkan_object(device, image_view.image.inner(), format_args!("tonemapped fb"));
+        }
+
+        let framebuffers = swapchain_image_views
+            .into_iter()
+            .map(|swapchain_image_view| {
+                profiling::scope!("one frame's framebuffer creation");
+                let attachments = if let Some(resolve_src_image_view) = &resolve_src_image_view {
+                    vec![
+                        hdr_image_view.clone(),
+                        depth_image_view.clone(),
+                        resolve_src_image_view.clone(),
+                        swapchain_image_view,
+                    ]
+                } else {
+                    vec![hdr_image_view.clone(), depth_image_view.clone(), swapchain_image_view]
+                };
+                let raw_attachments = attachments.iter().map(|image_view| image_view.inner).collect::<Vec<_>>();
+                let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
+                    .render_pass(pipelines.render_pass.inner)
+                    .attachments(&raw_attachments)
+                    .width(width)
+                    .height(height)
+                    .layers(1);
+                let framebuffer = unsafe { device.create_framebuffer(&framebuffer_create_info, None) }
+                    .map_err(FramebufferCreationError::ObjectCreation)?;
+                Ok(Framebuffer {
+                    inner: framebuffer,
+                    device: device.clone(),
+                    render_pass: pipelines.render_pass.clone(),
+                    attachments,
+                })
+            })
+            .collect::<Result<Vec<Framebuffer>, FramebufferCreationError>>()?;
+
+        for (i, framebuffer) in framebuffers.iter().enumerate() {
+            let frame_count = framebuffers.len();
+            let nth = i + 1;
+            debug_utils::name_vulkan_object(device, framebuffer.inner, format_args!("main fb {nth}/{frame_count}"));
         }
 
         Ok(Framebuffers {

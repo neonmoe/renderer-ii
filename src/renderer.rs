@@ -48,7 +48,6 @@ pub enum RendererError {
 }
 
 /// Get from [Gpu::wait_frame].
-#[derive(Clone, Copy)]
 pub struct FrameIndex {
     index: usize,
 }
@@ -57,86 +56,66 @@ impl FrameIndex {
     fn new(index: usize) -> FrameIndex {
         FrameIndex { index }
     }
-
-    /// The index of the swapchain image we're rendering to this
-    /// frame. Can be used to index into frame-specific buffers that
-    /// need to make sure they don't overwrite stuff still in use by
-    /// previous frames.
-    pub fn index(&self) -> usize {
-        self.index
-    }
 }
-
-type PerFrame<T> = Vec<T>;
 
 pub struct Renderer {
     device: Rc<Device>,
     frame_start_fence: Fence,
-    ready_for_present: PerFrame<Semaphore>,
-    frame_end_fence: PerFrame<Fence>,
-    temp_arena: PerFrame<VulkanArena<ForBuffers>>,
-    command_pool: PerFrame<Rc<CommandPool>>,
-    command_buffers_in_use: PerFrame<Vec<CommandBuffer>>,
-    command_buffers_unused: PerFrame<Vec<CommandBuffer>>,
+    ready_for_present: Semaphore,
+    frame_end_fence: Fence,
+    temp_arena: VulkanArena<ForBuffers>,
+    command_pool: Rc<CommandPool>,
+    command_buffers_in_use: Vec<CommandBuffer>,
+    command_buffers_unused: Vec<CommandBuffer>,
 }
 
 impl Renderer {
-    pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice, frames: u32) -> Result<Renderer, RendererError> {
+    pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice) -> Result<Renderer, RendererError> {
         profiling::scope!("renderer creation (per-frame-stuff)");
 
-        let ready_for_present = (1..frames + 1)
-            .map(|nth| {
-                let semaphore = unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
-                    .map_err(RendererError::PresentReadySemaphoreCreation)?;
-                debug_utils::name_vulkan_object(device, semaphore, format_args!("render finish semaphore ({nth}/{frames})"));
-                Ok(Semaphore {
-                    inner: semaphore,
-                    device: device.clone(),
-                })
-            })
-            .collect::<Result<Vec<_>, RendererError>>()?;
+        let ready_for_present = {
+            let semaphore = unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
+                .map_err(RendererError::PresentReadySemaphoreCreation)?;
+            debug_utils::name_vulkan_object(device, semaphore, format_args!("render finish semaphore"));
+            Semaphore {
+                inner: semaphore,
+                device: device.clone(),
+            }
+        };
 
-        let frame_end_fence = (1..frames + 1)
-            .map(|nth| {
-                let fence_create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-                let fence = unsafe { device.create_fence(&fence_create_info, None) }.map_err(RendererError::FrameEndFenceCreation)?;
-                debug_utils::name_vulkan_object(device, fence, format_args!("frame end fence ({nth}/{frames})"));
-                Ok(Fence {
-                    inner: fence,
-                    device: device.clone(),
-                })
-            })
-            .collect::<Result<Vec<_>, RendererError>>()?;
+        let frame_end_fence = {
+            let fence_create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+            let fence = unsafe { device.create_fence(&fence_create_info, None) }.map_err(RendererError::FrameEndFenceCreation)?;
+            debug_utils::name_vulkan_object(device, fence, format_args!("frame end fence"));
+            Fence {
+                inner: fence,
+                device: device.clone(),
+            }
+        };
 
-        let command_pool = (1..frames + 1)
-            .map(|nth| {
-                let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-                    .queue_family_index(physical_device.graphics_queue_family.index)
-                    .flags(vk::CommandPoolCreateFlags::TRANSIENT);
-                let command_pool =
-                    unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(RendererError::CommandPoolCreation)?;
-                debug_utils::name_vulkan_object(device, command_pool, format_args!("rendering cmds per frame ({nth}/{frames})"));
-                Ok(Rc::new(CommandPool {
-                    inner: command_pool,
-                    device: device.clone(),
-                }))
+        let command_pool = {
+            let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+                .queue_family_index(physical_device.graphics_queue_family.index)
+                .flags(vk::CommandPoolCreateFlags::TRANSIENT);
+            let command_pool =
+                unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(RendererError::CommandPoolCreation)?;
+            debug_utils::name_vulkan_object(device, command_pool, format_args!("rendering cmds"));
+            Rc::new(CommandPool {
+                inner: command_pool,
+                device: device.clone(),
             })
-            .collect::<Result<Vec<_>, RendererError>>()?;
+        };
 
-        let temp_arena = (1..frames + 1)
-            .map(|nth| {
-                VulkanArena::new(
-                    instance,
-                    device,
-                    physical_device,
-                    10_000_000,
-                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-                    format_args!("frame local arena ({nth}/{frames})"),
-                )
-                .map_err(RendererError::FrameLocalArenaCreation)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let temp_arena = VulkanArena::new(
+            instance,
+            device,
+            physical_device,
+            10_000_000,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            format_args!("frame local arena"),
+        )
+        .map_err(RendererError::FrameLocalArenaCreation)?;
 
         let frame_start_fence = unsafe {
             device
@@ -156,8 +135,8 @@ impl Renderer {
             frame_end_fence,
             temp_arena,
             command_pool,
-            command_buffers_in_use: (0..frames).map(|_| Vec::new()).collect::<Vec<Vec<_>>>(),
-            command_buffers_unused: (0..frames).map(|_| Vec::new()).collect::<Vec<Vec<_>>>(),
+            command_buffers_in_use: Vec::new(),
+            command_buffers_unused: Vec::new(),
         })
     }
 
@@ -175,10 +154,8 @@ impl Renderer {
                 .acquire_next_image(swapchain.inner(), u64::MAX, vk::Semaphore::null(), fence)
                 .map_err(RendererError::AcquireImage)
         }?;
-        let frame_index = FrameIndex::new(image_index as usize);
-        let fi = frame_index.index;
 
-        let fences = [self.frame_start_fence.inner, self.frame_end_fence[fi].inner];
+        let fences = [self.frame_start_fence.inner, self.frame_end_fence.inner];
         unsafe {
             profiling::scope!("wait for the image");
             self.device
@@ -186,22 +163,21 @@ impl Renderer {
                 .map_err(RendererError::FrameEndFenceWait)?;
             self.device.reset_fences(&fences).map_err(RendererError::FrameEndFenceWait)?;
         }
-        self.temp_arena[fi].reset().map_err(RendererError::FrameLocalArenaReset)?;
+        self.temp_arena.reset().map_err(RendererError::FrameLocalArenaReset)?;
 
-        Ok(frame_index)
+        Ok(FrameIndex::new(image_index as usize))
     }
 
     #[profiling::function]
     pub fn render_frame(
         &mut self,
-        frame_index: FrameIndex,
+        frame_index: &FrameIndex,
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
         framebuffers: &Framebuffers,
         scene: &Scene,
         debug_value: u32,
     ) -> Result<(), RendererError> {
-        let fi = frame_index.index;
         let vk::Extent2D { width, height } = framebuffers.extent;
 
         let global_transforms = &[scene.camera.create_global_transforms(width as f32, height as f32)];
@@ -210,7 +186,8 @@ impl Renderer {
             .size(global_transforms.len() as u64)
             .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let global_transforms_buffer = self.temp_arena[fi]
+        let global_transforms_buffer = self
+            .temp_arena
             .create_buffer(
                 *buffer_create_info,
                 global_transforms,
@@ -218,12 +195,12 @@ impl Renderer {
                 format_args!("uniform (view+proj matrices)"),
             )
             .map_err(RendererError::CameraTransformUniformCreation)?;
-        descriptors.write_descriptors(frame_index, &global_transforms_buffer, &framebuffers.inner[fi]);
-        self.temp_arena[fi].add_buffer(global_transforms_buffer);
+        descriptors.write_descriptors(&global_transforms_buffer, &framebuffers.inner[frame_index.index]);
+        self.temp_arena.add_buffer(global_transforms_buffer);
 
         let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, framebuffers, scene, debug_value)?;
 
-        let signal_semaphores = [self.ready_for_present[fi].inner];
+        let signal_semaphores = [self.ready_for_present.inner];
         let command_buffers = [command_buffer];
         let submit_infos = [vk::SubmitInfo::builder()
             .signal_semaphores(&signal_semaphores)
@@ -232,15 +209,14 @@ impl Renderer {
         unsafe {
             profiling::scope!("queue render");
             self.device
-                .queue_submit(self.device.graphics_queue, &submit_infos, self.frame_end_fence[fi].inner)
+                .queue_submit(self.device.graphics_queue, &submit_infos, self.frame_end_fence.inner)
                 .map_err(RendererError::RenderQueueSubmit)
         }
     }
 
     #[profiling::function]
     pub fn present_frame(&mut self, frame_index: FrameIndex, swapchain: &Swapchain) -> Result<(), RendererError> {
-        let fi = frame_index.index;
-        let wait_semaphores = [self.ready_for_present[fi].inner];
+        let wait_semaphores = [self.ready_for_present.inner];
         let swapchains = [swapchain.inner()];
         let image_indices = [frame_index.index as u32];
         let present_info = vk::PresentInfoKHR::builder()
@@ -262,30 +238,25 @@ impl Renderer {
     #[profiling::function]
     fn record_command_buffer(
         &mut self,
-        frame_index: FrameIndex,
+        frame_index: &FrameIndex,
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
         framebuffers: &Framebuffers,
         scene: &Scene,
         debug_value: u32,
     ) -> Result<vk::CommandBuffer, RendererError> {
-        let fi = frame_index.index;
-        let temp_arena = &mut self.temp_arena[fi];
         let framebuffer = &framebuffers.inner[frame_index.index];
 
-        let command_pool_rc = &self.command_pool[fi];
-        let command_pool = command_pool_rc.inner;
+        let command_pool = self.command_pool.inner;
         unsafe {
             profiling::scope!("reset command pool");
             self.device
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .map_err(RendererError::CommandPoolReset)
         }?;
-        let unused_cbs = &mut self.command_buffers_unused[fi];
-        let in_use_cbs = &mut self.command_buffers_in_use[fi];
-        unused_cbs.append(in_use_cbs);
+        self.command_buffers_unused.append(&mut self.command_buffers_in_use);
 
-        let command_buffer = if let Some(command_buffer) = unused_cbs.pop() {
+        let command_buffer = if let Some(command_buffer) = self.command_buffers_unused.pop() {
             debug_utils::name_vulkan_object(&self.device, command_buffer.inner, format_args!("frame rendering cmds"));
             command_buffer
         } else {
@@ -303,13 +274,13 @@ impl Renderer {
                 CommandBuffer {
                     inner: command_buffers[0],
                     device: self.device.clone(),
-                    command_pool: command_pool_rc.clone(),
+                    command_pool: self.command_pool.clone(),
                 }
             }
         };
         let command_buffer = {
             let inner = command_buffer.inner;
-            in_use_cbs.push(command_buffer);
+            self.command_buffers_in_use.push(command_buffer);
             inner
         };
 
@@ -339,7 +310,7 @@ impl Renderer {
         // Bind the shared descriptor set
         {
             let pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
-            let shared_descriptor_set = descriptors.descriptor_sets(frame_index, pipeline)[0];
+            let shared_descriptor_set = descriptors.descriptor_sets(pipeline)[0];
             unsafe {
                 profiling::scope!("bind shared descriptor set");
                 self.device.cmd_bind_descriptor_sets(
@@ -369,7 +340,7 @@ impl Renderer {
             };
             let bind_point = vk::PipelineBindPoint::GRAPHICS;
             let layout = descriptors.pipeline_layouts.get(pl_index).inner;
-            let descriptor_sets = descriptors.descriptor_sets(frame_index, pl_index);
+            let descriptor_sets = descriptors.descriptor_sets(pl_index);
             if descriptor_sets.len() > 1 {
                 unsafe {
                     self.device
@@ -386,7 +357,7 @@ impl Renderer {
                         .size(buffer_size)
                         .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                    temp_arena
+                    self.temp_arena
                         .create_buffer(
                             *buffer_create_info,
                             bytemuck::cast_slice(transforms),
@@ -426,7 +397,7 @@ impl Renderer {
                         .cmd_draw_indexed(command_buffer, mesh.index_count, transforms.len() as u32, 0, 0, 0);
                 }
 
-                temp_arena.add_buffer(transform_buffer);
+                self.temp_arena.add_buffer(transform_buffer);
             }
         }
 
@@ -444,7 +415,7 @@ impl Renderer {
                     .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines.get(pl_index).inner)
             };
             let layout = descriptors.pipeline_layouts.get(pl_index).inner;
-            let descriptor_sets = descriptors.descriptor_sets(frame_index, pl_index);
+            let descriptor_sets = descriptors.descriptor_sets(pl_index);
             unsafe {
                 self.device
                     .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 0, descriptor_sets, &[])

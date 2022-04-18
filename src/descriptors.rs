@@ -1,3 +1,4 @@
+use crate::debug_utils;
 use crate::image_loading::PbrDefaults;
 use crate::pipeline_parameters::{
     DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS,
@@ -5,7 +6,6 @@ use crate::pipeline_parameters::{
 use crate::vulkan_raii::{
     Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, Framebuffer, ImageView, PipelineLayout, Sampler,
 };
-use crate::{debug_utils, FrameIndex};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use glam::Vec4;
@@ -93,9 +93,7 @@ impl Material {
                 array_index: i as u32,
                 data,
             });
-            for status in &mut descriptors.material_status_per_pipeline.get_mut(pipeline)[i] {
-                *status = false;
-            }
+            descriptors.material_updated_per_pipeline.get_mut(pipeline)[i] = false;
             *slot = Some(Rc::downgrade(&material));
             Ok(material)
         } else {
@@ -105,12 +103,6 @@ impl Material {
 }
 
 type MaterialSlot = Option<Weak<Material>>;
-type MaterialSlotArray = Vec<MaterialSlot>;
-
-/// Synchronization status per frame index. True at index i means the uniforms
-/// for the frame index i are up to date.
-type MaterialStatus = Vec<bool>;
-type MaterialStatusArray = Vec<MaterialStatus>;
 
 #[derive(Default)]
 struct PendingWrite {
@@ -120,14 +112,12 @@ struct PendingWrite {
 }
 
 pub struct Descriptors {
-    pub frame_count: u32,
     pub(crate) pipeline_layouts: PipelineMap<PipelineLayout>,
-    descriptor_sets: Vec<PipelineMap<DescriptorSets>>,
+    descriptor_sets: PipelineMap<DescriptorSets>,
     device: Rc<Device>,
-    material_slots_per_pipeline: PipelineMap<MaterialSlotArray>,
-    material_status_per_pipeline: PipelineMap<MaterialStatusArray>,
+    material_slots_per_pipeline: PipelineMap<Vec<MaterialSlot>>,
+    material_updated_per_pipeline: PipelineMap<Vec<bool>>,
     pbr_defaults: PbrDefaults,
-    physical_device_properties: vk::PhysicalDeviceProperties,
 }
 
 impl Descriptors {
@@ -135,52 +125,8 @@ impl Descriptors {
         device: &Rc<Device>,
         physical_device_properties: vk::PhysicalDeviceProperties,
         pbr_defaults: PbrDefaults,
-        frame_count: u32,
     ) -> Result<Descriptors, DescriptorError> {
         profiling::scope!("creating descriptor sets");
-        Descriptors::new_(device, physical_device_properties, pbr_defaults, None, frame_count)
-    }
-
-    pub fn from_existing(old_descriptors: Descriptors, frame_count: u32) -> Result<Descriptors, DescriptorError> {
-        profiling::scope!("recreating descriptor sets");
-        let Descriptors {
-            pipeline_layouts,
-            device,
-            physical_device_properties,
-            pbr_defaults,
-            material_slots_per_pipeline,
-            descriptor_sets,
-            ..
-        } = old_descriptors;
-        drop(descriptor_sets);
-        let mut new_descriptors = Descriptors::new_(
-            &device,
-            physical_device_properties,
-            pbr_defaults,
-            Some(pipeline_layouts),
-            frame_count,
-        )?;
-        for (pipeline, material_slots) in material_slots_per_pipeline.iter_with_pipeline() {
-            for (i, material_slot) in material_slots.iter().enumerate() {
-                if material_slot.is_none() || material_slot.as_ref().unwrap().strong_count() == 0 {
-                    continue;
-                }
-                for status in &mut new_descriptors.material_status_per_pipeline.get_mut(pipeline)[i] {
-                    *status = false;
-                }
-            }
-        }
-        new_descriptors.material_slots_per_pipeline = material_slots_per_pipeline;
-        Ok(new_descriptors)
-    }
-
-    fn new_(
-        device: &Rc<Device>,
-        physical_device_properties: vk::PhysicalDeviceProperties,
-        pbr_defaults: PbrDefaults,
-        pipeline_layouts: Option<PipelineMap<PipelineLayout>>,
-        frame_count: u32,
-    ) -> Result<Descriptors, DescriptorError> {
         let sampler_create_info = vk::SamplerCreateInfo::builder()
             .mag_filter(vk::Filter::LINEAR)
             .min_filter(vk::Filter::LINEAR)
@@ -245,28 +191,26 @@ impl Descriptors {
                 })
             };
 
-        let pipeline_layouts = pipeline_layouts.map(Ok).unwrap_or_else(|| {
-            PipelineMap::new::<DescriptorError, _>(|pipeline| {
-                let PipelineParameters { descriptor_sets, .. } = PIPELINE_PARAMETERS.get(pipeline);
-                let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline, descriptor_sets)?);
-                let push_constant_ranges = [vk::PushConstantRange::builder()
-                    .offset(0)
-                    .size(mem::size_of::<PushConstantStruct>() as u32)
-                    .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                    .build()];
-                let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder()
-                    .set_layouts(&descriptor_set_layouts.inner)
-                    .push_constant_ranges(&push_constant_ranges);
-                let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
-                    .map_err(DescriptorError::PipelineLayoutCreation)?;
-                debug_utils::name_vulkan_object(device, pipeline_layout, format_args!("for pipeline {pipeline:?}"));
-                let pipeline_layout = PipelineLayout {
-                    inner: pipeline_layout,
-                    device: device.clone(),
-                    descriptor_set_layouts: descriptor_set_layouts.clone(),
-                };
-                Ok(pipeline_layout)
-            })
+        let pipeline_layouts = PipelineMap::new::<DescriptorError, _>(|pipeline| {
+            let PipelineParameters { descriptor_sets, .. } = PIPELINE_PARAMETERS.get(pipeline);
+            let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline, descriptor_sets)?);
+            let push_constant_ranges = [vk::PushConstantRange::builder()
+                .offset(0)
+                .size(mem::size_of::<PushConstantStruct>() as u32)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                .build()];
+            let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder()
+                .set_layouts(&descriptor_set_layouts.inner)
+                .push_constant_ranges(&push_constant_ranges);
+            let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
+                .map_err(DescriptorError::PipelineLayoutCreation)?;
+            debug_utils::name_vulkan_object(device, pipeline_layout, format_args!("for pipeline {pipeline:?}"));
+            let pipeline_layout = PipelineLayout {
+                inner: pipeline_layout,
+                device: device.clone(),
+                descriptor_set_layouts: descriptor_set_layouts.clone(),
+            };
+            Ok(pipeline_layout)
         })?;
 
         let pool_sizes = PIPELINE_PARAMETERS
@@ -276,77 +220,65 @@ impl Descriptors {
             .map(|descriptor_layout| {
                 vk::DescriptorPoolSize::builder()
                     .ty(descriptor_layout.descriptor_type)
-                    .descriptor_count(descriptor_layout.descriptor_count * frame_count)
+                    .descriptor_count(descriptor_layout.descriptor_count)
                     .build()
             })
             .collect::<Vec<vk::DescriptorPoolSize>>();
         let descriptor_sets_per_frame = pipeline_layouts.iter().flat_map(|pl| &pl.descriptor_set_layouts.inner).count() as u32;
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
-            .max_sets(frame_count * descriptor_sets_per_frame)
+            .max_sets(descriptor_sets_per_frame)
             .pool_sizes(&pool_sizes);
         let descriptor_pool = unsafe {
             device
                 .create_descriptor_pool(&descriptor_pool_create_info, None)
                 .map_err(DescriptorError::DescriptorPoolCreation)
         }?;
-        debug_utils::name_vulkan_object(device, descriptor_pool, format_args!("main pool ({frame_count} frames)"));
+        debug_utils::name_vulkan_object(device, descriptor_pool, format_args!("the descriptor pool"));
         let descriptor_pool = Rc::new(DescriptorPool {
             inner: descriptor_pool,
             device: device.clone(),
         });
 
-        let descriptor_sets = (1..frame_count + 1)
-            .map(|nth| {
-                profiling::scope!("descriptor set allocation for a frame");
-                let mut descriptor_set_layouts_per_pipeline = pipeline_layouts.iter().map(|pl| &pl.descriptor_set_layouts);
-                let pipeline_map = PipelineMap::new::<DescriptorError, _>(|pl| {
-                    let descriptor_set_layouts = descriptor_set_layouts_per_pipeline.next().unwrap();
-                    let create_info = vk::DescriptorSetAllocateInfo::builder()
-                        .descriptor_pool(descriptor_pool.inner)
-                        .set_layouts(&descriptor_set_layouts.inner);
-                    let descriptor_sets =
-                        unsafe { device.allocate_descriptor_sets(&create_info) }.map_err(DescriptorError::AllocateDescriptorSets)?;
-                    for (i, descriptor_set) in descriptor_sets.iter().enumerate() {
-                        debug_utils::name_vulkan_object(
-                            device,
-                            *descriptor_set,
-                            format_args!("set {i} for pipeline {pl:?} (frame {nth}/{frame_count})"),
-                        );
-                    }
-                    Ok(DescriptorSets {
-                        inner: descriptor_sets,
-                        device: device.clone(),
-                        descriptor_pool: descriptor_pool.clone(),
-                    })
-                })?;
-                Ok(pipeline_map)
+        let mut descriptor_set_layouts_per_pipeline = pipeline_layouts.iter().map(|pl| &pl.descriptor_set_layouts);
+        let descriptor_sets = PipelineMap::new::<DescriptorError, _>(|pl| {
+            let descriptor_set_layouts = descriptor_set_layouts_per_pipeline.next().unwrap();
+            let create_info = vk::DescriptorSetAllocateInfo::builder()
+                .descriptor_pool(descriptor_pool.inner)
+                .set_layouts(&descriptor_set_layouts.inner);
+            let descriptor_sets =
+                unsafe { device.allocate_descriptor_sets(&create_info) }.map_err(DescriptorError::AllocateDescriptorSets)?;
+            for (i, descriptor_set) in descriptor_sets.iter().enumerate() {
+                debug_utils::name_vulkan_object(device, *descriptor_set, format_args!("set {i} for pipeline {pl:?}"));
+            }
+            Ok(DescriptorSets {
+                inner: descriptor_sets,
+                device: device.clone(),
+                descriptor_pool: descriptor_pool.clone(),
             })
-            .collect::<Result<Vec<PipelineMap<DescriptorSets>>, DescriptorError>>()?;
+        })?;
+        drop(descriptor_set_layouts_per_pipeline);
 
         let material_slots_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| Ok(vec![None; MAX_TEXTURE_COUNT as usize]))?;
-        let material_status_per_pipeline =
-            PipelineMap::new::<DescriptorError, _>(|_| Ok(vec![vec![true; frame_count as usize]; MAX_TEXTURE_COUNT as usize]))?;
+        let material_status_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| Ok(vec![true; MAX_TEXTURE_COUNT as usize]))?;
 
         Ok(Descriptors {
-            frame_count,
             pipeline_layouts,
             descriptor_sets,
             device: device.clone(),
             material_slots_per_pipeline,
-            material_status_per_pipeline,
+            material_updated_per_pipeline: material_status_per_pipeline,
             pbr_defaults,
-            physical_device_properties,
         })
     }
 
-    pub(crate) fn write_descriptors(&mut self, frame_index: FrameIndex, global_transforms_buffer: &Buffer, framebuffer: &Framebuffer) {
+    pub(crate) fn write_descriptors(&mut self, global_transforms_buffer: &Buffer, framebuffer: &Framebuffer) {
         profiling::scope!("updating descriptors");
 
         let mut materials_needing_update = Vec::new();
         for (pipeline, material_slots) in self.material_slots_per_pipeline.iter_with_pipeline() {
             for (i, material_slot) in material_slots.iter().enumerate() {
                 if let Some(material) = material_slot.as_ref().and_then(Weak::upgrade) {
-                    let written = self.material_status_per_pipeline.get(pipeline)[i][frame_index.index()];
+                    let written = self.material_updated_per_pipeline.get(pipeline)[i];
                     if !written {
                         materials_needing_update.push((pipeline, i, material));
                     }
@@ -359,7 +291,6 @@ impl Descriptors {
         // 0 is the index of the HDR attachment.
         let framebuffer_hdr_view = [framebuffer.attachments[0].inner];
         self.set_uniform_images(
-            frame_index,
             PipelineIndex::RenderResolutionPostProcess,
             &mut pending_writes,
             (0, 0, 0),
@@ -368,17 +299,11 @@ impl Descriptors {
 
         let shared_pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
         let global_transforms_buffer = (global_transforms_buffer.inner, 0, vk::WHOLE_SIZE);
-        self.set_uniform_buffer(
-            frame_index,
-            shared_pipeline,
-            &mut pending_writes,
-            (0, 0, 0),
-            global_transforms_buffer,
-        );
+        self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, 0, 0), global_transforms_buffer);
 
         for (pipeline, i, material) in &materials_needing_update {
-            self.write_material(frame_index, *pipeline, material, &mut pending_writes);
-            self.material_status_per_pipeline.get_mut(*pipeline)[*i][frame_index.index()] = true;
+            self.write_material(*pipeline, material, &mut pending_writes);
+            self.material_updated_per_pipeline.get_mut(*pipeline)[*i] = true;
         }
 
         let mut writes = Vec::with_capacity(pending_writes.len());
@@ -391,13 +316,7 @@ impl Descriptors {
         }
     }
 
-    fn write_material(
-        &self,
-        frame_index: FrameIndex,
-        pipeline: PipelineIndex,
-        material: &Material,
-        pending_writes: &mut Vec<PendingWrite>,
-    ) {
+    fn write_material(&self, pipeline: PipelineIndex, material: &Material, pending_writes: &mut Vec<PendingWrite>) {
         match &material.data {
             PipelineSpecificData::Gltf {
                 base_color,
@@ -419,8 +338,8 @@ impl Descriptors {
                     emissive.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.emissive).inner,
                 ];
                 let factors = (factors.0.inner, factors.1, factors.2);
-                self.set_uniform_images(frame_index, pipeline, pending_writes, (1, 1, material.array_index), &images);
-                self.set_uniform_buffer(frame_index, pipeline, pending_writes, (1, 6, material.array_index), factors);
+                self.set_uniform_images(pipeline, pending_writes, (1, 1, material.array_index), &images);
+                self.set_uniform_buffer(pipeline, pending_writes, (1, 6, material.array_index), factors);
             }
         }
     }
@@ -428,15 +347,13 @@ impl Descriptors {
     #[profiling::function]
     fn set_uniform_buffer(
         &self,
-        frame_index: FrameIndex,
         pipeline: PipelineIndex,
         pending_writes: &mut Vec<PendingWrite>,
         (set, binding, array_index): (u32, u32, u32),
         (buffer, offset, size): (vk::Buffer, vk::DeviceSize, vk::DeviceSize),
     ) {
-        let frame_idx = frame_index.index();
         let set_idx = set as usize;
-        let descriptor_set = self.descriptor_sets[frame_idx].get(pipeline).inner[set_idx];
+        let descriptor_set = self.descriptor_sets.get(pipeline).inner[set_idx];
         let descriptor_buffer_info = Box::new(
             vk::DescriptorBufferInfo::builder()
                 .buffer(buffer)
@@ -466,15 +383,13 @@ impl Descriptors {
     #[profiling::function]
     fn set_uniform_images(
         &self,
-        frame_index: FrameIndex,
         pipeline: PipelineIndex,
         pending_writes: &mut Vec<PendingWrite>,
         (set, first_binding, array_index): (u32, u32, u32),
         image_views: &[vk::ImageView],
     ) {
-        let frame_idx = frame_index.index();
         let set_idx = set as usize;
-        let descriptor_set = self.descriptor_sets[frame_idx].get(pipeline).inner[set_idx];
+        let descriptor_set = self.descriptor_sets.get(pipeline).inner[set_idx];
         for (i, image_view) in image_views.iter().enumerate() {
             let descriptor_image_info = Box::new(
                 vk::DescriptorImageInfo::builder()
@@ -502,7 +417,7 @@ impl Descriptors {
     }
 
     #[profiling::function]
-    pub(crate) fn descriptor_sets(&self, frame_index: FrameIndex, pipeline: PipelineIndex) -> &[vk::DescriptorSet] {
-        &self.descriptor_sets[frame_index.index()].get(pipeline).inner
+    pub(crate) fn descriptor_sets(&self, pipeline: PipelineIndex) -> &[vk::DescriptorSet] {
+        &self.descriptor_sets.get(pipeline).inner
     }
 }
