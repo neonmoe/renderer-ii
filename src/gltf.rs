@@ -96,7 +96,7 @@ impl Gltf {
     /// `resource_path`.
     #[profiling::function]
     pub fn from_glb(
-        device: &Rc<Device>,
+        device: &Device,
         uploader: &mut Uploader,
         descriptors: &mut Descriptors,
         arenas: (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
@@ -172,7 +172,7 @@ impl Gltf {
     /// `resource_path`.
     #[profiling::function]
     pub fn from_gltf(
-        device: &Rc<Device>,
+        device: &Device,
         uploader: &mut Uploader,
         descriptors: &mut Descriptors,
         arenas: (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
@@ -191,7 +191,7 @@ impl Gltf {
 
 #[profiling::function]
 fn create_gltf(
-    device: &Rc<Device>,
+    device: &Device,
     uploader: &mut Uploader,
     descriptors: &mut Descriptors,
     (buffer_arena, image_arena): (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),

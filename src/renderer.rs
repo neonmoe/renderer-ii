@@ -59,7 +59,7 @@ impl FrameIndex {
 }
 
 pub struct Renderer {
-    device: Rc<Device>,
+    device: Device,
     frame_start_fence: Fence,
     ready_for_present: Semaphore,
     frame_end_fence: Fence,
@@ -70,7 +70,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(instance: &Instance, device: &Rc<Device>, physical_device: &PhysicalDevice) -> Result<Renderer, RendererError> {
+    pub fn new(instance: &Instance, device: &Device, physical_device: &PhysicalDevice) -> Result<Renderer, RendererError> {
         profiling::scope!("renderer creation (per-frame-stuff)");
 
         let ready_for_present = {
@@ -157,7 +157,7 @@ impl Renderer {
 
         let fences = [self.frame_start_fence.inner, self.frame_end_fence.inner];
         unsafe {
-            profiling::scope!("wait for the image");
+            profiling::scope!("wait for the image and for the previous frame to finish");
             self.device
                 .wait_for_fences(&fences, true, u64::MAX)
                 .map_err(RendererError::FrameEndFenceWait)?;

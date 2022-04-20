@@ -3,7 +3,6 @@ use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use logger::Logger;
@@ -15,10 +14,6 @@ enum SandboxError {
     Sdl(String),
     #[error("MSAA sample count not supported: {0:?}")]
     MsaaSampleCountNotSupported(neonvk::vk::SampleCountFlags),
-}
-
-fn assert_last_drop<T>(t: Rc<T>) {
-    assert!(Rc::strong_count(&t) == 1);
 }
 
 #[profiling::function]
@@ -59,10 +54,10 @@ fn fallible_main() -> anyhow::Result<()> {
     let (width, height) = window.vulkan_drawable_size();
 
     let instance = neonvk::Instance::new(&window)?;
-    let surface = Rc::new(neonvk::create_surface(&instance.entry, &instance.inner, &window)?);
+    let surface = neonvk::create_surface(&instance.entry, &instance.inner, &window)?;
     let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner)?;
     let physical_device = physical_devices.remove(0)?;
-    let device = Rc::new(neonvk::create_device(&instance.inner, &physical_device)?);
+    let mut device = neonvk::create_device(&instance.inner, &physical_device)?;
 
     let msaa_samples = neonvk::vk::SampleCountFlags::TYPE_4;
     if !physical_device
@@ -142,10 +137,9 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut swapchain = neonvk::Swapchain::new(
         &instance.entry,
         &instance.inner,
-        &surface,
         &device,
         &physical_device,
-        None,
+        neonvk::SwapchainBase::Surface(surface),
         &swapchain_settings,
     )?;
     let mut pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, msaa_samples, None)?;
@@ -160,38 +154,40 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut debug_value = 0;
     'running: loop {
         let update_start_time = Instant::now();
-        for event in event_pump.poll_iter() {
-            profiling::scope!("handle SDL event");
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
+        {
+            profiling::scope!("handle SDL events");
+            for event in event_pump.poll_iter() {
+                match event {
+                    Event::Quit { .. }
+                    | Event::KeyDown {
+                        keycode: Some(Keycode::Escape),
+                        ..
+                    } => break 'running,
 
-                Event::KeyDown {
-                    keycode: Some(Keycode::I), ..
-                } => {
-                    swapchain_settings.immediate_present = !swapchain_settings.immediate_present;
-                    resize_timestamp = Some(Instant::now());
-                }
+                    Event::KeyDown {
+                        keycode: Some(Keycode::I), ..
+                    } => {
+                        swapchain_settings.immediate_present = !swapchain_settings.immediate_present;
+                        resize_timestamp = Some(Instant::now());
+                    }
 
-                Event::KeyDown { keycode, .. } => match keycode {
-                    Some(Keycode::Num0) => debug_value = 0,
-                    Some(Keycode::Num1) => debug_value = 1,
-                    Some(Keycode::Num2) => debug_value = 2,
-                    Some(Keycode::Num3) => debug_value = 3,
-                    Some(Keycode::Num4) => debug_value = 4,
-                    Some(Keycode::Num5) => debug_value = 5,
+                    Event::KeyDown { keycode, .. } => match keycode {
+                        Some(Keycode::Num0) => debug_value = 0,
+                        Some(Keycode::Num1) => debug_value = 1,
+                        Some(Keycode::Num2) => debug_value = 2,
+                        Some(Keycode::Num3) => debug_value = 3,
+                        Some(Keycode::Num4) => debug_value = 4,
+                        Some(Keycode::Num5) => debug_value = 5,
+                        _ => {}
+                    },
+
+                    Event::Window {
+                        win_event: WindowEvent::SizeChanged(_, _),
+                        ..
+                    } => resize_timestamp = Some(Instant::now()),
+
                     _ => {}
-                },
-
-                Event::Window {
-                    win_event: WindowEvent::SizeChanged(_, _),
-                    ..
-                } => resize_timestamp = Some(Instant::now()),
-
-                _ => {}
+                }
             }
         }
 
@@ -201,19 +197,15 @@ fn fallible_main() -> anyhow::Result<()> {
                 device.wait_idle()?;
                 drop(framebuffers);
                 let (width, height) = window.vulkan_drawable_size();
-                let old_swapchain = swapchain;
                 swapchain_settings.extent = neonvk::vk::Extent2D { width, height };
                 swapchain = neonvk::Swapchain::new(
                     &instance.entry,
                     &instance.inner,
-                    &surface,
                     &device,
                     &physical_device,
-                    Some(&old_swapchain),
+                    neonvk::SwapchainBase::OldSwapchain(swapchain),
                     &swapchain_settings,
                 )?;
-                assert!(old_swapchain.no_external_refs());
-                drop(old_swapchain);
                 pipelines = neonvk::Pipelines::new(
                     &device,
                     &physical_device,
@@ -298,8 +290,8 @@ fn fallible_main() -> anyhow::Result<()> {
         drop(assets_textures_arena);
         drop(assets_buffers_arena);
         drop(descriptors);
-        assert_last_drop(device);
-        assert_last_drop(surface);
+        device.destroy();
+        drop(device);
         drop(instance);
     }
 

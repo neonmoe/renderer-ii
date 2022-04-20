@@ -62,7 +62,7 @@ impl ArenaType for ForImages {
 }
 
 pub struct VulkanArena<T: ArenaType> {
-    device: Rc<Device>,
+    device: Device,
     memory: Rc<DeviceMemory>,
     mapped_memory_ptr: *mut u8,
     total_size: vk::DeviceSize,
@@ -86,7 +86,7 @@ impl<T: ArenaType> Drop for VulkanArena<T> {
 impl<T: ArenaType> VulkanArena<T> {
     pub fn new(
         instance: &Instance,
-        device: &Rc<Device>,
+        device: &Device,
         physical_device: &PhysicalDevice,
         size: vk::DeviceSize,
         optimal_flags: vk::MemoryPropertyFlags,

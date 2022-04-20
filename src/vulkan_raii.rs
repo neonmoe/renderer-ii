@@ -10,24 +10,42 @@ use ash::vk;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-// TODO: I don't think Device needs to be wrapped in an Rc.
-// It's the resources that need to be synchronized, the device is just a way to call Vulkan stuff. Maybe.
-// I'd imagine that's why ash::Device is Clone.
+/// **Device::destroy must be called manually after the Device is no longer
+/// being used**. The Vulkan device, which is used to make pretty much all
+/// Vulkan calls after its creation. It's safe to clone to share, until
+/// destruction time, as the only function where it must be externally
+/// synchronized according to the
+/// [spec](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/chap3.html#fundamentals-threadingbehavior)
+/// is vkDestroyDevice.
+///
+/// The reason Device isn't shared via borrows or Rcs is that it is pretty much
+/// as global as a structure as it gets, and the ergonomics of just copying it
+/// everywhere outweigh the possibility that destroy does not get called.
+///
+/// The downside is that the VkDevice doesn't get destroyed when the program
+/// crashes, since the destruction is not done in a Drop implementation.
+/// However, the program has crashed at this point. So it probably isn't too bad
+/// to leak one object, all the resources should be reclaimed by the OS anyway.
+#[derive(Clone)]
 pub struct Device {
+    // NOTE(opt): ash::Device is pretty big, as it contains about ~1KiB of
+    // function pointers. There may be a point to Boxing it, since all the
+    // Vulkan objects in this file contain a copy of Device, which adds quite a
+    // bit of overhead to objects that would otherwise be simple handles.
     pub inner: ash::Device,
     pub graphics_queue: vk::Queue,
     pub surface_queue: vk::Queue,
     pub transfer_queue: vk::Queue,
 }
+impl Device {
+    pub fn destroy(&mut self) {
+        unsafe { self.inner.destroy_device(None) };
+    }
+}
 impl std::ops::Deref for Device {
     type Target = ash::Device;
     fn deref(&self) -> &Self::Target {
         &self.inner
-    }
-}
-impl Drop for Device {
-    fn drop(&mut self) {
-        unsafe { self.inner.destroy_device(None) };
     }
 }
 impl Device {
@@ -79,6 +97,10 @@ macro_rules! inner_and_device_based_hash_impl {
     };
 }
 
+// It's actually AnyImage::Swapchain that is unexpectdly small, thanks to the
+// Rc. The "large variant" is the expected size of an AnyImage, as it's the size
+// of an Image.
+#[allow(clippy::large_enum_variant)]
 pub enum AnyImage {
     Regular(Image),
     Swapchain(vk::Image, Rc<Swapchain>),
@@ -108,17 +130,19 @@ trivial_drop_impl!(Surface, destroy_surface);
 pub struct Swapchain {
     pub inner: vk::SwapchainKHR,
     pub device: khr::Swapchain,
-    pub surface: Rc<Surface>,
+    /// This is an Option so that `surface` can be recovered from a Swapchain
+    /// before it's dropped, to be reused for another Swapchain.
+    pub surface: Option<Surface>,
 }
 trivial_drop_impl!(Swapchain, destroy_swapchain);
 
 pub struct DeviceMemory {
     pub inner: vk::DeviceMemory,
-    pub device: Rc<Device>,
+    pub device: Device,
     size: u64,
 }
 impl DeviceMemory {
-    pub fn new(inner: vk::DeviceMemory, device: Rc<Device>, size: u64) -> DeviceMemory {
+    pub fn new(inner: vk::DeviceMemory, device: Device, size: u64) -> DeviceMemory {
         crate::allocation::ALLOCATED.fetch_add(size, std::sync::atomic::Ordering::Relaxed);
         crate::allocation::IN_USE.fetch_add(size, std::sync::atomic::Ordering::Relaxed);
         DeviceMemory { inner, device, size }
@@ -136,7 +160,7 @@ impl Drop for DeviceMemory {
 
 pub struct Buffer {
     pub inner: vk::Buffer,
-    pub device: Rc<Device>,
+    pub device: Device,
     pub memory: Rc<DeviceMemory>,
     pub size: vk::DeviceSize,
 }
@@ -146,7 +170,7 @@ inner_and_device_based_hash_impl!(Buffer);
 
 pub struct Image {
     pub inner: vk::Image,
-    pub device: Rc<Device>,
+    pub device: Device,
     pub memory: Rc<DeviceMemory>,
 }
 trivial_drop_impl!(Image, destroy_image);
@@ -155,7 +179,7 @@ inner_and_device_based_hash_impl!(Image);
 
 pub struct ImageView {
     pub inner: vk::ImageView,
-    pub device: Rc<Device>,
+    pub device: Device,
     pub image: Rc<AnyImage>,
 }
 trivial_drop_impl!(ImageView, destroy_image_view);
@@ -164,13 +188,13 @@ inner_and_device_based_hash_impl!(ImageView);
 
 pub struct RenderPass {
     pub inner: vk::RenderPass,
-    pub device: Rc<Device>,
+    pub device: Device,
 }
 trivial_drop_impl!(RenderPass, destroy_render_pass);
 
 pub struct Framebuffer {
     pub inner: vk::Framebuffer,
-    pub device: Rc<Device>,
+    pub device: Device,
     pub render_pass: Rc<RenderPass>,
     pub attachments: Vec<Rc<ImageView>>,
 }
@@ -178,20 +202,20 @@ trivial_drop_impl!(Framebuffer, destroy_framebuffer);
 
 pub struct Pipeline {
     pub inner: vk::Pipeline,
-    pub device: Rc<Device>,
+    pub device: Device,
     pub render_pass: Rc<RenderPass>,
 }
 trivial_drop_impl!(Pipeline, destroy_pipeline);
 
 pub struct Sampler {
     pub inner: vk::Sampler,
-    pub device: Rc<Device>,
+    pub device: Device,
 }
 trivial_drop_impl!(Sampler, destroy_sampler);
 
 pub struct DescriptorSetLayouts {
     pub inner: Vec<vk::DescriptorSetLayout>,
-    pub device: Rc<Device>,
+    pub device: Device,
     pub immutable_samplers: Vec<Rc<Sampler>>,
 }
 impl Drop for DescriptorSetLayouts {
@@ -204,14 +228,14 @@ impl Drop for DescriptorSetLayouts {
 
 pub struct PipelineLayout {
     pub inner: vk::PipelineLayout,
-    pub device: Rc<Device>,
+    pub device: Device,
     pub descriptor_set_layouts: Rc<DescriptorSetLayouts>,
 }
 trivial_drop_impl!(PipelineLayout, destroy_pipeline_layout);
 
 pub struct DescriptorPool {
     pub inner: vk::DescriptorPool,
-    pub device: Rc<Device>,
+    pub device: Device,
 }
 trivial_drop_impl!(DescriptorPool, destroy_descriptor_pool);
 
@@ -221,19 +245,19 @@ trivial_drop_impl!(DescriptorPool, destroy_descriptor_pool);
 /// is destroyed.
 pub struct DescriptorSets {
     pub inner: Vec<vk::DescriptorSet>,
-    pub device: Rc<Device>,
+    pub device: Device,
     pub descriptor_pool: Rc<DescriptorPool>,
 }
 
 pub struct CommandPool {
     pub inner: vk::CommandPool,
-    pub device: Rc<Device>,
+    pub device: Device,
 }
 trivial_drop_impl!(CommandPool, destroy_command_pool);
 
 pub struct CommandBuffer {
     pub inner: vk::CommandBuffer,
-    pub device: Rc<Device>,
+    pub device: Device,
     pub command_pool: Rc<CommandPool>,
 }
 impl Drop for CommandBuffer {
@@ -244,18 +268,18 @@ impl Drop for CommandBuffer {
 
 pub struct Semaphore {
     pub inner: vk::Semaphore,
-    pub device: Rc<Device>,
+    pub device: Device,
 }
 trivial_drop_impl!(Semaphore, destroy_semaphore);
 
 pub struct Fence {
     pub inner: vk::Fence,
-    pub device: Rc<Device>,
+    pub device: Device,
 }
 trivial_drop_impl!(Fence, destroy_fence);
 
 pub struct PipelineCache {
     pub inner: vk::PipelineCache,
-    pub device: Rc<Device>,
+    pub device: Device,
 }
 trivial_drop_impl!(PipelineCache, destroy_pipeline_cache);

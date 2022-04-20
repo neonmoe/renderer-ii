@@ -40,7 +40,7 @@ pub struct Pipelines {
 
 impl Pipelines {
     pub fn new(
-        device: &Rc<Device>,
+        device: &Device,
         physical_device: &PhysicalDevice,
         descriptors: &Descriptors,
         extent: vk::Extent2D,
@@ -235,7 +235,7 @@ fn create_render_pass(
 
 #[profiling::function]
 fn create_pipelines(
-    device: &Rc<Device>,
+    device: &Device,
     render_pass: vk::RenderPass,
     pipeline_layouts: &PipelineMap<PipelineLayout>,
     attachment_sample_count: vk::SampleCountFlags,

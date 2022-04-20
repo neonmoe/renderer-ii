@@ -115,7 +115,7 @@ pub struct PbrDefaults {
 }
 
 impl PbrDefaults {
-    pub fn new(device: &Rc<Device>, uploader: &mut Uploader, arena: &mut VulkanArena<ForImages>) -> Result<PbrDefaults, ImageLoadingError> {
+    pub fn new(device: &Device, uploader: &mut Uploader, arena: &mut VulkanArena<ForImages>) -> Result<PbrDefaults, ImageLoadingError> {
         profiling::scope!("pbr default textures creation");
 
         const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
@@ -141,7 +141,7 @@ impl PbrDefaults {
 }
 
 fn create_pixel(
-    device: &Rc<Device>,
+    device: &Device,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
     pixels: [u8; 4],
@@ -299,7 +299,7 @@ fn create_pixel(
 
 #[profiling::function]
 pub fn load_ntex(
-    device: &Rc<Device>,
+    device: &Device,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
     bytes: &[u8],

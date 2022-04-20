@@ -5,7 +5,6 @@ use crate::{ForBuffers, PhysicalDevice, VulkanArena};
 use ash::vk;
 use ash::Instance;
 use std::fmt::Arguments;
-use std::rc::Rc;
 use std::time::Duration;
 
 /// General errors related to the creation and usage of [Uploader]. The actual
@@ -61,7 +60,7 @@ pub struct Uploader {
     pub staging_arena: VulkanArena<ForBuffers>,
     pub graphics_queue_family: u32,
     pub transfer_queue_family: u32,
-    device: Rc<Device>,
+    device: Device,
     transfer_queue: vk::Queue,
     transfer_command_pool: CommandPool,
     graphics_queue: vk::Queue,
@@ -77,7 +76,7 @@ pub struct Uploader {
 impl Uploader {
     pub fn new(
         instance: &Instance,
-        device: &Rc<Device>,
+        device: &Device,
         graphics_queue: vk::Queue,
         transfer_queue: vk::Queue,
         physical_device: &PhysicalDevice,

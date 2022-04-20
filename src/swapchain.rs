@@ -7,6 +7,8 @@ use std::rc::Rc;
 
 #[derive(thiserror::Error, Debug)]
 pub enum SwapchainError {
+    #[error("the old swapchain is still in use")]
+    OldSwapchainInUse,
     #[error("failed to get swapchain images")]
     GetSwapchainImages(#[source] vk::Result),
     #[error("failed to get present modes supported by the physical device")]
@@ -22,6 +24,11 @@ pub struct SwapchainSettings {
     pub immediate_present: bool,
 }
 
+pub enum SwapchainBase {
+    Surface(Surface),
+    OldSwapchain(Swapchain),
+}
+
 pub struct Swapchain {
     pub extent: vk::Extent2D,
     pub(crate) images: Vec<Rc<AnyImage>>,
@@ -32,10 +39,9 @@ impl Swapchain {
     pub fn new(
         entry: &Entry,
         instance: &Instance,
-        surface: &Rc<Surface>,
-        device: &Rc<Device>,
+        device: &Device,
         physical_device: &PhysicalDevice,
-        old_swapchain: Option<&Swapchain>,
+        base: SwapchainBase,
         settings: &SwapchainSettings,
     ) -> Result<Swapchain, SwapchainError> {
         profiling::scope!("swapchain creation");
@@ -46,19 +52,31 @@ impl Swapchain {
             physical_device.graphics_queue_family.index,
             physical_device.surface_queue_family.index,
         ];
+        let (surface, old_swapchain) = match base {
+            SwapchainBase::Surface(surface) => (surface, None),
+            SwapchainBase::OldSwapchain(Swapchain { images, inner, .. }) => {
+                drop(images);
+                if let Ok(mut swapchain) = Rc::try_unwrap(inner) {
+                    (swapchain.surface.take().unwrap(), Some(swapchain))
+                } else {
+                    return Err(SwapchainError::OldSwapchainInUse);
+                }
+            }
+        };
         let (swapchain, extent) = create_swapchain(
             &surface_ext,
             &swapchain_ext,
             surface.inner,
-            old_swapchain.map(|r| r.inner.inner),
+            old_swapchain.as_ref().map(|swapchain| swapchain.inner),
             physical_device,
             &queue_family_indices,
             settings,
         )?;
+        drop(old_swapchain);
         let swapchain = Rc::new(vulkan_raii::Swapchain {
             inner: swapchain,
             device: swapchain_ext.clone(),
-            surface: surface.clone(),
+            surface: Some(surface),
         });
 
         let swapchain_format = physical_device.swapchain_format;

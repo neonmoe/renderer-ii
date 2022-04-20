@@ -29,7 +29,7 @@ pub struct Framebuffers {
 impl Framebuffers {
     pub fn new(
         instance: &Instance,
-        device: &Rc<Device>,
+        device: &Device,
         physical_device: &PhysicalDevice,
         pipelines: &Pipelines,
         swapchain: &Swapchain,
@@ -54,9 +54,12 @@ impl Framebuffers {
 
         let hdr_image_info = create_image_info(
             HDR_COLOR_ATTACHMENT_FORMAT,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::INPUT_ATTACHMENT,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::INPUT_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
         );
-        let depth_image_info = create_image_info(physical_device.depth_format, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT);
+        let depth_image_info = create_image_info(
+            physical_device.depth_format,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+        );
         let resolve_src_image_info = match pipelines.render_pass_layout {
             AttachmentLayout::SingleSampled => None,
             AttachmentLayout::MultiSampled => Some(create_image_info(swapchain_format, vk::ImageUsageFlags::COLOR_ATTACHMENT)),

@@ -58,7 +58,7 @@ mod scene;
 pub use scene::Scene;
 
 mod swapchain;
-pub use swapchain::{Swapchain, SwapchainSettings};
+pub use swapchain::{Swapchain, SwapchainBase, SwapchainSettings};
 
 mod uploader;
 pub use uploader::Uploader;

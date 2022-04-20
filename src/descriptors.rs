@@ -114,7 +114,7 @@ struct PendingWrite {
 pub struct Descriptors {
     pub(crate) pipeline_layouts: PipelineMap<PipelineLayout>,
     descriptor_sets: PipelineMap<DescriptorSets>,
-    device: Rc<Device>,
+    device: Device,
     material_slots_per_pipeline: PipelineMap<Vec<MaterialSlot>>,
     material_updated_per_pipeline: PipelineMap<Vec<bool>>,
     pbr_defaults: PbrDefaults,
@@ -122,7 +122,7 @@ pub struct Descriptors {
 
 impl Descriptors {
     pub fn new(
-        device: &Rc<Device>,
+        device: &Device,
         physical_device_properties: vk::PhysicalDeviceProperties,
         pbr_defaults: PbrDefaults,
     ) -> Result<Descriptors, DescriptorError> {
