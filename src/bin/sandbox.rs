@@ -19,7 +19,7 @@ enum SandboxError {
 #[profiling::function]
 fn main() -> anyhow::Result<()> {
     if let Err(err) = fallible_main() {
-        let message = err.to_string();
+        let message = format!("{:?}", err);
         let _ = show_simple_message_box(MessageBoxFlag::ERROR, "Fatal Error", &message, None);
         Err(err)
     } else {
@@ -69,10 +69,15 @@ fn fallible_main() -> anyhow::Result<()> {
         return Err(SandboxError::MsaaSampleCountNotSupported(msaa_samples).into());
     }
 
-    // TODO: Add size estimation system for allocations
-    // Two reasons:
-    // - Accurate arena sizes for minimizing allocations
-    // - For display in an options menu
+    let resources_path = find_resources_path();
+    let mut assets_buffers_measurer = neonvk::VulkanArenaMeasurer::new(&device);
+    let mut assets_textures_measurer = neonvk::VulkanArenaMeasurer::new(&device);
+    neonvk::PbrDefaults::measure(&mut assets_textures_measurer)?;
+    neonvk::measure_gltf_memory_usage(
+        (&mut assets_buffers_measurer, &mut assets_textures_measurer),
+        &resources_path.join("Sponza.gltf"),
+        &resources_path,
+    )?;
 
     let mut uploader = neonvk::Uploader::new(
         &instance.inner,
@@ -80,14 +85,14 @@ fn fallible_main() -> anyhow::Result<()> {
         device.graphics_queue,
         device.transfer_queue,
         &physical_device,
-        300_000_000,
+        assets_buffers_measurer.measured_size + assets_textures_measurer.measured_size,
         "sandbox assets",
     )?;
     let mut assets_buffers_arena = neonvk::VulkanArena::new(
         &instance.inner,
         &device,
         &physical_device,
-        12_000_000,
+        assets_buffers_measurer.measured_size,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL
             | neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE
             | neonvk::vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -98,7 +103,7 @@ fn fallible_main() -> anyhow::Result<()> {
         &instance.inner,
         &device,
         &physical_device,
-        100_000_000,
+        assets_textures_measurer.measured_size,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         format_args!("sandbox assets (textures)"),
@@ -109,7 +114,6 @@ fn fallible_main() -> anyhow::Result<()> {
     let sponza_model;
     {
         profiling::scope!("loading Sponza.gltf from disk to vram");
-        let resources_path = find_resources_path();
         let upload_start = Instant::now();
         sponza_model = neonvk::Gltf::from_gltf(
             &device,
@@ -129,6 +133,9 @@ fn fallible_main() -> anyhow::Result<()> {
         );
         drop(uploader);
     }
+
+    assert_eq!(assets_buffers_arena.memory_in_use(), assets_buffers_measurer.measured_size);
+    assert_eq!(assets_textures_arena.memory_in_use(), assets_textures_measurer.measured_size);
 
     let mut swapchain_settings = neonvk::SwapchainSettings {
         extent: neonvk::vk::Extent2D { width, height },

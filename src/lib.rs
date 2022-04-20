@@ -42,6 +42,9 @@ pub use gltf::{Gltf, MeshIter};
 mod image_loading;
 pub use image_loading::PbrDefaults;
 
+mod memory_measurement;
+pub use memory_measurement::*;
+
 mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 

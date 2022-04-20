@@ -44,21 +44,17 @@ pub enum VulkanArenaError {
 }
 
 pub trait ArenaType {
-    fn mappable() -> bool;
+    const MAPPABLE: bool;
 }
 
 pub struct ForBuffers;
 impl ArenaType for ForBuffers {
-    fn mappable() -> bool {
-        true
-    }
+    const MAPPABLE: bool = true;
 }
 
 pub struct ForImages;
 impl ArenaType for ForImages {
-    fn mappable() -> bool {
-        false
-    }
+    const MAPPABLE: bool = false;
 }
 
 pub struct VulkanArena<T: ArenaType> {
@@ -108,7 +104,7 @@ impl<T: ArenaType> VulkanArena<T> {
         };
         debug_utils::name_vulkan_object(device, memory, debug_identifier_args);
 
-        let mapped_memory_ptr = if T::mappable()
+        let mapped_memory_ptr = if T::MAPPABLE
             && memory_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
         {
             unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }
@@ -131,6 +127,10 @@ impl<T: ArenaType> VulkanArena<T> {
             debug_identifier,
             _arena_type_marker: PhantomData {},
         })
+    }
+
+    pub fn memory_in_use(&self) -> vk::DeviceSize {
+        self.offset
     }
 
     /// Attempts to reset the arena, marking all graphics memory owned by it as
@@ -173,15 +173,15 @@ impl VulkanArena<ForBuffers> {
         let alignment = buffer_memory_requirements.alignment;
 
         let offset = align_up(self.offset, alignment);
-        let size = buffer_memory_requirements.size;
+        let required_size = buffer_memory_requirements.size;
 
-        if self.total_size - offset < size {
+        if self.total_size - offset < required_size {
             unsafe { self.device.destroy_buffer(buffer, None) };
             return Err(VulkanArenaError::OutOfMemory {
                 identifier: self.debug_identifier.clone(),
                 used: offset,
                 total: self.total_size,
-                required: size,
+                required: required_size,
             });
         }
 
@@ -198,7 +198,7 @@ impl VulkanArena<ForBuffers> {
             if let Some(uploader) = uploader {
                 profiling::scope!("staging buffer creation");
                 let staging_info = vk::BufferCreateInfo::builder()
-                    .size(size)
+                    .size(buffer_create_info.size)
                     .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                     .sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .build();
@@ -239,7 +239,7 @@ impl VulkanArena<ForBuffers> {
                                 );
                             }
                             let (src, dst) = (staging_buffer.inner, buffer);
-                            let copy_regions = [vk::BufferCopy::builder().size(size).build()];
+                            let copy_regions = [vk::BufferCopy::builder().size(buffer_create_info.size).build()];
                             unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
                         },
                         |device, command_buffer| {
@@ -276,7 +276,7 @@ impl VulkanArena<ForBuffers> {
             unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len()) };
         }
 
-        let new_offset = offset + size;
+        let new_offset = offset + required_size;
         crate::allocation::IN_USE.fetch_add(new_offset - self.offset, std::sync::atomic::Ordering::Relaxed);
         self.offset = new_offset;
 
@@ -284,7 +284,7 @@ impl VulkanArena<ForBuffers> {
             inner: buffer,
             device: self.device.clone(),
             memory: self.memory.clone(),
-            size,
+            size: required_size,
         })
     }
 }
@@ -394,8 +394,7 @@ fn get_memory_type_index(
 
 /// Returns `value` or the nearest integer greater than `value` which
 /// is divisible by `align_to`.
-#[allow(dead_code)]
-fn align_up(value: vk::DeviceSize, align_to: vk::DeviceSize) -> vk::DeviceSize {
+pub(crate) fn align_up(value: vk::DeviceSize, align_to: vk::DeviceSize) -> vk::DeviceSize {
     if value % align_to == 0 {
         value
     } else {

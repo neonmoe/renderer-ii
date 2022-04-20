@@ -2,6 +2,7 @@ use crate::arena::VulkanArenaError;
 use crate::uploader::UploadError;
 use crate::vulkan_raii::{Device, ImageView};
 use crate::{debug_utils, ForImages, Uploader, VulkanArena};
+use crate::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use ash::vk;
 use std::rc::Rc;
 
@@ -106,6 +107,11 @@ fn to_snorm(format: vk::Format) -> vk::Format {
     }
 }
 
+const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+const BLACK: [u8; 4] = [0, 0, 0, 0xFF];
+const NORMAL_Z: [u8; 4] = [0, 0, 0xFF, 0];
+const M_AND_R: [u8; 4] = [0, 0x88, 0, 0];
+
 pub struct PbrDefaults {
     pub base_color: ImageView,
     pub metallic_roughness: ImageView,
@@ -117,11 +123,6 @@ pub struct PbrDefaults {
 impl PbrDefaults {
     pub fn new(device: &Device, uploader: &mut Uploader, arena: &mut VulkanArena<ForImages>) -> Result<PbrDefaults, ImageLoadingError> {
         profiling::scope!("pbr default textures creation");
-
-        const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
-        const BLACK: [u8; 4] = [0, 0, 0, 0xFF];
-        const NORMAL_Z: [u8; 4] = [0, 0, 0xFF, 0];
-        const M_AND_R: [u8; 4] = [0, 0x88, 0, 0];
 
         let mut create_pixel = |color, kind, name| create_pixel(device, uploader, arena, color, kind, name);
         let base_color = create_pixel(WHITE, TextureKind::SrgbColor, "default pbr base color")?;
@@ -138,6 +139,37 @@ impl PbrDefaults {
             emissive,
         })
     }
+
+    pub fn measure(measurer: &mut VulkanArenaMeasurer<ForImages>) -> Result<(), VulkanArenaMeasurementError> {
+        for kind in [
+            TextureKind::SrgbColor,   // Base color
+            TextureKind::LinearColor, // Metallic/roughness
+            TextureKind::NormalMap,   // Normals
+            TextureKind::LinearColor, // Ambient occlusion
+            TextureKind::SrgbColor,   // Emissive
+        ] {
+            let format = kind.convert_format(vk::Format::R8G8B8A8_UNORM);
+            let extent = *vk::Extent3D::builder().width(1).height(1).depth(1);
+            let image_create_info = get_image_create_info(extent, 1, format);
+            measurer.add_image(image_create_info)?;
+        }
+        Ok(())
+    }
+}
+
+fn get_image_create_info(extent: vk::Extent3D, mip_levels: u32, format: vk::Format) -> vk::ImageCreateInfo {
+    vk::ImageCreateInfo::builder()
+        .image_type(vk::ImageType::TYPE_2D)
+        .extent(extent)
+        .mip_levels(mip_levels)
+        .array_layers(1)
+        .format(format)
+        .tiling(vk::ImageTiling::OPTIMAL)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .build()
 }
 
 fn create_pixel(
@@ -176,19 +208,9 @@ fn create_pixel(
 
     let image_allocation = {
         profiling::scope!("allocate 1px gpu texture");
-        let image_info = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .extent(extent)
-            .mip_levels(1)
-            .array_layers(1)
-            .format(format)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let image_info = get_image_create_info(extent, 1, format);
         arena
-            .create_image(*image_info, format_args!("{}", debug_identifier))
+            .create_image(image_info, format_args!("{}", debug_identifier))
             .map_err(ImageLoadingError::ImageCreation)?
     };
 
@@ -297,6 +319,19 @@ fn create_pixel(
     Ok(image_view)
 }
 
+pub fn get_ntex_create_info(bytes: &[u8], kind: TextureKind) -> Result<vk::ImageCreateInfo, ImageLoadingError> {
+    let ntex::NtexData {
+        width,
+        height,
+        format,
+        mip_ranges,
+        ..
+    } = ntex::decode(bytes).map_err(ImageLoadingError::Ntex)?;
+    let format = kind.convert_format(format);
+    let extent = *vk::Extent3D::builder().width(width).height(height).depth(1);
+    Ok(get_image_create_info(extent, mip_ranges.len() as u32, format))
+}
+
 #[profiling::function]
 pub fn load_ntex(
     device: &Device,
@@ -341,19 +376,9 @@ pub fn load_ntex(
 
     let image_allocation = {
         profiling::scope!("allocate gpu texture");
-        let image_info = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .extent(extent)
-            .mip_levels(mip_ranges.len() as u32)
-            .array_layers(1)
-            .format(format)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let image_info = get_image_create_info(extent, mip_ranges.len() as u32, format);
         arena
-            .create_image(*image_info, format_args!("{}", debug_identifier))
+            .create_image(image_info, format_args!("{}", debug_identifier))
             .map_err(ImageLoadingError::ImageCreation)?
     };
 

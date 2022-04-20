@@ -13,7 +13,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 
-mod gltf_json;
+pub(crate) mod gltf_json;
 mod mesh_iter;
 pub use mesh_iter::MeshIter;
 
@@ -103,65 +103,8 @@ impl Gltf {
         glb_path: &Path,
         resource_path: &Path,
     ) -> Result<Gltf, GltfLoadingError> {
-        fn read_u32(bytes: &[u8]) -> u32 {
-            debug_assert!(bytes.len() == 4);
-            if let [a, b, c, d] = *bytes {
-                u32::from_le_bytes([a, b, c, d])
-            } else {
-                unreachable!();
-            }
-        }
-
         let glb = fs::read(glb_path).map_err(GltfLoadingError::MissingFile)?;
-
-        const MAGIC_GLTF: u32 = 0x46546C67;
-        if glb.len() < 12 || read_u32(&glb[0..4]) != MAGIC_GLTF {
-            return Err(GltfLoadingError::InvalidGlbHeader);
-        }
-        let version = read_u32(&glb[4..8]);
-        let length = read_u32(&glb[8..12]) as usize;
-        if version != 2 {
-            log::warn!(".glb file is not version 2, but trying to read anyway");
-        }
-        if length != glb.len() {
-            return Err(GltfLoadingError::InvalidGlbLength);
-        }
-
-        let mut next_chunk = &glb[12..];
-        let mut json: Option<&str> = None;
-        let mut buffer: Option<&[u8]> = None;
-        while next_chunk.len() >= 8 {
-            let chunk_length = read_u32(&next_chunk[0..4]) as usize;
-            if chunk_length > next_chunk.len() - 8 {
-                return Err(GltfLoadingError::InvalidGlbChunkLength);
-            }
-            let chunk_bytes = &next_chunk[8..chunk_length + 8];
-
-            const MAGIC_JSON: u32 = 0x4E4F534A;
-            const MAGIC_BIN: u32 = 0x004E4942;
-            let chunk_type = read_u32(&next_chunk[4..8]);
-            match chunk_type {
-                MAGIC_JSON => {
-                    if json.is_some() {
-                        return Err(GltfLoadingError::TooManyGlbJsonChunks);
-                    }
-                    json = Some(std::str::from_utf8(chunk_bytes).map_err(GltfLoadingError::InvalidGlbJson)?);
-                }
-                MAGIC_BIN => {
-                    if buffer.is_some() {
-                        return Err(GltfLoadingError::TooManyGlbBinaryChunks);
-                    }
-                    buffer = Some(chunk_bytes);
-                }
-                _ => return Err(GltfLoadingError::InvalidGlbChunkType),
-            }
-
-            next_chunk = &next_chunk[chunk_length + 8..];
-        }
-
-        let buffer = buffer.ok_or(GltfLoadingError::Misc("glb buffer is required"))?;
-
-        let json = json.ok_or(GltfLoadingError::MissingGlbJson)?;
+        let (json, buffer) = read_glb_json_and_buffer(&glb)?;
         let gltf: gltf_json::GltfJson = serde_json::from_str(json).map_err(GltfLoadingError::JsonDeserialization)?;
         create_gltf(device, uploader, descriptors, arenas, gltf, (glb_path, resource_path), Some(buffer))
     }
@@ -187,6 +130,66 @@ impl Gltf {
     pub fn mesh_iter(&self) -> MeshIter<'_> {
         MeshIter::new(self, self.root_nodes.clone())
     }
+}
+
+#[profiling::function]
+pub(crate) fn read_glb_json_and_buffer(glb: &[u8]) -> Result<(&str, &[u8]), GltfLoadingError> {
+    fn read_u32(bytes: &[u8]) -> u32 {
+        if let [a, b, c, d] = *bytes {
+            u32::from_le_bytes([a, b, c, d])
+        } else {
+            unreachable!();
+        }
+    }
+
+    const MAGIC_GLTF: u32 = 0x46546C67;
+    if glb.len() < 12 || read_u32(&glb[0..4]) != MAGIC_GLTF {
+        return Err(GltfLoadingError::InvalidGlbHeader);
+    }
+    let version = read_u32(&glb[4..8]);
+    let length = read_u32(&glb[8..12]) as usize;
+    if version != 2 {
+        log::warn!(".glb file is not version 2, but trying to read anyway");
+    }
+    if length != glb.len() {
+        return Err(GltfLoadingError::InvalidGlbLength);
+    }
+
+    let mut next_chunk = &glb[12..];
+    let mut json: Option<&str> = None;
+    let mut buffer: Option<&[u8]> = None;
+    while next_chunk.len() >= 8 {
+        let chunk_length = read_u32(&next_chunk[0..4]) as usize;
+        if chunk_length > next_chunk.len() - 8 {
+            return Err(GltfLoadingError::InvalidGlbChunkLength);
+        }
+        let chunk_bytes = &next_chunk[8..chunk_length + 8];
+
+        const MAGIC_JSON: u32 = 0x4E4F534A;
+        const MAGIC_BIN: u32 = 0x004E4942;
+        let chunk_type = read_u32(&next_chunk[4..8]);
+        match chunk_type {
+            MAGIC_JSON => {
+                if json.is_some() {
+                    return Err(GltfLoadingError::TooManyGlbJsonChunks);
+                }
+                json = Some(std::str::from_utf8(chunk_bytes).map_err(GltfLoadingError::InvalidGlbJson)?);
+            }
+            MAGIC_BIN => {
+                if buffer.is_some() {
+                    return Err(GltfLoadingError::TooManyGlbBinaryChunks);
+                }
+                buffer = Some(chunk_bytes);
+            }
+            _ => return Err(GltfLoadingError::InvalidGlbChunkType),
+        }
+
+        next_chunk = &next_chunk[chunk_length + 8..];
+    }
+
+    let buffer = buffer.ok_or(GltfLoadingError::Misc("glb buffer is required"))?;
+    let json = json.ok_or(GltfLoadingError::MissingGlbJson)?;
+    Ok((json, buffer))
 }
 
 #[profiling::function]
@@ -218,35 +221,13 @@ fn create_gltf(
     let root_nodes = scene.nodes.clone().ok_or(GltfLoadingError::Misc("no nodes in scene"))?;
 
     let mut memmap_holder = None;
-    fn load_file<'a>(memmap_holder: &'a mut Option<Mmap>, path: &Path, range: Option<Range<usize>>) -> Result<&'a [u8], GltfLoadingError> {
-        let file = File::open(&path).map_err(|err| GltfLoadingError::OpenFile(err, path.to_owned()))?;
-        let mut memmap_options = MmapOptions::new();
-        if let Some(range) = range {
-            memmap_options.offset(range.start as u64);
-            memmap_options.len(range.count());
-        }
-        let memmap = unsafe { memmap_options.map(&file) }.map_err(|err| GltfLoadingError::MapFile(err, path.to_owned()))?;
-        let _ = memmap.advise(Advice::Sequential);
-        let _ = memmap.advise(Advice::WillNeed);
-        *memmap_holder = Some(memmap);
-        Ok(memmap_holder.as_deref().unwrap())
-    }
 
     let mut buffers = Vec::with_capacity(gltf.buffers.len());
     for buffer in &gltf.buffers {
         if let Some(uri) = buffer.uri.as_ref() {
             let path = resource_path.join(uri);
-            let data = load_file(&mut memmap_holder, &path, None)?;
-            let buffer_create_info = vk::BufferCreateInfo::builder()
-                .size(data.len() as vk::DeviceSize)
-                .usage(
-                    vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::VERTEX_BUFFER
-                        | vk::BufferUsageFlags::INDEX_BUFFER
-                        | vk::BufferUsageFlags::UNIFORM_BUFFER,
-                )
-                .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                .build();
+            let data = map_file(&mut memmap_holder, &path, None)?;
+            let buffer_create_info = get_mesh_buffer_create_info(data.len() as vk::DeviceSize);
             let buffer = buffer_arena
                 .create_buffer(
                     buffer_create_info,
@@ -259,16 +240,7 @@ fn create_gltf(
         } else {
             match bin_buffer {
                 Some(data) => {
-                    let buffer_create_info = vk::BufferCreateInfo::builder()
-                        .size(data.len() as vk::DeviceSize)
-                        .usage(
-                            vk::BufferUsageFlags::TRANSFER_DST
-                                | vk::BufferUsageFlags::VERTEX_BUFFER
-                                | vk::BufferUsageFlags::INDEX_BUFFER
-                                | vk::BufferUsageFlags::UNIFORM_BUFFER,
-                        )
-                        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                        .build();
+                    let buffer_create_info = get_mesh_buffer_create_info(data.len() as vk::DeviceSize);
                     let buffer = buffer_arena
                         .create_buffer(
                             buffer_create_info,
@@ -321,132 +293,22 @@ fn create_gltf(
         });
     }
 
-    let image_texture_kinds = {
-        profiling::scope!("image kind map creation");
-        let mut image_texture_kinds = HashMap::new();
-        for material in &gltf.materials {
-            if let Some(pbr) = &material.pbr_metallic_roughness {
-                if let Some(base_color) = &pbr.base_color_texture {
-                    let texture = gltf.textures.get(base_color.index).ok_or(GltfLoadingError::Oob("texture"))?;
-                    if let Some(image_index) = texture.source {
-                        image_texture_kinds.insert(image_index, TextureKind::SrgbColor);
-                    }
-                }
-                if let Some(metallic_roughness) = &pbr.metallic_roughness_texture {
-                    let texture = gltf
-                        .textures
-                        .get(metallic_roughness.index)
-                        .ok_or(GltfLoadingError::Oob("texture"))?;
-                    if let Some(image_index) = texture.source {
-                        image_texture_kinds.insert(image_index, TextureKind::LinearColor);
-                    }
-                }
-            }
-            if let Some(normal) = &material.normal_texture {
-                let texture = gltf.textures.get(normal.index).ok_or(GltfLoadingError::Oob("texture"))?;
-                if let Some(image_index) = texture.source {
-                    image_texture_kinds.insert(image_index, TextureKind::NormalMap);
-                }
-            }
-            if let Some(emissive) = &material.emissive_texture {
-                let texture = gltf.textures.get(emissive.index).ok_or(GltfLoadingError::Oob("texture"))?;
-                if let Some(image_index) = texture.source {
-                    image_texture_kinds.insert(image_index, TextureKind::SrgbColor);
-                }
-            }
-            if let Some(occlusion) = &material.occlusion_texture {
-                let texture = gltf.textures.get(occlusion.index).ok_or(GltfLoadingError::Oob("texture"))?;
-                if let Some(image_index) = texture.source {
-                    image_texture_kinds.insert(image_index, TextureKind::LinearColor);
-                }
-            }
-        }
-        image_texture_kinds
-    };
+    let image_texture_kinds = get_gltf_texture_kinds(&gltf)?;
 
     let mut images = Vec::with_capacity(gltf.images.len());
     for (i, image) in gltf.images.iter().enumerate() {
-        let image_load;
-        let bytes: &[u8];
-        if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
-            image_load = match mime_type.as_str() {
-                "image/prs.ntex" => image_loading::load_ntex,
-                _ => return Err(GltfLoadingError::Spec("mime type of texture is not image/prs.ntex")),
-            };
-            let buffer_view = gltf
-                .buffer_views
-                .get(*buffer_view)
-                .ok_or(GltfLoadingError::Oob("texture buffer view"))?;
-            let buffer = gltf
-                .buffers
-                .get(buffer_view.buffer)
-                .ok_or(GltfLoadingError::Oob("texture buffer"))?;
-            let buffer_offset = buffer_view.byte_offset.unwrap_or(0);
-            let buffer_size = buffer_view.byte_length;
-            let buffer_bytes = if let Some(uri) = buffer.uri.as_ref() {
-                let path = resource_path.join(uri);
-                load_file(&mut memmap_holder, &path, Some(buffer_offset..buffer_offset + buffer_size))?
-            } else {
-                bin_buffer.ok_or(GltfLoadingError::GlbBinMissing)?
-            };
-            if buffer_offset + buffer_size >= buffer_bytes.len() {
-                return Err(GltfLoadingError::Oob("texture buffer view bytes"));
-            }
-            bytes = &buffer_bytes[buffer_offset..buffer_offset + buffer_size];
-        } else if let Some(uri) = &image.uri {
-            let mime_type = if uri.ends_with(".ntex") {
-                "image/prs.ntex"
-            } else {
-                return Err(GltfLoadingError::Misc("image uri does not end in .ntex"));
-            };
-            image_load = match mime_type {
-                "image/prs.ntex" => image_loading::load_ntex,
-                _ => return Err(GltfLoadingError::Spec("mime type of texture is not image/prs.ntex")),
-            };
-            let path = resource_path.join(uri);
-            bytes = load_file(&mut memmap_holder, &path, None)?;
-        } else {
-            return Err(GltfLoadingError::Spec("image does not have an uri nor a mimetype + buffer view"));
-        };
-
+        let bytes = load_image_bytes(&mut memmap_holder, resource_path, bin_buffer, image, &gltf)?;
         let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
         let name = image.uri.as_deref().unwrap_or("glb binary buffer");
         images.push(Rc::new(
-            image_load(device, uploader, image_arena, bytes, kind, name)
+            image_loading::load_ntex(device, uploader, image_arena, bytes, kind, name)
                 .map_err(|err| GltfLoadingError::ImageLoading(err, name.to_string()))?,
         ));
     }
 
-    let mut material_factors = Vec::with_capacity(gltf.materials.len());
-    for mat in &gltf.materials {
-        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
-        let metallic_factor = pbr.metallic_factor.unwrap_or(1.0);
-        let roughness_factor = pbr.roughness_factor.unwrap_or(1.0);
-        let alpha_cutoff = if mat.alpha_mode == gltf_json::AlphaMode::Mask {
-            mat.alpha_cutoff.unwrap_or(0.5)
-        } else {
-            0.0
-        };
-        material_factors.push(GltfFactors {
-            base_color: pbr
-                .base_color_factor
-                .as_ref()
-                .map(|&[r, g, b, a]| Vec4::new(r, g, b, a))
-                .unwrap_or(Vec4::ONE),
-            emissive: mat
-                .emissive_factor
-                .as_ref()
-                .map(|&[r, g, b]| Vec4::new(r, g, b, 0.0))
-                .unwrap_or(Vec4::ZERO),
-            metallic_roughness_alpha_cutoff: Vec4::new(metallic_factor, roughness_factor, alpha_cutoff, 0.0),
-        });
-    }
+    let material_factors = get_material_factors(&gltf)?;
     let factors_slice = bytemuck::cast_slice(&material_factors);
-    let buffer_create_info = vk::BufferCreateInfo::builder()
-        .size(factors_slice.len() as u64)
-        .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .build();
+    let buffer_create_info = get_material_factors_buffer_create_info(factors_slice.len() as vk::DeviceSize);
     let factors_buffer = buffer_arena
         .create_buffer(
             buffer_create_info,
@@ -533,6 +395,63 @@ fn create_gltf(
         materials,
         meshes,
     })
+}
+
+fn map_file<'a>(memmap_holder: &'a mut Option<Mmap>, path: &Path, range: Option<Range<usize>>) -> Result<&'a [u8], GltfLoadingError> {
+    let file = File::open(&path).map_err(|err| GltfLoadingError::OpenFile(err, path.to_owned()))?;
+    let mut memmap_options = MmapOptions::new();
+    if let Some(range) = range {
+        memmap_options.offset(range.start as u64);
+        memmap_options.len(range.count());
+    }
+    let memmap = unsafe { memmap_options.map(&file) }.map_err(|err| GltfLoadingError::MapFile(err, path.to_owned()))?;
+    let _ = memmap.advise(Advice::Sequential);
+    let _ = memmap.advise(Advice::WillNeed);
+    *memmap_holder = Some(memmap);
+    Ok(memmap_holder.as_deref().unwrap())
+}
+
+pub(crate) fn load_image_bytes<'a>(
+    memmap_holder: &'a mut Option<Mmap>,
+    resource_path: &Path,
+    bin_buffer: Option<&'a [u8]>,
+    image: &gltf_json::Image,
+    gltf: &gltf_json::GltfJson,
+) -> Result<&'a [u8], GltfLoadingError> {
+    profiling::scope!("map image file into memory");
+    if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
+        if mime_type.as_str() != "image/prs.ntex" {
+            return Err(GltfLoadingError::Spec("mime type of texture is not image/prs.ntex"));
+        }
+        let buffer_view = gltf
+            .buffer_views
+            .get(*buffer_view)
+            .ok_or(GltfLoadingError::Oob("texture buffer view"))?;
+        let buffer = gltf
+            .buffers
+            .get(buffer_view.buffer)
+            .ok_or(GltfLoadingError::Oob("texture buffer"))?;
+        let buffer_offset = buffer_view.byte_offset.unwrap_or(0);
+        let buffer_size = buffer_view.byte_length;
+        let buffer_bytes = if let Some(uri) = buffer.uri.as_ref() {
+            let path = resource_path.join(uri);
+            map_file(memmap_holder, &path, Some(buffer_offset..buffer_offset + buffer_size))?
+        } else {
+            bin_buffer.ok_or(GltfLoadingError::GlbBinMissing)?
+        };
+        if buffer_offset + buffer_size >= buffer_bytes.len() {
+            return Err(GltfLoadingError::Oob("texture buffer view bytes"));
+        }
+        Ok(&buffer_bytes[buffer_offset..buffer_offset + buffer_size])
+    } else if let Some(uri) = &image.uri {
+        if !uri.ends_with(".ntex") {
+            return Err(GltfLoadingError::Misc("image uri does not end in .ntex"));
+        };
+        let path = resource_path.join(uri);
+        map_file(memmap_holder, &path, None)
+    } else {
+        Err(GltfLoadingError::Spec("image does not have an uri nor a mimetype + buffer view"))
+    }
 }
 
 #[profiling::function]
@@ -645,4 +564,96 @@ fn stride_for(component_type: i32, attribute_type: &str) -> usize {
         _ => unreachable!(),
     };
     bytes_per_component * components
+}
+
+pub(crate) fn get_mesh_buffer_create_info(size: vk::DeviceSize) -> vk::BufferCreateInfo {
+    vk::BufferCreateInfo::builder()
+        .size(size)
+        .usage(
+            vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::VERTEX_BUFFER
+                | vk::BufferUsageFlags::INDEX_BUFFER
+                | vk::BufferUsageFlags::UNIFORM_BUFFER,
+        )
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .build()
+}
+
+pub(crate) fn get_material_factors_buffer_create_info(size: vk::DeviceSize) -> vk::BufferCreateInfo {
+    vk::BufferCreateInfo::builder()
+        .size(size)
+        .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .build()
+}
+
+pub(crate) fn get_gltf_texture_kinds(gltf: &gltf_json::GltfJson) -> Result<HashMap<usize, TextureKind>, GltfLoadingError> {
+    profiling::scope!("image kind map creation");
+    let mut image_texture_kinds = HashMap::new();
+    for material in &gltf.materials {
+        if let Some(pbr) = &material.pbr_metallic_roughness {
+            if let Some(base_color) = &pbr.base_color_texture {
+                let texture = gltf.textures.get(base_color.index).ok_or(GltfLoadingError::Oob("texture"))?;
+                if let Some(image_index) = texture.source {
+                    image_texture_kinds.insert(image_index, TextureKind::SrgbColor);
+                }
+            }
+            if let Some(metallic_roughness) = &pbr.metallic_roughness_texture {
+                let texture = gltf
+                    .textures
+                    .get(metallic_roughness.index)
+                    .ok_or(GltfLoadingError::Oob("texture"))?;
+                if let Some(image_index) = texture.source {
+                    image_texture_kinds.insert(image_index, TextureKind::LinearColor);
+                }
+            }
+        }
+        if let Some(normal) = &material.normal_texture {
+            let texture = gltf.textures.get(normal.index).ok_or(GltfLoadingError::Oob("texture"))?;
+            if let Some(image_index) = texture.source {
+                image_texture_kinds.insert(image_index, TextureKind::NormalMap);
+            }
+        }
+        if let Some(emissive) = &material.emissive_texture {
+            let texture = gltf.textures.get(emissive.index).ok_or(GltfLoadingError::Oob("texture"))?;
+            if let Some(image_index) = texture.source {
+                image_texture_kinds.insert(image_index, TextureKind::SrgbColor);
+            }
+        }
+        if let Some(occlusion) = &material.occlusion_texture {
+            let texture = gltf.textures.get(occlusion.index).ok_or(GltfLoadingError::Oob("texture"))?;
+            if let Some(image_index) = texture.source {
+                image_texture_kinds.insert(image_index, TextureKind::LinearColor);
+            }
+        }
+    }
+    Ok(image_texture_kinds)
+}
+
+pub(crate) fn get_material_factors(gltf: &gltf_json::GltfJson) -> Result<Vec<GltfFactors>, GltfLoadingError> {
+    let mut material_factors = Vec::with_capacity(gltf.materials.len());
+    for mat in &gltf.materials {
+        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
+        let metallic_factor = pbr.metallic_factor.unwrap_or(1.0);
+        let roughness_factor = pbr.roughness_factor.unwrap_or(1.0);
+        let alpha_cutoff = if mat.alpha_mode == gltf_json::AlphaMode::Mask {
+            mat.alpha_cutoff.unwrap_or(0.5)
+        } else {
+            0.0
+        };
+        material_factors.push(GltfFactors {
+            base_color: pbr
+                .base_color_factor
+                .as_ref()
+                .map(|&[r, g, b, a]| Vec4::new(r, g, b, a))
+                .unwrap_or(Vec4::ONE),
+            emissive: mat
+                .emissive_factor
+                .as_ref()
+                .map(|&[r, g, b]| Vec4::new(r, g, b, 0.0))
+                .unwrap_or(Vec4::ZERO),
+            metallic_roughness_alpha_cutoff: Vec4::new(metallic_factor, roughness_factor, alpha_cutoff, 0.0),
+        });
+    }
+    Ok(material_factors)
 }

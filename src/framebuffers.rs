@@ -62,7 +62,10 @@ impl Framebuffers {
         );
         let resolve_src_image_info = match pipelines.render_pass_layout {
             AttachmentLayout::SingleSampled => None,
-            AttachmentLayout::MultiSampled => Some(create_image_info(swapchain_format, vk::ImageUsageFlags::COLOR_ATTACHMENT)),
+            AttachmentLayout::MultiSampled => Some(create_image_info(
+                swapchain_format,
+                vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+            )),
         };
 
         let mut framebuffer_size = 0;
@@ -74,7 +77,7 @@ impl Framebuffers {
             }
             for framebuffer_image_info in image_infos {
                 let image = unsafe { device.create_image(&framebuffer_image_info, None) }.map_err(FramebufferCreationError::QueryImage)?;
-                debug_utils::name_vulkan_object(device, image, format_args!("memory requirement querying temp img"));
+                debug_utils::name_vulkan_object(device, image, format_args!("memory requirement querying temp image"));
                 let reqs = unsafe { device.get_image_memory_requirements(image) };
                 let size_mod = framebuffer_size % reqs.alignment;
                 if size_mod != 0 {
@@ -92,7 +95,7 @@ impl Framebuffers {
             framebuffer_size,
             vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            format_args!("framebuffer arena ({width}x{height}, {swapchain_format:?})"),
+            format_args!("framebuffer arena ({width}x{height})"),
         )
         .map_err(FramebufferCreationError::Arena)?;
 

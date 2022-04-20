@@ -361,6 +361,7 @@ fn create_pipelines(
         // take care of the rest.
         let create_info = vk::PipelineCacheCreateInfo::builder().flags(vk::PipelineCacheCreateFlags::EXTERNALLY_SYNCHRONIZED);
         let pipeline_cache = unsafe { device.create_pipeline_cache(&create_info, None) }.ok()?;
+        debug_utils::name_vulkan_object(device, pipeline_cache, format_args!("all pipelines"));
         Some(PipelineCache {
             inner: pipeline_cache,
             device: device.clone(),

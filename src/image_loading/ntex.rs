@@ -11,6 +11,8 @@ pub enum NtexDecodeError {
     DepthUnsupported(u32),
     #[error("ntex image data ended early: file contains {actual} of data, expected at least {expected}")]
     NotEnoughPixels { expected: Bytes, actual: Bytes },
+    #[error("ntex file length does not match header, expected: {expected}, actual: {actual}")]
+    FileLength { expected: usize, actual: usize },
 }
 
 pub struct NtexData<'a> {
@@ -57,7 +59,13 @@ pub fn decode(bytes: &[u8]) -> Result<NtexData, NtexDecodeError> {
         mip_ranges.push(prev_mip_end..prev_mip_end + mip_size);
         prev_mip_end += mip_size;
     }
-    debug_assert_eq!(bytes.len(), prev_mip_end + 1024);
+
+    if bytes.len() != prev_mip_end + 1024 {
+        return Err(NtexDecodeError::FileLength {
+            expected: prev_mip_end + 1024,
+            actual: bytes.len(),
+        });
+    }
 
     Ok(NtexData {
         width,
