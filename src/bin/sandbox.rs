@@ -58,6 +58,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner)?;
     let physical_device = physical_devices.remove(0)?;
     let mut device = neonvk::create_device(&instance.inner, &physical_device)?;
+    let mut descriptors = neonvk::Descriptors::new(&instance, &device, &physical_device)?;
 
     let msaa_samples = neonvk::vk::SampleCountFlags::TYPE_4;
     if !physical_device
@@ -72,7 +73,6 @@ fn fallible_main() -> anyhow::Result<()> {
     let resources_path = find_resources_path();
     let mut assets_buffers_measurer = neonvk::VulkanArenaMeasurer::new(&device);
     let mut assets_textures_measurer = neonvk::VulkanArenaMeasurer::new(&device);
-    neonvk::PbrDefaults::measure(&mut assets_textures_measurer)?;
     neonvk::measure_gltf_memory_usage(
         (&mut assets_buffers_measurer, &mut assets_textures_measurer),
         &resources_path.join("Sponza.gltf"),
@@ -108,8 +108,6 @@ fn fallible_main() -> anyhow::Result<()> {
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         format_args!("sandbox assets (textures)"),
     )?;
-    let pbr_defaults = neonvk::PbrDefaults::new(&device, &mut uploader, &mut assets_textures_arena)?;
-    let mut descriptors = neonvk::Descriptors::new(&device, physical_device.properties, pbr_defaults)?;
 
     let sponza_model;
     {
@@ -198,8 +196,8 @@ fn fallible_main() -> anyhow::Result<()> {
             }
         }
 
-        if let Some(resize_instant) = resize_timestamp {
-            if (Instant::now() - resize_instant) > Duration::from_millis(100) {
+        if let Some(duration_since_resize) = resize_timestamp.and_then(|t| Instant::now().checked_duration_since(t)) {
+            if duration_since_resize > Duration::from_millis(100) {
                 profiling::scope!("handle resize");
                 device.wait_idle()?;
                 drop(framebuffers);

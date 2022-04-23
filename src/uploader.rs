@@ -149,18 +149,23 @@ impl Uploader {
             .map(move |fence| unsafe { self.device.get_fence_status(fence.inner) }.unwrap_or(false))
     }
 
-    /// Waits `timeout` for the uploads to finish, then returns true
-    /// if the uploads are done, false if some are still in progress.
+    /// Waits `timeout` for the uploads to finish, then returns true if the
+    /// uploads are done, false if some are still in progress. Passing in None
+    /// will attempt to wait until the uploads are done.
     ///
-    /// A zero duration can be passed in to simply check the status of
-    /// the uploads as a whole, as opposed to the status of every
-    /// individual upload operation with
-    /// [Uploader::get_upload_statuses], which may be more
+    /// A zero duration can be passed in to simply check the status of the
+    /// uploads as a whole, as opposed to the status of every individual upload
+    /// operation with [Uploader::get_upload_statuses], which may be more
     /// inefficient.
-    pub fn wait(&self, timeout: Duration) -> Result<bool, UploaderError> {
+    pub fn wait<D: Into<Option<Duration>>>(&self, timeout: D) -> Result<bool, UploaderError> {
+        let timeout = if let Some(timeout) = timeout.into() {
+            timeout.as_nanos() as u64
+        } else {
+            u64::MAX
+        };
         profiling::scope!("waiting on uploader fences");
         let fences = self.upload_fences.iter().map(|fence| fence.inner).collect::<Vec<_>>();
-        match unsafe { self.device.wait_for_fences(&fences, true, timeout.as_nanos() as u64) } {
+        match unsafe { self.device.wait_for_fences(&fences, true, timeout) } {
             Ok(_) => Ok(true),
             Err(vk::Result::TIMEOUT) => Ok(false),
             Err(err) => Err(UploaderError::FenceWait(err)),

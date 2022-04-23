@@ -10,61 +10,12 @@ macro_rules! cstr {
 // internal modules:
 
 mod debug_utils;
+mod image_loading;
 mod mesh;
 mod physical_device_features;
 mod vulkan_raii;
 
 // public-facing modules:
-
-mod arena;
-pub use arena::{ForBuffers, ForImages, VulkanArena};
-
-pub use ash::vk;
-
-mod framebuffers;
-pub use framebuffers::Framebuffers;
-
-mod descriptors;
-pub use descriptors::{Descriptors, Material};
-
-mod device;
-pub use device::create_device;
-
-mod instance;
-pub use instance::Instance;
-
-mod error;
-pub use error::Error;
-
-mod gltf;
-pub use gltf::{Gltf, MeshIter};
-
-mod image_loading;
-pub use image_loading::PbrDefaults;
-
-mod memory_measurement;
-pub use memory_measurement::*;
-
-mod physical_device;
-pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
-
-mod pipelines;
-pub use pipelines::Pipelines;
-
-mod pipeline_parameters;
-pub use pipeline_parameters::PipelineIndex;
-
-mod renderer;
-pub use renderer::{FrameIndex, Renderer};
-
-mod scene;
-pub use scene::Scene;
-
-mod swapchain;
-pub use swapchain::{Swapchain, SwapchainBase, SwapchainSettings};
-
-mod uploader;
-pub use uploader::Uploader;
 
 mod allocation {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -80,6 +31,20 @@ mod allocation {
     }
 }
 pub use allocation::{get_allocated_vram, get_allocated_vram_in_use};
+
+mod arena;
+pub use arena::{ForBuffers, ForImages, VulkanArena};
+
+pub use ash::vk;
+
+mod framebuffers;
+pub use framebuffers::Framebuffers;
+
+mod descriptors;
+pub use descriptors::{Descriptors, Material};
+
+mod device;
+pub use device::create_device;
 
 pub mod display_utils {
     use std::fmt::{Display, Formatter, Result};
@@ -104,6 +69,39 @@ pub mod display_utils {
     }
 }
 
+mod instance;
+pub use instance::Instance;
+
+mod error;
+pub use error::Error;
+
+mod gltf;
+pub use gltf::{Gltf, MeshIter};
+
+mod memory_measurement {
+    mod arena;
+    pub use arena::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
+
+    mod gltf;
+    pub use gltf::{measure_glb_memory_usage, measure_gltf_memory_usage};
+}
+pub use memory_measurement::*;
+
+mod physical_device;
+pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
+
+mod pipelines;
+pub use pipelines::Pipelines;
+
+mod pipeline_parameters;
+pub use pipeline_parameters::PipelineIndex;
+
+mod renderer;
+pub use renderer::{FrameIndex, Renderer};
+
+mod scene;
+pub use scene::Scene;
+
 mod surface {
     use crate::vulkan_raii::Surface;
     use crate::Error;
@@ -122,3 +120,9 @@ mod surface {
     }
 }
 pub use surface::create_surface;
+
+mod swapchain;
+pub use swapchain::{Swapchain, SwapchainBase, SwapchainSettings};
+
+mod uploader;
+pub use uploader::Uploader;
