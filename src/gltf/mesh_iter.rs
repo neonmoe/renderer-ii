@@ -32,15 +32,18 @@ impl<'a> Iterator for MeshIter<'a> {
                     self.node_queue.push(*child);
                 }
             }
-            let mesh_index = node.mesh?;
-            self.current_sub_iter
-                .insert(InnerMeshIter {
-                    gltf: self.gltf,
-                    mesh_index,
-                    primitive_index: 0,
-                    transform: node.transform,
-                })
-                .next()
+            if let Some(mesh_index) = node.mesh {
+                self.current_sub_iter
+                    .insert(InnerMeshIter {
+                        gltf: self.gltf,
+                        mesh_index,
+                        primitive_index: 0,
+                        transform: node.transform,
+                    })
+                    .next()
+            } else {
+                self.next()
+            }
         }
     }
 }

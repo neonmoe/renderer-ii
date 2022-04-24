@@ -1,7 +1,9 @@
+use glam::{Quat, Vec3};
 use log::LevelFilter;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
+use sdl2::mouse::MouseButton;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -75,8 +77,13 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut assets_textures_measurer = neonvk::VulkanArenaMeasurer::new(&device);
     neonvk::measure_gltf_memory_usage(
         (&mut assets_buffers_measurer, &mut assets_textures_measurer),
-        &resources_path.join("Sponza.gltf"),
-        &resources_path,
+        &resources_path.join("sponza/glTF/Sponza.gltf"),
+        &resources_path.join("sponza/glTF"),
+    )?;
+    neonvk::measure_gltf_memory_usage(
+        (&mut assets_buffers_measurer, &mut assets_textures_measurer),
+        &resources_path.join("spinny-helmet/helmet.gltf"),
+        &resources_path.join("spinny-helmet"),
     )?;
 
     let mut uploader = neonvk::Uploader::new(
@@ -110,6 +117,7 @@ fn fallible_main() -> anyhow::Result<()> {
     )?;
 
     let sponza_model;
+    let spinny_helmet_model;
     {
         profiling::scope!("loading Sponza.gltf from disk to vram");
         let upload_start = Instant::now();
@@ -118,8 +126,16 @@ fn fallible_main() -> anyhow::Result<()> {
             &mut uploader,
             &mut descriptors,
             (&mut assets_buffers_arena, &mut assets_textures_arena),
-            &resources_path.join("Sponza.gltf"),
-            &resources_path,
+            &resources_path.join("sponza/glTF/Sponza.gltf"),
+            &resources_path.join("sponza/glTF"),
+        )?;
+        spinny_helmet_model = neonvk::Gltf::from_gltf(
+            &device,
+            &mut uploader,
+            &mut descriptors,
+            (&mut assets_buffers_arena, &mut assets_textures_arena),
+            &resources_path.join("spinny-helmet/helmet.gltf"),
+            &resources_path.join("spinny-helmet"),
         )?;
         let upload_wait_start = Instant::now();
         assert!(uploader.wait(Duration::from_secs(5))?);
@@ -157,24 +173,17 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut resize_timestamp = None;
     let mut debug_value = 0;
+    let mut update_time = Instant::now();
+    let (mut cam_x, mut cam_y, mut cam_z, mut cam_yaw, mut cam_pitch) = (0.0, 1.6, 0.0, 0.0, 0.0);
+    let (mut dx, mut dy, mut dz) = (0.0, 0.0, 0.0);
+    let (mut mouse_look, mut sprinting) = (false, false);
     'running: loop {
         let update_start_time = Instant::now();
         {
             profiling::scope!("handle SDL events");
             for event in event_pump.poll_iter() {
                 match event {
-                    Event::Quit { .. }
-                    | Event::KeyDown {
-                        keycode: Some(Keycode::Escape),
-                        ..
-                    } => break 'running,
-
-                    Event::KeyDown {
-                        keycode: Some(Keycode::I), ..
-                    } => {
-                        swapchain_settings.immediate_present = !swapchain_settings.immediate_present;
-                        resize_timestamp = Some(Instant::now());
-                    }
+                    Event::Quit { .. } => break 'running,
 
                     Event::KeyDown { keycode, .. } => match keycode {
                         Some(Keycode::Num0) => debug_value = 0,
@@ -183,8 +192,56 @@ fn fallible_main() -> anyhow::Result<()> {
                         Some(Keycode::Num3) => debug_value = 3,
                         Some(Keycode::Num4) => debug_value = 4,
                         Some(Keycode::Num5) => debug_value = 5,
+                        Some(Keycode::W) => dz = -1.0,
+                        Some(Keycode::A) => dx = -1.0,
+                        Some(Keycode::S) => dz = 1.0,
+                        Some(Keycode::D) => dx = 1.0,
+                        Some(Keycode::E) => dy = 1.0,
+                        Some(Keycode::Q) => dy = -1.0,
+                        Some(Keycode::LShift) => sprinting = true,
+                        Some(Keycode::Escape) if mouse_look => {
+                            mouse_look = false;
+                            sdl_context.mouse().set_relative_mouse_mode(false);
+                            sdl_context.mouse().show_cursor(true);
+                        }
                         _ => {}
                     },
+
+                    Event::KeyUp { keycode, .. } => match keycode {
+                        Some(Keycode::I) => {
+                            swapchain_settings.immediate_present = !swapchain_settings.immediate_present;
+                            resize_timestamp = Some(Instant::now());
+                        }
+                        Some(Keycode::W) if dz == -1.0 => dz = 0.0,
+                        Some(Keycode::A) if dx == -1.0 => dx = 0.0,
+                        Some(Keycode::S) if dz == 1.0 => dz = 0.0,
+                        Some(Keycode::D) if dx == 1.0 => dx = 0.0,
+                        Some(Keycode::E) if dy == 1.0 => dy = 0.0,
+                        Some(Keycode::Q) if dy == -1.0 => dy = 0.0,
+                        Some(Keycode::LShift) => sprinting = false,
+                        _ => {}
+                    },
+
+                    Event::MouseButtonDown {
+                        mouse_btn: MouseButton::Left,
+                        ..
+                    } => {
+                        mouse_look = !mouse_look;
+                        if mouse_look {
+                            sdl_context.mouse().set_relative_mouse_mode(true);
+                            sdl_context.mouse().show_cursor(false);
+                        } else {
+                            sdl_context.mouse().set_relative_mouse_mode(false);
+                            sdl_context.mouse().show_cursor(true);
+                        }
+                    }
+
+                    Event::MouseMotion { xrel, yrel, .. } => {
+                        if mouse_look {
+                            cam_yaw -= xrel as f32 / 750.0;
+                            cam_pitch = (cam_pitch - yrel as f32 / 750.0).clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
+                        }
+                    }
 
                     Event::Window {
                         win_event: WindowEvent::SizeChanged(_, _),
@@ -224,10 +281,27 @@ fn fallible_main() -> anyhow::Result<()> {
             }
         }
 
+        let new_update_time = Instant::now();
+        let dt = (new_update_time - update_time).as_secs_f32();
+        update_time = new_update_time;
+
         let mut scene = neonvk::Scene::default();
+        scene.camera.orientation = Quat::from_rotation_y(cam_yaw) * Quat::from_rotation_x(cam_pitch);
+        if dx != 0.0 || dz != 0.0 || dy != 0.0 {
+            let speed = if sprinting { 10.0 } else { 5.0 };
+            let move_vec = (scene.camera.orientation * Vec3::new(dx, dy, dz)).normalize() * speed;
+            cam_x += move_vec.x * dt;
+            cam_y += move_vec.y * dt;
+            cam_z += move_vec.z * dt;
+        }
+        scene.camera.position = Vec3::new(cam_x, cam_y, cam_z);
+
         {
             profiling::scope!("queue meshes to render");
             for (mesh, material, transform) in sponza_model.mesh_iter() {
+                scene.queue(mesh, material, transform);
+            }
+            for (mesh, material, transform) in spinny_helmet_model.mesh_iter() {
                 scene.queue(mesh, material, transform);
             }
         }
@@ -291,6 +365,7 @@ fn fallible_main() -> anyhow::Result<()> {
         drop(pipelines);
 
         // Per-device-objects.
+        drop(spinny_helmet_model);
         drop(sponza_model);
         drop(assets_textures_arena);
         drop(assets_buffers_arena);
@@ -316,15 +391,15 @@ fn fallible_main() -> anyhow::Result<()> {
 fn find_resources_path() -> PathBuf {
     let current_path = Path::new(".").canonicalize().unwrap();
     let path = if current_path.ends_with("src") {
-        "bin/sponza/glTF"
+        "bin"
     } else if current_path.ends_with("bin") {
-        "sponza/glTF"
-    } else if current_path.ends_with("sponza") {
-        "glTF"
-    } else if current_path.ends_with("glTF") {
         "."
+    } else if current_path.ends_with("sponza") {
+        ".."
+    } else if current_path.ends_with("glTF") {
+        "../.."
     } else {
-        "src/bin/sponza/glTF"
+        "src/bin"
     };
     PathBuf::from(path)
 }

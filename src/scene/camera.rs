@@ -15,13 +15,12 @@ unsafe impl Zeroable for GlobalTransforms {}
 unsafe impl Pod for GlobalTransforms {}
 
 impl GlobalTransforms {
-    fn new(width: f32, height: f32) -> GlobalTransforms {
+    fn new(camera_transform: Mat4, width: f32, height: f32) -> GlobalTransforms {
         let fov = 74f32.to_radians();
         let aspect_ratio = width / height;
         // Lower values seem to cause Z-fighting in the sponza scene.
         // Might be better to use two projection matrixes for e.g. 0.1->5, 5->inf.
         let near = 0.5;
-        let camera_transform = Mat4::from_rotation_translation(Quat::from_rotation_y(1.45), Vec3::new(3.0, 1.6, 0.5));
         GlobalTransforms {
             _projection: reverse_z_rh_infinite_projection(fov, aspect_ratio, near),
             _view: camera_transform.inverse(),
@@ -44,11 +43,14 @@ fn z_rh_infinite_projection(fov: f32, aspect_ratio: f32, near: f32) -> Mat4 {
 }
 
 #[derive(Default)]
-pub struct Camera {}
+pub struct Camera {
+    pub position: Vec3,
+    pub orientation: Quat,
+}
 
 impl Camera {
     #[profiling::function]
     pub(crate) fn create_global_transforms(&self, width: f32, height: f32) -> GlobalTransforms {
-        GlobalTransforms::new(width, height)
+        GlobalTransforms::new(Mat4::from_rotation_translation(self.orientation, self.position), width, height)
     }
 }
