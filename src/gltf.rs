@@ -224,10 +224,11 @@ fn create_gltf(
 
     let mut buffers = Vec::with_capacity(gltf.buffers.len());
     for buffer in &gltf.buffers {
+        let buffer_create_info = get_mesh_buffer_create_info(buffer.byte_length as vk::DeviceSize);
         if let Some(uri) = buffer.uri.as_ref() {
             let path = resource_path.join(uri);
             let data = map_file(&mut memmap_holder, &path, None)?;
-            let buffer_create_info = get_mesh_buffer_create_info(data.len() as vk::DeviceSize);
+            let data = &data[0..buffer.byte_length];
             let buffer = buffer_arena
                 .create_buffer(
                     buffer_create_info,
@@ -240,7 +241,7 @@ fn create_gltf(
         } else {
             match bin_buffer {
                 Some(data) => {
-                    let buffer_create_info = get_mesh_buffer_create_info(data.len() as vk::DeviceSize);
+                    let data = &data[0..buffer.byte_length];
                     let buffer = buffer_arena
                         .create_buffer(
                             buffer_create_info,
@@ -322,6 +323,9 @@ fn create_gltf(
     let mut materials = Vec::with_capacity(gltf.materials.len());
     for (i, mat) in gltf.materials.iter().enumerate() {
         let mktex = |images: &[Rc<ImageView>], texture_info: &gltf_json::TextureInfo| {
+            if texture_info.texcoord.is_some() && texture_info.texcoord != Some(0) {
+                return Some(Err(GltfLoadingError::Misc("non-0 texCoord used for texture")));
+            }
             let texture = match gltf.textures.get(texture_info.index) {
                 Some(tex) => tex,
                 None => return Some(Err(GltfLoadingError::Oob("texture"))),
@@ -367,7 +371,8 @@ fn create_gltf(
             gltf_json::AlphaMode::Mask => PipelineIndex::GltfClipped,
             gltf_json::AlphaMode::Blend => PipelineIndex::GltfBlended,
         };
-        materials.push(Material::new(descriptors, pipeline, pipeline_specific_data).map_err(GltfLoadingError::MaterialCreation)?);
+        let name = mat.name.clone().unwrap_or_else(|| String::from("unnamed material"));
+        materials.push(Material::new(descriptors, pipeline, pipeline_specific_data, name).map_err(GltfLoadingError::MaterialCreation)?);
     }
 
     {

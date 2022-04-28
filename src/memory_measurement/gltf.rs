@@ -74,25 +74,9 @@ fn measure(
 ) -> Result<(), GltfMemoryMeasurementError> {
     for buffer in &gltf.buffers {
         profiling::scope!("measure buffer mem reqs");
-        if let Some(uri) = buffer.uri.as_ref() {
-            let path = resource_path.join(uri);
-            let buffer_size = {
-                profiling::scope!("read buffer file metadata");
-                fs::metadata(path).unwrap().len()
-            };
-            buffer_measurer
-                .add_buffer(get_mesh_buffer_create_info(buffer_size))
-                .map_err(GltfMemoryMeasurementError::VulkanArenaMeasurement)?;
-        } else {
-            match bin_buffer {
-                Some(data) => {
-                    buffer_measurer
-                        .add_buffer(get_mesh_buffer_create_info(data.len() as vk::DeviceSize))
-                        .map_err(GltfMemoryMeasurementError::VulkanArenaMeasurement)?;
-                }
-                None => return Err(GltfMemoryMeasurementError::GltfLoading(GltfLoadingError::GlbBinMissing)),
-            }
-        }
+        buffer_measurer
+            .add_buffer(get_mesh_buffer_create_info(buffer.byte_length as vk::DeviceSize))
+            .map_err(GltfMemoryMeasurementError::VulkanArenaMeasurement)?;
     }
 
     let mut memmap_holder = None;

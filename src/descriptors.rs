@@ -45,6 +45,7 @@ pub enum DescriptorError {
 
 /// A unique index into one pipeline's textures and other material data.
 pub struct Material {
+    pub name: String,
     pub array_index: u32,
     pub pipeline: PipelineIndex,
     data: PipelineSpecificData,
@@ -98,11 +99,13 @@ impl Material {
         descriptors: &mut Descriptors,
         pipeline: PipelineIndex,
         data: PipelineSpecificData,
+        name: String,
     ) -> Result<Rc<Material>, DescriptorError> {
         profiling::scope!("material slot reservation");
         let material_slot_array = descriptors.material_slots_per_pipeline.get_mut(pipeline);
         if let Some((i, slot)) = material_slot_array.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
             let material = Rc::new(Material {
+                name,
                 pipeline,
                 array_index: i as u32,
                 data,
@@ -283,6 +286,7 @@ impl Descriptors {
             "fallback materials",
         )
         .map_err(DescriptorError::CreateMaterialDefaultTexturesUploader)?;
+        // TODO(low): Do something about the pbr defaults arena having its own tiny allocation
         let mut pbr_defaults_arena = VulkanArena::new(
             &instance.inner,
             device,

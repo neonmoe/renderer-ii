@@ -2,7 +2,8 @@ use serde_derive::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Deserialize)]
-pub struct GltfJson {
+#[serde(deny_unknown_fields)]
+pub(crate) struct GltfJson {
     pub asset: Asset,
     pub scene: Option<usize>,
     pub scenes: Option<Vec<Scene>>,
@@ -17,22 +18,29 @@ pub struct GltfJson {
     #[serde(default)]
     pub images: Vec<Image>,
     pub materials: Vec<Material>,
+    #[allow(dead_code)]
+    /// Deliberately ignored for now. When implemented, remove the dead_code
+    /// allowing tags from here and the Sampler definition.
+    pub samplers: Vec<Sampler>,
+    #[serde(default)]
+    pub animations: Vec<Animation>,
+    #[serde(default)]
+    pub skins: Vec<Skin>,
 }
 
 #[derive(Deserialize)]
-pub struct Asset {
+pub(crate) struct Asset {
     pub version: String,
     pub min_version: Option<String>,
 }
 
 #[derive(Deserialize)]
-pub struct Scene {
+pub(crate) struct Scene {
     pub nodes: Option<Vec<usize>>,
 }
 
 #[derive(Deserialize)]
-pub struct Node {
-    pub name: Option<String>,
+pub(crate) struct Node {
     pub mesh: Option<usize>,
     pub children: Option<Vec<usize>>,
     pub matrix: Option<[f32; 16]>,
@@ -42,26 +50,26 @@ pub struct Node {
 }
 
 #[derive(Deserialize)]
-pub struct Mesh {
+pub(crate) struct Mesh {
     pub primitives: Vec<Primitive>,
 }
 
 #[derive(Deserialize)]
-pub struct Primitive {
+pub(crate) struct Primitive {
     pub attributes: HashMap<String, usize>,
     pub indices: Option<usize>,
     pub material: Option<usize>,
 }
 
 #[derive(Deserialize)]
-pub struct Buffer {
+pub(crate) struct Buffer {
     #[serde(rename = "byteLength")]
     pub byte_length: usize,
     pub uri: Option<String>,
 }
 
 #[derive(Deserialize)]
-pub struct BufferView {
+pub(crate) struct BufferView {
     pub buffer: usize,
     #[serde(rename = "byteOffset")]
     pub byte_offset: Option<usize>,
@@ -72,28 +80,25 @@ pub struct BufferView {
 }
 
 #[derive(Deserialize)]
-pub struct Accessor {
+pub(crate) struct Accessor {
     #[serde(rename = "bufferView")]
     pub buffer_view: Option<usize>,
     #[serde(rename = "byteOffset")]
     pub byte_offset: Option<usize>,
     #[serde(rename = "componentType")]
     pub component_type: i32,
-    pub normalized: Option<bool>,
     pub count: usize,
     #[serde(rename = "type")]
     pub attribute_type: String,
-    pub min: Option<Vec<f32>>,
-    pub max: Option<Vec<f32>>,
 }
 
 #[derive(Deserialize)]
-pub struct Texture {
+pub(crate) struct Texture {
     pub source: Option<usize>,
 }
 
 #[derive(Deserialize)]
-pub struct Image {
+pub(crate) struct Image {
     pub uri: Option<String>,
     #[serde(rename = "mimeType")]
     pub mime_type: Option<String>,
@@ -102,7 +107,7 @@ pub struct Image {
 }
 
 #[derive(Deserialize)]
-pub struct Material {
+pub(crate) struct Material {
     pub name: Option<String>,
     #[serde(rename = "pbrMetallicRoughness")]
     pub pbr_metallic_roughness: Option<PbrMetallicRoughness>,
@@ -121,7 +126,7 @@ pub struct Material {
 }
 
 #[derive(Deserialize, PartialEq)]
-pub enum AlphaMode {
+pub(crate) enum AlphaMode {
     #[serde(rename = "OPAQUE")]
     Opaque,
     #[serde(rename = "MASK")]
@@ -137,7 +142,7 @@ impl Default for AlphaMode {
 }
 
 #[derive(Deserialize)]
-pub struct PbrMetallicRoughness {
+pub(crate) struct PbrMetallicRoughness {
     #[serde(rename = "baseColorFactor")]
     pub base_color_factor: Option<[f32; 4]>,
     #[serde(rename = "metallicFactor")]
@@ -151,8 +156,83 @@ pub struct PbrMetallicRoughness {
 }
 
 #[derive(Deserialize)]
-pub struct TextureInfo {
+pub(crate) struct TextureInfo {
     pub index: usize,
     #[serde(rename = "texCoord")]
     pub texcoord: Option<u32>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+pub(crate) struct Sampler {
+    #[serde(rename = "magFilter")]
+    pub mag_filter: Option<u32>,
+    #[serde(rename = "minFilter")]
+    pub min_filter: Option<u32>,
+    #[serde(rename = "wrapS")]
+    pub wrap_s: Option<u32>,
+    #[serde(rename = "wrapT")]
+    pub wrap_t: Option<u32>,
+    pub name: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Animation {
+    pub channels: Vec<AnimationChannel>,
+    pub samplers: Vec<AnimationSampler>,
+    pub name: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AnimationChannel {
+    pub sampler: usize,
+    pub target: AnimationTarget,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AnimationTarget {
+    pub node: usize,
+    pub path: AnimatedProperty,
+}
+
+#[derive(Deserialize)]
+pub(crate) enum AnimatedProperty {
+    #[serde(rename = "translation")]
+    Translation,
+    #[serde(rename = "rotation")]
+    Rotation,
+    #[serde(rename = "scale")]
+    Scale,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AnimationSampler {
+    pub input: usize,
+    #[serde(default)]
+    pub interpolation: AnimationInterpolation,
+    pub output: usize,
+}
+
+#[derive(Deserialize)]
+pub(crate) enum AnimationInterpolation {
+    #[serde(rename = "LINEAR")]
+    Linear,
+    #[serde(rename = "STEP")]
+    Step,
+    #[serde(rename = "CUBICSPLINE")]
+    CubicSpline,
+}
+
+impl Default for AnimationInterpolation {
+    fn default() -> Self {
+        AnimationInterpolation::Linear
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Skin {
+    #[serde(rename = "inverseBindMatrices")]
+    pub inverse_bind_matrices: Option<usize>,
+    pub skeleton: Option<usize>,
+    pub joints: Vec<usize>,
 }
