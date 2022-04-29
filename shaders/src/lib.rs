@@ -1,4 +1,5 @@
 use proc_macro2::{Delimiter, Group, Literal, Punct, Spacing};
+use proc_macro_error::proc_macro_error;
 use quote::{ToTokens, TokenStreamExt};
 use shaderc::{
     CompileOptions, Compiler, EnvVersion, IncludeType, OptimizationLevel, ResolvedInclude, ShaderKind, SourceLanguage, SpirvVersion,
@@ -7,7 +8,9 @@ use shaderc::{
 use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
-use syn::LitStr;
+use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
+use syn::{Lit, Token};
 
 struct Shader {
     bytes: Vec<u32>,
@@ -25,10 +28,42 @@ impl ToTokens for Shader {
     }
 }
 
+struct MacroParams {
+    params: Punctuated<Lit, Token![,]>,
+}
+
+impl Parse for MacroParams {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(MacroParams {
+            params: input.parse_terminated(Lit::parse)?,
+        })
+    }
+}
+
+#[proc_macro_error]
 #[proc_macro]
 pub fn include_spirv(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let relative_shader_path = syn::parse_macro_input!(input as LitStr).value();
-    let shader = compile_shader(&relative_shader_path);
+    let params = syn::parse_macro_input!(input as MacroParams);
+    let mut param_iter = params.params.iter();
+    let relative_shader_path = if let Some(path) = param_iter.next() {
+        if let Lit::Str(path) = path {
+            path.value()
+        } else {
+            proc_macro_error::abort!(path.span(), "expected shader path to be a string literal");
+        }
+    } else {
+        panic!("expected at least the shader path");
+    };
+    let defines = param_iter
+        .map(|param| {
+            if let Lit::Str(define) = param {
+                define.value()
+            } else {
+                proc_macro_error::abort!(param.span(), "expected shader define to be a string literal");
+            }
+        })
+        .collect::<Vec<String>>();
+    let shader = compile_shader(&relative_shader_path, &defines);
     let shader_path_string = shader.source_path.to_string_lossy();
     let result = quote::quote!({
         const FILE_DEPENDENCY_MARKER: &str = include_str!(#shader_path_string);
@@ -38,7 +73,7 @@ pub fn include_spirv(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     proc_macro::TokenStream::from(result)
 }
 
-fn compile_shader(shader_path: &str) -> Shader {
+fn compile_shader(shader_path: &str, defines: &[String]) -> Shader {
     let shader_dir = PathBuf::from("src").canonicalize().unwrap();
     let mut compiler = Compiler::new().unwrap();
     let mut options = CompileOptions::new().unwrap();
@@ -70,6 +105,9 @@ fn compile_shader(shader_path: &str) -> Shader {
             }
         },
     );
+    for define in defines {
+        options.add_macro_definition(&define, None);
+    }
 
     let mut full_shader_path = shader_dir.clone();
     full_shader_path.push(shader_path);
