@@ -207,13 +207,13 @@ pub(crate) enum AnimatedProperty {
 
 #[derive(Deserialize)]
 pub(crate) struct AnimationSampler {
-    pub input: usize,
     #[serde(default)]
     pub interpolation: AnimationInterpolation,
+    pub input: usize,
     pub output: usize,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Copy)]
 pub(crate) enum AnimationInterpolation {
     #[serde(rename = "LINEAR")]
     Linear,

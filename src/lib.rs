@@ -76,7 +76,7 @@ mod error;
 pub use error::Error;
 
 mod gltf;
-pub use gltf::{Gltf, MeshIter};
+pub use gltf::{Animation, Gltf, MeshIter};
 
 mod memory_measurement {
     mod arena;

@@ -1,5 +1,6 @@
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::descriptors::{DescriptorError, GltfFactors, PipelineSpecificData};
+use crate::gltf::gltf_json::AnimationInterpolation;
 use crate::image_loading::{self, ImageLoadingError, TextureKind};
 use crate::mesh::Mesh;
 use crate::vk;
@@ -76,6 +77,25 @@ pub enum GltfLoadingError {
     Misc(&'static str),
 }
 
+type NodeAnimChannels = Vec<AnimationChannel>;
+pub struct Animation {
+    pub name: Option<String>,
+    nodes_channels: Vec<Option<NodeAnimChannels>>,
+}
+
+#[derive(Clone)]
+struct AnimationChannel {
+    interpolation: AnimationInterpolation,
+    keyframes: Keyframes,
+}
+
+#[derive(Clone)]
+enum Keyframes {
+    Translation(Vec<(f32, Vec3)>),
+    Rotation(Vec<(f32, Quat)>),
+    Scale(Vec<(f32, Vec3)>),
+}
+
 struct Node {
     mesh: Option<usize>,
     children: Option<Vec<usize>>,
@@ -83,6 +103,7 @@ struct Node {
 }
 
 pub struct Gltf {
+    pub animations: Vec<Animation>,
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
     meshes: Vec<Vec<(Mesh, usize)>>,
@@ -375,26 +396,142 @@ fn create_gltf(
         materials.push(Material::new(descriptors, pipeline, pipeline_specific_data, name).map_err(GltfLoadingError::MaterialCreation)?);
     }
 
-    {
-        profiling::scope!("node graph creation");
-        let mut visited_nodes = vec![false; nodes.len()];
-        let mut queue = Vec::with_capacity(nodes.len());
-        queue.extend_from_slice(&root_nodes);
-        while let Some(node) = queue.pop() {
-            if visited_nodes[node] {
-                return Err(GltfLoadingError::InvalidNodeGraph);
-            } else {
-                visited_nodes[node] = true;
-                if let Some(children) = &nodes[node].children {
-                    for child in children {
-                        queue.push(*child);
+    // TODO: Animations:
+    // TODO: Sending the inverse bind matrices to the GPU
+    // TODO: Sending the transforms of the nodes in the joints-array of skins, animated with the current Animation, to the GPU
+    // The above stuff could probably all be batched into one array of buffers,
+    // or simply a continuous buffer and referring to the sub parts with UBO
+    // offsets. Not sure, but all the animation data should definitely be
+    // written all at once.
+    // TODO: Test by pretending that every vertex has max weight for joint 0 and zero for the rest.
+    // TODO: Sending joints and weights to the GPU (should be easy, just more attributes)
+    // The hard part however, is deciding how to deal with some meshes having them and some not.
+
+    let mut animations = Vec::with_capacity(gltf.animations.len());
+    for animation in &gltf.animations {
+        let mut nodes_channels = vec![None; gltf.nodes.len()];
+        for channel in &animation.channels {
+            let sampler = animation
+                .samplers
+                .get(channel.sampler)
+                .ok_or(GltfLoadingError::Oob("animation samplers"))?;
+            let channels_for_node = nodes_channels
+                .get_mut(channel.target.node)
+                .ok_or(GltfLoadingError::Oob("animation target node"))?
+                .get_or_insert_with(Vec::new);
+            let (timestamps, _) = get_slice_and_component_type_from_accessor(
+                &mut memmap_holder,
+                resource_path,
+                bin_buffer,
+                &gltf,
+                sampler.input,
+                GLTF_FLOAT,
+                "SCALAR",
+            )?;
+            let timestamps: &[f32] = bytemuck::cast_slice(timestamps);
+
+            let keyframes = match channel.target.path {
+                gltf_json::AnimatedProperty::Translation | gltf_json::AnimatedProperty::Scale => {
+                    let mut keyframes = timestamps.iter().map(|f| (*f, Vec3::ZERO)).collect::<Vec<(f32, Vec3)>>();
+                    let (translations, _) = get_slice_and_component_type_from_accessor(
+                        &mut memmap_holder,
+                        resource_path,
+                        bin_buffer,
+                        &gltf,
+                        sampler.output,
+                        GLTF_FLOAT,
+                        "VEC3",
+                    )?;
+                    let translations: &[Vec3] = bytemuck::cast_slice(translations);
+                    for (from, (_, to)) in translations.iter().zip(keyframes.iter_mut()) {
+                        *to = *from;
                     }
+                    if let gltf_json::AnimatedProperty::Translation = channel.target.path {
+                        Keyframes::Translation(keyframes)
+                    } else {
+                        Keyframes::Scale(keyframes)
+                    }
+                }
+                gltf_json::AnimatedProperty::Rotation => {
+                    let mut keyframes = timestamps.iter().map(|f| (*f, Quat::IDENTITY)).collect::<Vec<(f32, Quat)>>();
+                    let (rotations, ctype) = get_slice_and_component_type_from_accessor(
+                        &mut memmap_holder,
+                        resource_path,
+                        bin_buffer,
+                        &gltf,
+                        sampler.output,
+                        None,
+                        "VEC4",
+                    )?;
+                    let component_stride = stride_for(ctype, "SCALAR");
+                    for (quat_bytes, (_, to)) in rotations.chunks_exact(component_stride * 4).zip(keyframes.iter_mut()) {
+                        let x = &quat_bytes[0..component_stride];
+                        let y = &quat_bytes[component_stride..component_stride * 2];
+                        let z = &quat_bytes[component_stride * 2..component_stride * 3];
+                        let w = &quat_bytes[component_stride * 3..component_stride * 4];
+                        *to = match ctype {
+                            GLTF_BYTE => Quat::from_xyzw(
+                                (x[0] as f32 / 127.0).max(-1.0),
+                                (y[0] as f32 / 127.0).max(-1.0),
+                                (z[0] as f32 / 127.0).max(-1.0),
+                                (w[0] as f32 / 127.0).max(-1.0),
+                            ),
+                            GLTF_UNSIGNED_BYTE => {
+                                Quat::from_xyzw(x[0] as f32 / 255.0, y[0] as f32 / 255.0, z[0] as f32 / 255.0, w[0] as f32 / 255.0)
+                            }
+                            GLTF_SHORT => Quat::from_xyzw(
+                                (u16::from_le_bytes([x[0], x[1]]) as f32 / 32767.0).max(-1.0),
+                                (u16::from_le_bytes([y[0], y[1]]) as f32 / 32767.0).max(-1.0),
+                                (u16::from_le_bytes([z[0], z[1]]) as f32 / 32767.0).max(-1.0),
+                                (u16::from_le_bytes([w[0], w[1]]) as f32 / 32767.0).max(-1.0),
+                            ),
+                            GLTF_UNSIGNED_SHORT => Quat::from_xyzw(
+                                u16::from_le_bytes([x[0], x[1]]) as f32 / 65535.0,
+                                u16::from_le_bytes([y[0], y[1]]) as f32 / 65535.0,
+                                u16::from_le_bytes([z[0], z[1]]) as f32 / 65535.0,
+                                u16::from_le_bytes([w[0], w[1]]) as f32 / 65535.0,
+                            ),
+                            GLTF_FLOAT => Quat::from_xyzw(
+                                f32::from_le_bytes([x[0], x[1], x[2], x[3]]),
+                                f32::from_le_bytes([y[0], y[1], y[2], y[3]]),
+                                f32::from_le_bytes([z[0], z[1], z[2], z[3]]),
+                                f32::from_le_bytes([w[0], w[1], w[2], w[3]]),
+                            ),
+                            _ => return Err(GltfLoadingError::Spec("component type of accessor can't be recognized")),
+                        };
+                    }
+                    Keyframes::Rotation(keyframes)
+                }
+            };
+            channels_for_node.push(AnimationChannel {
+                interpolation: sampler.interpolation,
+                keyframes,
+            });
+        }
+        animations.push(Animation {
+            name: animation.name.clone(),
+            nodes_channels,
+        });
+    }
+
+    let mut visited_nodes = vec![false; nodes.len()];
+    let mut queue = Vec::with_capacity(nodes.len());
+    queue.extend_from_slice(&root_nodes);
+    while let Some(node) = queue.pop() {
+        if visited_nodes[node] {
+            return Err(GltfLoadingError::InvalidNodeGraph);
+        } else {
+            visited_nodes[node] = true;
+            if let Some(children) = &nodes[node].children {
+                for child in children {
+                    queue.push(*child);
                 }
             }
         }
     }
 
     Ok(Gltf {
+        animations,
         nodes,
         root_nodes,
         materials,
@@ -478,31 +615,31 @@ fn create_primitive(
 
     let index_accessor = primitive.indices.ok_or(GltfLoadingError::Misc("missing indices"))?;
     let (index_buffer, index_buffer_offset, index_buffer_size) =
-        get_slice_from_accessor(gltf, buffers, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
+        get_buffer_from_accessor(buffers, gltf, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
 
     let pos_accessor = *primitive
         .attributes
         .get("POSITION")
         .ok_or(GltfLoadingError::Misc("missing position attributes"))?;
-    let (pos_buffer, pos_offset, _) = get_slice_from_accessor(gltf, buffers, pos_accessor, GLTF_FLOAT, "VEC3")?;
+    let (pos_buffer, pos_offset, _) = get_buffer_from_accessor(buffers, gltf, pos_accessor, GLTF_FLOAT, "VEC3")?;
 
     let tex_accessor = *primitive
         .attributes
         .get("TEXCOORD_0")
         .ok_or(GltfLoadingError::Misc("missing UV0 attributes"))?;
-    let (tex_buffer, tex_offset, _) = get_slice_from_accessor(gltf, buffers, tex_accessor, GLTF_FLOAT, "VEC2")?;
+    let (tex_buffer, tex_offset, _) = get_buffer_from_accessor(buffers, gltf, tex_accessor, GLTF_FLOAT, "VEC2")?;
 
     let normal_accessor = *primitive
         .attributes
         .get("NORMAL")
         .ok_or(GltfLoadingError::Misc("missing normal attributes"))?;
-    let (normal_buffer, normal_offset, _) = get_slice_from_accessor(gltf, buffers, normal_accessor, GLTF_FLOAT, "VEC3")?;
+    let (normal_buffer, normal_offset, _) = get_buffer_from_accessor(buffers, gltf, normal_accessor, GLTF_FLOAT, "VEC3")?;
 
     let tangent_accessor = *primitive
         .attributes
         .get("TANGENT")
         .ok_or(GltfLoadingError::Misc("missing tangent attributes"))?;
-    let (tangent_buffer, tangent_offset, _) = get_slice_from_accessor(gltf, buffers, tangent_accessor, GLTF_FLOAT, "VEC4")?;
+    let (tangent_buffer, tangent_offset, _) = get_buffer_from_accessor(buffers, gltf, tangent_accessor, GLTF_FLOAT, "VEC4")?;
 
     Ok(Mesh::new::<u16>(
         pipeline,
@@ -515,14 +652,56 @@ fn create_primitive(
 }
 
 #[profiling::function]
-fn get_slice_from_accessor<'buffer>(
-    gltf: &gltf_json::GltfJson,
+fn get_buffer_from_accessor<'buffer>(
     buffers: &'buffer [Rc<Buffer>],
+    gltf: &gltf_json::GltfJson,
     accessor: usize,
     ctype: i32,
     atype: &str,
 ) -> Result<(Rc<Buffer>, vk::DeviceSize, vk::DeviceSize), GltfLoadingError> {
+    let (buffer, offset, length, _) = get_buffer_view_from_accessor(gltf, accessor, Some(ctype), atype)?;
+    let buffer = buffers.get(buffer).ok_or(GltfLoadingError::Oob("buffer"))?;
+    if (offset + length) as vk::DeviceSize > buffer.size {
+        return Err(GltfLoadingError::Oob("buffer offset + length"));
+    }
+    Ok((buffer.clone(), offset as vk::DeviceSize, length as vk::DeviceSize))
+}
+
+#[profiling::function]
+fn get_slice_and_component_type_from_accessor<'buffer, C: Into<Option<i32>>>(
+    memmap_holder: &'buffer mut Option<Mmap>,
+    resource_path: &Path,
+    bin_buffer: Option<&'buffer [u8]>,
+    gltf: &gltf_json::GltfJson,
+    accessor: usize,
+    ctype: C,
+    atype: &str,
+) -> Result<(&'buffer [u8], i32), GltfLoadingError> {
+    let ctype = ctype.into();
+    let (buffer, offset, length, ctype) = get_buffer_view_from_accessor(gltf, accessor, ctype, atype)?;
+    let buffer = gltf.buffers.get(buffer).ok_or(GltfLoadingError::Oob("buffer"))?;
+    if offset + length > buffer.byte_length {
+        return Err(GltfLoadingError::Oob("buffer offset + length"));
+    }
+    let buffer = if let Some(uri) = &buffer.uri {
+        let path = resource_path.join(uri);
+        map_file(memmap_holder, &path, Some(offset..offset + length))?
+    } else if let Some(bin_buffer) = bin_buffer.as_ref() {
+        &bin_buffer[offset..offset + length]
+    } else {
+        return Err(GltfLoadingError::Misc("buffer has no uri but there's no glb buffer"));
+    };
+    Ok((buffer, ctype))
+}
+
+fn get_buffer_view_from_accessor(
+    gltf: &gltf_json::GltfJson,
+    accessor: usize,
+    ctype: Option<i32>,
+    atype: &str,
+) -> Result<(usize, usize, usize, i32), GltfLoadingError> {
     let accessor = gltf.accessors.get(accessor).ok_or(GltfLoadingError::Oob("accessor"))?;
+    let ctype = ctype.unwrap_or(accessor.component_type);
     if accessor.component_type != ctype {
         return Err(GltfLoadingError::Misc("unexpected component type"));
     }
@@ -534,7 +713,6 @@ fn get_slice_from_accessor<'buffer>(
         None => return Err(GltfLoadingError::Misc("no buffer view")),
     };
     let view = gltf.buffer_views.get(view).ok_or(GltfLoadingError::Oob("buffer view"))?;
-    let buffer = buffers.get(view.buffer).ok_or(GltfLoadingError::Oob("buffer"))?;
     let offset = view.byte_offset.unwrap_or(0) + accessor.byte_offset.unwrap_or(0);
     let length = view.byte_length;
     let stride = stride_for(ctype, atype);
@@ -542,13 +720,10 @@ fn get_slice_from_accessor<'buffer>(
         Some(x) if x != stride => return Err(GltfLoadingError::Misc("wrong stride")),
         _ => {}
     }
-    if (offset + length) as vk::DeviceSize > buffer.size {
-        return Err(GltfLoadingError::Oob("buffer offset + length"));
-    }
     if accessor.count != length / stride {
         return Err(GltfLoadingError::Oob("count != byte length / stride"));
     }
-    Ok((buffer.clone(), offset as vk::DeviceSize, length as vk::DeviceSize))
+    Ok((view.buffer, offset, length, ctype))
 }
 
 fn stride_for(component_type: i32, attribute_type: &str) -> usize {
