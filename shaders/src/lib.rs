@@ -68,7 +68,7 @@ pub fn include_spirv(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     let result = quote::quote!({
         const FILE_DEPENDENCY_MARKER: &str = include_str!(#shader_path_string);
         static BYTES: &[u32] = &#shader;
-        BYTES
+        (#relative_shader_path, BYTES)
     });
     proc_macro::TokenStream::from(result)
 }

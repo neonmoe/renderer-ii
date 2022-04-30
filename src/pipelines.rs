@@ -4,6 +4,7 @@ use crate::pipeline_parameters::{PipelineMap, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout, RenderPass};
 use crate::{Descriptors, PhysicalDevice};
 use ash::vk;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 pub(crate) enum AttachmentLayout {
@@ -20,7 +21,7 @@ pub(crate) enum AttachmentLayout {
     MultiSampled,
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone, Copy)]
 pub enum PipelineCreationError {
     #[error("failed to create vulkan render pass object")]
     RenderPass(#[source] vk::Result),
@@ -242,13 +243,14 @@ fn create_pipelines(
     extent: vk::Extent2D,
     mut pipeline_cache: Option<PipelineCache>,
 ) -> Result<(Vec<vk::Pipeline>, Option<PipelineCache>), PipelineCreationError> {
-    let mut all_shader_modules = Vec::with_capacity(PIPELINE_PARAMETERS.len() * 2);
-    let mut create_shader_module = |filename: &'static str, spirv: &'static [u32]| -> Result<vk::ShaderModule, PipelineCreationError> {
-        let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
-        let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(PipelineCreationError::ShaderModule)?;
-        debug_utils::name_vulkan_object(device, shader_module, format_args!("{}", filename));
-        all_shader_modules.push(shader_module);
-        Ok(shader_module)
+    let mut all_shader_modules = HashMap::with_capacity(PIPELINE_PARAMETERS.len() * 2);
+    let mut create_shader_module = |(filename, spirv): (&'static str, &'static [u32])| -> Result<vk::ShaderModule, PipelineCreationError> {
+        *all_shader_modules.entry((filename, spirv)).or_insert_with(|| {
+            let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
+            let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(PipelineCreationError::ShaderModule)?;
+            debug_utils::name_vulkan_object(device, shader_module, format_args!("{}", filename));
+            Ok(shader_module)
+        })
     };
 
     let shader_stages_per_pipeline = PIPELINE_PARAMETERS
@@ -256,11 +258,11 @@ fn create_pipelines(
         .map(|params| {
             let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
                 .stage(vk::ShaderStageFlags::VERTEX)
-                .module(create_shader_module(params.vertex_shader_name, params.vertex_shader)?)
+                .module(create_shader_module(params.vertex_shader)?)
                 .name(cstr!("main"));
             let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
                 .stage(vk::ShaderStageFlags::FRAGMENT)
-                .module(create_shader_module(params.fragment_shader_name, params.fragment_shader)?)
+                .module(create_shader_module(params.fragment_shader)?)
                 .name(cstr!("main"));
             Ok([vert_shader_stage_create_info.build(), frag_shader_stage_create_info.build()])
         })
@@ -395,8 +397,8 @@ fn create_pipelines(
             .map_err(|(_, err)| PipelineCreationError::Object(err))
     }?;
 
-    for shader_module in all_shader_modules {
-        unsafe { device.destroy_shader_module(shader_module, None) };
+    for shader_module in all_shader_modules.values().flatten() {
+        unsafe { device.destroy_shader_module(*shader_module, None) };
     }
 
     Ok((pipelines, pipeline_cache))

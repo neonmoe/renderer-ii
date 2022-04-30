@@ -18,20 +18,29 @@ unsafe impl bytemuck::Zeroable for PushConstantStruct {}
 unsafe impl bytemuck::Pod for PushConstantStruct {}
 
 const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
-    PipelineIndex::GltfOpaque,
-    PipelineIndex::GltfClipped,
-    PipelineIndex::GltfBlended,
+    PipelineIndex::Opaque,
+    PipelineIndex::Clipped,
+    PipelineIndex::Blended,
+    PipelineIndex::AnimatedOpaque,
+    PipelineIndex::AnimatedClipped,
+    PipelineIndex::AnimatedBlended,
     PipelineIndex::RenderResolutionPostProcess,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PipelineIndex {
     /// Opaque geometry pass.
-    GltfOpaque,
+    Opaque,
     /// Alpha-to-coverage "fake transparent" geometry pass.
-    GltfClipped,
+    Clipped,
     /// Transparent geomtry pass.
-    GltfBlended,
+    Blended,
+    /// Animated opaque geometry pass.
+    AnimatedOpaque,
+    /// Animated alpha-to-coverage "fake transparent" geometry pass.
+    AnimatedClipped,
+    /// Animated transparent geomtry pass.
+    AnimatedBlended,
     /// Post-processing pass before MSAA resolve and up/downsampling.
     RenderResolutionPostProcess,
     #[doc(hidden)]
@@ -41,7 +50,7 @@ pub enum PipelineIndex {
 impl PipelineIndex {
     /// A pipeline whose first descriptor set is written to and read
     /// from, where the shared descriptor set is concerned.
-    pub const SHARED_DESCRIPTOR_PIPELINE: PipelineIndex = PipelineIndex::GltfOpaque;
+    pub const SHARED_DESCRIPTOR_PIPELINE: PipelineIndex = PipelineIndex::Opaque;
 }
 
 /// Maps every PipelineIndex to a T.
@@ -60,6 +69,9 @@ impl<T> Drop for PipelineMap<T> {
 impl<T> PipelineMap<T> {
     pub fn new<E, F: FnMut(PipelineIndex) -> Result<T, E>>(mut f: F) -> Result<PipelineMap<T>, E> {
         let mut buffer = [
+            MaybeUninit::uninit(),
+            MaybeUninit::uninit(),
+            MaybeUninit::uninit(),
             MaybeUninit::uninit(),
             MaybeUninit::uninit(),
             MaybeUninit::uninit(),
@@ -112,10 +124,8 @@ pub(crate) struct PipelineParameters {
     pub sample_shading: bool,
     pub min_sample_shading_factor: f32,
     pub subpass: u32,
-    pub vertex_shader: &'static [u32],
-    pub vertex_shader_name: &'static str,
-    pub fragment_shader: &'static [u32],
-    pub fragment_shader_name: &'static str,
+    pub vertex_shader: (&'static str, &'static [u32]),
+    pub fragment_shader: (&'static str, &'static [u32]),
     pub bindings: &'static [vk::VertexInputBindingDescription],
     pub attributes: &'static [vk::VertexInputAttributeDescription],
     pub descriptor_sets: &'static [&'static [DescriptorSetLayoutParams]],
@@ -168,7 +178,7 @@ static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescri
     },
 ];
 
-static GLTF_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
+static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,
     blended: false,
     depth_test: true,
@@ -176,10 +186,8 @@ static GLTF_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     sample_shading: false,
     min_sample_shading_factor: 0.0,
     subpass: 0,
-    vertex_shader: shaders::include_spirv!("shaders/textured.vert"),
-    vertex_shader_name: "shaders/textured.vert",
-    fragment_shader: shaders::include_spirv!("shaders/textured.frag"),
-    fragment_shader_name: "shaders/textured.frag",
+    vertex_shader: shaders::include_spirv!("shaders/main.vert"),
+    fragment_shader: shaders::include_spirv!("shaders/main.frag"),
     bindings: &[
         INSTANCED_TRANSFORM_BINDING_0,
         vk::VertexInputBindingDescription {
@@ -289,14 +297,32 @@ static GLTF_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     ],
 };
 
-static GLTF_CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
+static CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: true,
-    ..GLTF_OPAQUE_PARAMETERS
+    ..OPAQUE_PARAMETERS
 };
 
-static GLTF_BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
+static BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
     blended: true,
-    ..GLTF_OPAQUE_PARAMETERS
+    ..OPAQUE_PARAMETERS
+};
+
+static ANIMATED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
+    vertex_shader: shaders::include_spirv!("shaders/main.vert", "ANIMATED"),
+    fragment_shader: shaders::include_spirv!("shaders/main.frag", "ANIMATED"),
+    ..OPAQUE_PARAMETERS
+};
+
+static ANIMATED_CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
+    vertex_shader: shaders::include_spirv!("shaders/main.vert", "ANIMATED"),
+    fragment_shader: shaders::include_spirv!("shaders/main.frag", "ANIMATED"),
+    ..CLIPPED_PARAMETERS
+};
+
+static ANIMATED_BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
+    vertex_shader: shaders::include_spirv!("shaders/main.vert", "ANIMATED"),
+    fragment_shader: shaders::include_spirv!("shaders/main.frag", "ANIMATED"),
+    ..BLENDED_PARAMETERS
 };
 
 static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
@@ -308,9 +334,7 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     min_sample_shading_factor: 1.0,
     subpass: 1,
     vertex_shader: shaders::include_spirv!("shaders/fullscreen.vert"),
-    vertex_shader_name: "shaders/fullscreen.vert",
     fragment_shader: shaders::include_spirv!("shaders/render_res_pp.frag"),
-    fragment_shader_name: "shaders/render_res_pp.frag",
     bindings: &[],
     attributes: &[],
     descriptor_sets: &[&[DescriptorSetLayoutParams {
@@ -324,9 +348,12 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
 
 pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = PipelineMap {
     buffer: [
-        MaybeUninit::new(GLTF_OPAQUE_PARAMETERS),
-        MaybeUninit::new(GLTF_CLIPPED_PARAMETERS),
-        MaybeUninit::new(GLTF_BLENDED_PARAMETERS),
+        MaybeUninit::new(OPAQUE_PARAMETERS),
+        MaybeUninit::new(CLIPPED_PARAMETERS),
+        MaybeUninit::new(BLENDED_PARAMETERS),
+        MaybeUninit::new(ANIMATED_OPAQUE_PARAMETERS),
+        MaybeUninit::new(ANIMATED_CLIPPED_PARAMETERS),
+        MaybeUninit::new(ANIMATED_BLENDED_PARAMETERS),
         MaybeUninit::new(RENDER_RESOLUTION_POST_PROCESS),
     ],
 };

@@ -388,9 +388,9 @@ fn create_gltf(
             factors,
         };
         let pipeline = match mat.alpha_mode {
-            gltf_json::AlphaMode::Opaque => PipelineIndex::GltfOpaque,
-            gltf_json::AlphaMode::Mask => PipelineIndex::GltfClipped,
-            gltf_json::AlphaMode::Blend => PipelineIndex::GltfBlended,
+            gltf_json::AlphaMode::Opaque => PipelineIndex::Opaque,
+            gltf_json::AlphaMode::Mask => PipelineIndex::Clipped,
+            gltf_json::AlphaMode::Blend => PipelineIndex::Blended,
         };
         let name = mat.name.clone().unwrap_or_else(|| String::from("unnamed material"));
         materials.push(Material::new(descriptors, pipeline, pipeline_specific_data, name).map_err(GltfLoadingError::MaterialCreation)?);
@@ -605,12 +605,12 @@ fn create_primitive(
     let pipeline = if let Some(material_index) = primitive.material {
         let material = gltf.materials.get(material_index).ok_or(GltfLoadingError::Oob("material"))?;
         match material.alpha_mode {
-            gltf_json::AlphaMode::Opaque => PipelineIndex::GltfOpaque,
-            gltf_json::AlphaMode::Mask => PipelineIndex::GltfClipped,
-            gltf_json::AlphaMode::Blend => PipelineIndex::GltfBlended,
+            gltf_json::AlphaMode::Opaque => PipelineIndex::Opaque,
+            gltf_json::AlphaMode::Mask => PipelineIndex::Clipped,
+            gltf_json::AlphaMode::Blend => PipelineIndex::Blended,
         }
     } else {
-        PipelineIndex::GltfOpaque
+        PipelineIndex::Opaque
     };
 
     let index_accessor = primitive.indices.ok_or(GltfLoadingError::Misc("missing indices"))?;

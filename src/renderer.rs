@@ -324,7 +324,7 @@ impl Renderer {
             }
         }
 
-        for pl_index in [PipelineIndex::GltfOpaque, PipelineIndex::GltfClipped, PipelineIndex::GltfBlended] {
+        for pl_index in [PipelineIndex::Opaque, PipelineIndex::Clipped, PipelineIndex::Blended] {
             profiling::scope!("pipeline");
             let meshes = scene.pipeline_map.get(pl_index);
             if meshes.is_empty() {
