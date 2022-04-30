@@ -203,6 +203,8 @@ pub(crate) enum AnimatedProperty {
     Rotation,
     #[serde(rename = "scale")]
     Scale,
+    #[serde(rename = "weights")]
+    Weights,
 }
 
 #[derive(Deserialize)]

@@ -94,6 +94,7 @@ enum Keyframes {
     Translation(Vec<(f32, Vec3)>),
     Rotation(Vec<(f32, Quat)>),
     Scale(Vec<(f32, Vec3)>),
+    Weight(Vec<(f32, f32)>),
 }
 
 struct Node {
@@ -465,42 +466,30 @@ fn create_gltf(
                     )?;
                     let component_stride = stride_for(ctype, "SCALAR");
                     for (quat_bytes, (_, to)) in rotations.chunks_exact(component_stride * 4).zip(keyframes.iter_mut()) {
-                        let x = &quat_bytes[0..component_stride];
-                        let y = &quat_bytes[component_stride..component_stride * 2];
-                        let z = &quat_bytes[component_stride * 2..component_stride * 3];
-                        let w = &quat_bytes[component_stride * 3..component_stride * 4];
-                        *to = match ctype {
-                            GLTF_BYTE => Quat::from_xyzw(
-                                (x[0] as f32 / 127.0).max(-1.0),
-                                (y[0] as f32 / 127.0).max(-1.0),
-                                (z[0] as f32 / 127.0).max(-1.0),
-                                (w[0] as f32 / 127.0).max(-1.0),
-                            ),
-                            GLTF_UNSIGNED_BYTE => {
-                                Quat::from_xyzw(x[0] as f32 / 255.0, y[0] as f32 / 255.0, z[0] as f32 / 255.0, w[0] as f32 / 255.0)
-                            }
-                            GLTF_SHORT => Quat::from_xyzw(
-                                (u16::from_le_bytes([x[0], x[1]]) as f32 / 32767.0).max(-1.0),
-                                (u16::from_le_bytes([y[0], y[1]]) as f32 / 32767.0).max(-1.0),
-                                (u16::from_le_bytes([z[0], z[1]]) as f32 / 32767.0).max(-1.0),
-                                (u16::from_le_bytes([w[0], w[1]]) as f32 / 32767.0).max(-1.0),
-                            ),
-                            GLTF_UNSIGNED_SHORT => Quat::from_xyzw(
-                                u16::from_le_bytes([x[0], x[1]]) as f32 / 65535.0,
-                                u16::from_le_bytes([y[0], y[1]]) as f32 / 65535.0,
-                                u16::from_le_bytes([z[0], z[1]]) as f32 / 65535.0,
-                                u16::from_le_bytes([w[0], w[1]]) as f32 / 65535.0,
-                            ),
-                            GLTF_FLOAT => Quat::from_xyzw(
-                                f32::from_le_bytes([x[0], x[1], x[2], x[3]]),
-                                f32::from_le_bytes([y[0], y[1], y[2], y[3]]),
-                                f32::from_le_bytes([z[0], z[1], z[2], z[3]]),
-                                f32::from_le_bytes([w[0], w[1], w[2], w[3]]),
-                            ),
-                            _ => return Err(GltfLoadingError::Spec("component type of accessor can't be recognized")),
-                        };
+                        let x = parse_float(ctype, &quat_bytes[0..component_stride])?;
+                        let y = parse_float(ctype, &quat_bytes[component_stride..component_stride * 2])?;
+                        let z = parse_float(ctype, &quat_bytes[component_stride * 2..component_stride * 3])?;
+                        let w = parse_float(ctype, &quat_bytes[component_stride * 3..component_stride * 4])?;
+                        *to = Quat::from_xyzw(x, y, z, w);
                     }
                     Keyframes::Rotation(keyframes)
+                }
+                gltf_json::AnimatedProperty::Weights => {
+                    let mut keyframes = timestamps.iter().map(|f| (*f, 0.0)).collect::<Vec<(f32, f32)>>();
+                    let (weights, ctype) = get_slice_and_component_type_from_accessor(
+                        &mut memmap_holder,
+                        resource_path,
+                        bin_buffer,
+                        &gltf,
+                        sampler.output,
+                        None,
+                        "SCALAR",
+                    )?;
+                    let stride = stride_for(ctype, "SCALAR");
+                    for (weight_bytes, (_, to)) in weights.chunks_exact(stride).zip(keyframes.iter_mut()) {
+                        *to = parse_float(ctype, weight_bytes)?;
+                    }
+                    Keyframes::Weight(keyframes)
                 }
             };
             channels_for_node.push(AnimationChannel {
@@ -614,57 +603,70 @@ fn create_primitive(
     };
 
     let index_accessor = primitive.indices.ok_or(GltfLoadingError::Misc("missing indices"))?;
-    let (index_buffer, index_buffer_offset, index_buffer_size) =
-        get_buffer_from_accessor(buffers, gltf, index_accessor, GLTF_UNSIGNED_SHORT, "SCALAR")?;
+    let (index_buffer, index_buffer_offset, index_buffer_size, index_ctype) =
+        get_buffer_from_accessor(buffers, gltf, index_accessor, None, "SCALAR")?;
 
     let pos_accessor = *primitive
         .attributes
         .get("POSITION")
         .ok_or(GltfLoadingError::Misc("missing position attributes"))?;
-    let (pos_buffer, pos_offset, _) = get_buffer_from_accessor(buffers, gltf, pos_accessor, GLTF_FLOAT, "VEC3")?;
+    let (pos_buffer, pos_offset, _, _) = get_buffer_from_accessor(buffers, gltf, pos_accessor, GLTF_FLOAT, "VEC3")?;
 
     let tex_accessor = *primitive
         .attributes
         .get("TEXCOORD_0")
         .ok_or(GltfLoadingError::Misc("missing UV0 attributes"))?;
-    let (tex_buffer, tex_offset, _) = get_buffer_from_accessor(buffers, gltf, tex_accessor, GLTF_FLOAT, "VEC2")?;
+    let (tex_buffer, tex_offset, _, _) = get_buffer_from_accessor(buffers, gltf, tex_accessor, GLTF_FLOAT, "VEC2")?;
 
     let normal_accessor = *primitive
         .attributes
         .get("NORMAL")
         .ok_or(GltfLoadingError::Misc("missing normal attributes"))?;
-    let (normal_buffer, normal_offset, _) = get_buffer_from_accessor(buffers, gltf, normal_accessor, GLTF_FLOAT, "VEC3")?;
+    let (normal_buffer, normal_offset, _, _) = get_buffer_from_accessor(buffers, gltf, normal_accessor, GLTF_FLOAT, "VEC3")?;
 
     let tangent_accessor = *primitive
         .attributes
         .get("TANGENT")
         .ok_or(GltfLoadingError::Misc("missing tangent attributes"))?;
-    let (tangent_buffer, tangent_offset, _) = get_buffer_from_accessor(buffers, gltf, tangent_accessor, GLTF_FLOAT, "VEC4")?;
+    let (tangent_buffer, tangent_offset, _, _) = get_buffer_from_accessor(buffers, gltf, tangent_accessor, GLTF_FLOAT, "VEC4")?;
 
-    Ok(Mesh::new::<u16>(
-        pipeline,
-        vec![pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
-        vec![pos_offset, tex_offset, normal_offset, tangent_offset],
-        index_buffer,
-        index_buffer_offset,
-        index_buffer_size,
-    ))
+    if index_ctype == GLTF_UNSIGNED_SHORT {
+        Ok(Mesh::new::<u16>(
+            pipeline,
+            vec![pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
+            vec![pos_offset, tex_offset, normal_offset, tangent_offset],
+            index_buffer,
+            index_buffer_offset,
+            index_buffer_size,
+        ))
+    } else if index_ctype == GLTF_UNSIGNED_INT {
+        Ok(Mesh::new::<u32>(
+            pipeline,
+            vec![pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
+            vec![pos_offset, tex_offset, normal_offset, tangent_offset],
+            index_buffer,
+            index_buffer_offset,
+            index_buffer_size,
+        ))
+    } else {
+        Err(GltfLoadingError::Spec("index ctype is not UNSIGNED_SHORT or UNSIGNED_INT"))
+    }
 }
 
 #[profiling::function]
-fn get_buffer_from_accessor<'buffer>(
+fn get_buffer_from_accessor<'buffer, C: Into<Option<i32>>>(
     buffers: &'buffer [Rc<Buffer>],
     gltf: &gltf_json::GltfJson,
     accessor: usize,
-    ctype: i32,
+    ctype: C,
     atype: &str,
-) -> Result<(Rc<Buffer>, vk::DeviceSize, vk::DeviceSize), GltfLoadingError> {
-    let (buffer, offset, length, _) = get_buffer_view_from_accessor(gltf, accessor, Some(ctype), atype)?;
+) -> Result<(Rc<Buffer>, vk::DeviceSize, vk::DeviceSize, i32), GltfLoadingError> {
+    let (buffer, offset, length, ctype) = get_buffer_view_from_accessor(gltf, accessor, ctype.into(), atype)?;
     let buffer = buffers.get(buffer).ok_or(GltfLoadingError::Oob("buffer"))?;
     if (offset + length) as vk::DeviceSize > buffer.size {
         return Err(GltfLoadingError::Oob("buffer offset + length"));
     }
-    Ok((buffer.clone(), offset as vk::DeviceSize, length as vk::DeviceSize))
+    Ok((buffer.clone(), offset as vk::DeviceSize, length as vk::DeviceSize, ctype))
 }
 
 #[profiling::function]
@@ -720,10 +722,7 @@ fn get_buffer_view_from_accessor(
         Some(x) if x != stride => return Err(GltfLoadingError::Misc("wrong stride")),
         _ => {}
     }
-    if accessor.count != length / stride {
-        return Err(GltfLoadingError::Oob("count != byte length / stride"));
-    }
-    Ok((view.buffer, offset, length, ctype))
+    Ok((view.buffer, offset, length.min(accessor.count * stride), ctype))
 }
 
 fn stride_for(component_type: i32, attribute_type: &str) -> usize {
@@ -836,4 +835,16 @@ pub(crate) fn get_material_factors(gltf: &gltf_json::GltfJson) -> Result<Vec<Glt
         });
     }
     Ok(material_factors)
+}
+
+fn parse_float(ctype: i32, x: &[u8]) -> Result<f32, GltfLoadingError> {
+    let f = match ctype {
+        GLTF_BYTE => (x[0] as f32 / 127.0).max(-1.0),
+        GLTF_UNSIGNED_BYTE => x[0] as f32 / 255.0,
+        GLTF_SHORT => (u16::from_le_bytes([x[0], x[1]]) as f32 / 32767.0).max(-1.0),
+        GLTF_UNSIGNED_SHORT => u16::from_le_bytes([x[0], x[1]]) as f32 / 65535.0,
+        GLTF_FLOAT => f32::from_le_bytes([x[0], x[1], x[2], x[3]]),
+        _ => return Err(GltfLoadingError::Spec("component type of accessor can't be recognized")),
+    };
+    Ok(f)
 }

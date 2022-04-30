@@ -58,11 +58,15 @@ void main() {
     // The actual rendering case, enabled by default and by pressing 0 in
     // the sandbox:
     default:
-        float ambient = 0.3 * occlusion.r;
-        float sun_brightness = 2.0;
-        float sun_dot = max(0.0, dot(normal, normalize(vec3(-1.0, 1.0, 1.0))));
-        float brightness = ambient + sun_dot * sun_brightness;
-        out_color = vec4(brightness * base_color.rgb, base_color.a);
+        if (length(emissive) > 0.0) {
+            out_color = vec4(emissive, 1.0);
+        } else {
+            float ambient = 0.3 * occlusion.r;
+            float sun_brightness = 2.0;
+            float sun_dot = max(0.0, dot(normal, normalize(vec3(-1.0, 1.0, 1.0))));
+            float brightness = ambient + sun_dot * sun_brightness;
+            out_color = vec4(brightness * base_color.rgb, base_color.a);
+        }
         break;
     // Debugging cases, selectable with keys 1-5 in the sandbox:
     case 1:

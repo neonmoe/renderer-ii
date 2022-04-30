@@ -19,10 +19,10 @@ unsafe impl bytemuck::Pod for PushConstantStruct {}
 
 const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
     PipelineIndex::Opaque,
-    PipelineIndex::Clipped,
-    PipelineIndex::Blended,
     PipelineIndex::AnimatedOpaque,
+    PipelineIndex::Clipped,
     PipelineIndex::AnimatedClipped,
+    PipelineIndex::Blended,
     PipelineIndex::AnimatedBlended,
     PipelineIndex::RenderResolutionPostProcess,
 ];
@@ -31,14 +31,14 @@ const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
 pub enum PipelineIndex {
     /// Opaque geometry pass.
     Opaque,
-    /// Alpha-to-coverage "fake transparent" geometry pass.
-    Clipped,
-    /// Transparent geomtry pass.
-    Blended,
     /// Animated opaque geometry pass.
     AnimatedOpaque,
+    /// Alpha-to-coverage "fake transparent" geometry pass.
+    Clipped,
     /// Animated alpha-to-coverage "fake transparent" geometry pass.
     AnimatedClipped,
+    /// Transparent geomtry pass.
+    Blended,
     /// Animated transparent geomtry pass.
     AnimatedBlended,
     /// Post-processing pass before MSAA resolve and up/downsampling.
@@ -131,24 +131,30 @@ pub(crate) struct PipelineParameters {
     pub descriptor_sets: &'static [&'static [DescriptorSetLayoutParams]],
 }
 
-/// A descriptor set that should be used as the first set for every
-/// pipeline, so that global state (projection, view transforms) can
-/// be bound once and never touched again during a frame.
-///
-/// In concrete terms, this maps to uniforms in shaders with the
-/// layout `set = 0`, and the bindings are in order.
-static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[DescriptorSetLayoutParams {
-    binding: 0,
-    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-    descriptor_count: 1,
-    stage_flags: vk::ShaderStageFlags::VERTEX,
-    binding_flags: vk::DescriptorBindingFlags::empty(),
-}];
-
 static INSTANCED_TRANSFORM_BINDING_0: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: 0,
     stride: mem::size_of::<Mat4>() as u32,
     input_rate: vk::VertexInputRate::INSTANCE,
+};
+static POSITION_BINDING_1: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+    binding: 1,
+    stride: mem::size_of::<Vec3>() as u32,
+    input_rate: vk::VertexInputRate::VERTEX,
+};
+static TEXCOORD0_BINDING_2: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+    binding: 2,
+    stride: mem::size_of::<Vec2>() as u32,
+    input_rate: vk::VertexInputRate::VERTEX,
+};
+static NORMAL_BINDING_3: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+    binding: 3,
+    stride: mem::size_of::<Vec3>() as u32,
+    input_rate: vk::VertexInputRate::VERTEX,
+};
+static TANGENT_BINDING_4: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+    binding: 4,
+    stride: mem::size_of::<Vec4>() as u32,
+    input_rate: vk::VertexInputRate::VERTEX,
 };
 
 static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescription; 4] = [
@@ -177,6 +183,96 @@ static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescri
         offset: std::mem::size_of::<[Vec4; 3]>() as u32,
     },
 ];
+static POSITION_BINDING_1_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+    binding: 1,
+    location: 4,
+    format: vk::Format::R32G32B32_SFLOAT,
+    offset: 0,
+};
+static TEXCOORD0_BINDING_2_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+    binding: 2,
+    location: 5,
+    format: vk::Format::R32G32_SFLOAT,
+    offset: 0,
+};
+static NORMAL_BINDING_3_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+    binding: 3,
+    location: 6,
+    format: vk::Format::R32G32B32_SFLOAT,
+    offset: 0,
+};
+static TANGENT_BINDING_4_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+    binding: 4,
+    location: 7,
+    format: vk::Format::R32G32B32A32_SFLOAT,
+    offset: 0,
+};
+
+/// A descriptor set that should be used as the first set for every
+/// pipeline, so that global state (projection, view transforms) can
+/// be bound once and never touched again during a frame.
+///
+/// In concrete terms, this maps to uniforms in shaders with the
+/// layout `set = 0`, and the bindings are in order.
+static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[DescriptorSetLayoutParams {
+    binding: 0,
+    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+    descriptor_count: 1,
+    stage_flags: vk::ShaderStageFlags::VERTEX,
+    binding_flags: vk::DescriptorBindingFlags::empty(),
+}];
+
+static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
+    DescriptorSetLayoutParams {
+        binding: 0,
+        descriptor_type: vk::DescriptorType::SAMPLER,
+        descriptor_count: 1,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::empty(),
+    },
+    DescriptorSetLayoutParams {
+        binding: 1,
+        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+        descriptor_count: MAX_TEXTURE_COUNT,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+    },
+    DescriptorSetLayoutParams {
+        binding: 2,
+        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+        descriptor_count: MAX_TEXTURE_COUNT,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+    },
+    DescriptorSetLayoutParams {
+        binding: 3,
+        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+        descriptor_count: MAX_TEXTURE_COUNT,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+    },
+    DescriptorSetLayoutParams {
+        binding: 4,
+        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+        descriptor_count: MAX_TEXTURE_COUNT,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+    },
+    DescriptorSetLayoutParams {
+        binding: 5,
+        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+        descriptor_count: MAX_TEXTURE_COUNT,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+    },
+    DescriptorSetLayoutParams {
+        binding: 6,
+        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        descriptor_count: MAX_TEXTURE_COUNT,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+    },
+];
 
 static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,
@@ -190,111 +286,39 @@ static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     fragment_shader: shaders::include_spirv!("shaders/main.frag"),
     bindings: &[
         INSTANCED_TRANSFORM_BINDING_0,
-        vk::VertexInputBindingDescription {
-            binding: 1,
-            stride: mem::size_of::<Vec3>() as u32,
-            input_rate: vk::VertexInputRate::VERTEX,
-        },
-        vk::VertexInputBindingDescription {
-            binding: 2,
-            stride: mem::size_of::<Vec2>() as u32,
-            input_rate: vk::VertexInputRate::VERTEX,
-        },
-        vk::VertexInputBindingDescription {
-            binding: 3,
-            stride: mem::size_of::<Vec3>() as u32,
-            input_rate: vk::VertexInputRate::VERTEX,
-        },
-        vk::VertexInputBindingDescription {
-            binding: 4,
-            stride: mem::size_of::<Vec4>() as u32,
-            input_rate: vk::VertexInputRate::VERTEX,
-        },
+        POSITION_BINDING_1,
+        TEXCOORD0_BINDING_2,
+        NORMAL_BINDING_3,
+        TANGENT_BINDING_4,
     ],
     attributes: &[
         INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
         INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
         INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[2],
         INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[3],
-        vk::VertexInputAttributeDescription {
-            binding: 1,
-            location: 4,
-            format: vk::Format::R32G32B32_SFLOAT,
-            offset: 0,
-        },
-        vk::VertexInputAttributeDescription {
-            binding: 2,
-            location: 5,
-            format: vk::Format::R32G32_SFLOAT,
-            offset: 0,
-        },
-        vk::VertexInputAttributeDescription {
-            binding: 3,
-            location: 6,
-            format: vk::Format::R32G32B32_SFLOAT,
-            offset: 0,
-        },
-        vk::VertexInputAttributeDescription {
-            binding: 4,
-            location: 7,
-            format: vk::Format::R32G32B32A32_SFLOAT,
-            offset: 0,
-        },
+        POSITION_BINDING_1_ATTRIBUTE,
+        TEXCOORD0_BINDING_2_ATTRIBUTE,
+        NORMAL_BINDING_3_ATTRIBUTE,
+        TANGENT_BINDING_4_ATTRIBUTE,
     ],
+    descriptor_sets: &[SHARED_DESCRIPTOR_SET_0, PBR_DESCRIPTOR_SET_1],
+};
+
+static ANIMATED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
+    vertex_shader: shaders::include_spirv!("shaders/main.vert", "ANIMATED"),
+    fragment_shader: shaders::include_spirv!("shaders/main.frag", "ANIMATED"),
     descriptor_sets: &[
         SHARED_DESCRIPTOR_SET_0,
-        &[
-            DescriptorSetLayoutParams {
-                binding: 0,
-                descriptor_type: vk::DescriptorType::SAMPLER,
-                descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                binding_flags: vk::DescriptorBindingFlags::empty(),
-            },
-            DescriptorSetLayoutParams {
-                binding: 1,
-                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: MAX_TEXTURE_COUNT,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-            },
-            DescriptorSetLayoutParams {
-                binding: 2,
-                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: MAX_TEXTURE_COUNT,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-            },
-            DescriptorSetLayoutParams {
-                binding: 3,
-                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: MAX_TEXTURE_COUNT,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-            },
-            DescriptorSetLayoutParams {
-                binding: 4,
-                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: MAX_TEXTURE_COUNT,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-            },
-            DescriptorSetLayoutParams {
-                binding: 5,
-                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: MAX_TEXTURE_COUNT,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-            },
-            DescriptorSetLayoutParams {
-                binding: 6,
-                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: MAX_TEXTURE_COUNT,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-            },
-        ],
+        PBR_DESCRIPTOR_SET_1,
+        &[DescriptorSetLayoutParams {
+            binding: 1,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::VERTEX,
+            binding_flags: vk::DescriptorBindingFlags::empty(),
+        }],
     ],
+    ..OPAQUE_PARAMETERS
 };
 
 static CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
@@ -302,27 +326,19 @@ static CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
     ..OPAQUE_PARAMETERS
 };
 
+static ANIMATED_CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
+    alpha_to_coverage: true,
+    ..ANIMATED_OPAQUE_PARAMETERS
+};
+
 static BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
     blended: true,
     ..OPAQUE_PARAMETERS
 };
 
-static ANIMATED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
-    vertex_shader: shaders::include_spirv!("shaders/main.vert", "ANIMATED"),
-    fragment_shader: shaders::include_spirv!("shaders/main.frag", "ANIMATED"),
-    ..OPAQUE_PARAMETERS
-};
-
-static ANIMATED_CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
-    vertex_shader: shaders::include_spirv!("shaders/main.vert", "ANIMATED"),
-    fragment_shader: shaders::include_spirv!("shaders/main.frag", "ANIMATED"),
-    ..CLIPPED_PARAMETERS
-};
-
 static ANIMATED_BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
-    vertex_shader: shaders::include_spirv!("shaders/main.vert", "ANIMATED"),
-    fragment_shader: shaders::include_spirv!("shaders/main.frag", "ANIMATED"),
-    ..BLENDED_PARAMETERS
+    blended: true,
+    ..ANIMATED_OPAQUE_PARAMETERS
 };
 
 static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
@@ -349,10 +365,10 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
 pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = PipelineMap {
     buffer: [
         MaybeUninit::new(OPAQUE_PARAMETERS),
-        MaybeUninit::new(CLIPPED_PARAMETERS),
-        MaybeUninit::new(BLENDED_PARAMETERS),
         MaybeUninit::new(ANIMATED_OPAQUE_PARAMETERS),
+        MaybeUninit::new(CLIPPED_PARAMETERS),
         MaybeUninit::new(ANIMATED_CLIPPED_PARAMETERS),
+        MaybeUninit::new(BLENDED_PARAMETERS),
         MaybeUninit::new(ANIMATED_BLENDED_PARAMETERS),
         MaybeUninit::new(RENDER_RESOLUTION_POST_PROCESS),
     ],
