@@ -1,4 +1,4 @@
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use log::LevelFilter;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
@@ -82,8 +82,8 @@ fn fallible_main() -> anyhow::Result<()> {
     )?;
     neonvk::measure_gltf_memory_usage(
         (&mut assets_buffers_measurer, &mut assets_textures_measurer),
-        &resources_path.join("spinny-helmet/helmet.gltf"),
-        &resources_path.join("spinny-helmet"),
+        &resources_path.join("smol-ame-by-seafoam/smol-ame.gltf"),
+        &resources_path.join("smol-ame-by-seafoam"),
     )?;
 
     let mut uploader = neonvk::Uploader::new(
@@ -117,7 +117,7 @@ fn fallible_main() -> anyhow::Result<()> {
     )?;
 
     let sponza_model;
-    let spinny_helmet_model;
+    let smol_ame_model;
     {
         profiling::scope!("loading Sponza.gltf from disk to vram");
         let upload_start = Instant::now();
@@ -129,13 +129,13 @@ fn fallible_main() -> anyhow::Result<()> {
             &resources_path.join("sponza/glTF/Sponza.gltf"),
             &resources_path.join("sponza/glTF"),
         )?;
-        spinny_helmet_model = neonvk::Gltf::from_gltf(
+        smol_ame_model = neonvk::Gltf::from_gltf(
             &device,
             &mut uploader,
             &mut descriptors,
             (&mut assets_buffers_arena, &mut assets_textures_arena),
-            &resources_path.join("spinny-helmet/helmet.gltf"),
-            &resources_path.join("spinny-helmet"),
+            &resources_path.join("smol-ame-by-seafoam/smol-ame.gltf"),
+            &resources_path.join("smol-ame-by-seafoam"),
         )?;
         let upload_wait_start = Instant::now();
         assert!(uploader.wait(Duration::from_secs(5))?);
@@ -174,7 +174,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut resize_timestamp = None;
     let mut debug_value = 0;
     let mut update_time = Instant::now();
-    let (mut cam_x, mut cam_y, mut cam_z, mut cam_yaw, mut cam_pitch) = (0.0, 1.6, 0.0, 0.0, 0.0);
+    let (mut cam_x, mut cam_y, mut cam_z, mut cam_yaw, mut cam_pitch) = (3.0, 1.6, 0.0, 1.56, 0.0);
     let (mut dx, mut dy, mut dz) = (0.0, 0.0, 0.0);
     let (mut mouse_look, mut sprinting) = (false, false);
     'running: loop {
@@ -301,8 +301,11 @@ fn fallible_main() -> anyhow::Result<()> {
             for (mesh, material, transform) in sponza_model.mesh_iter() {
                 scene.queue(mesh, material, transform);
             }
-            for (mesh, material, transform) in spinny_helmet_model.mesh_iter() {
-                scene.queue(mesh, material, transform);
+
+            let smol_ame_transform =
+                Mat4::from_scale(Vec3::ONE * 0.7) * Mat4::from_quat(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+            for (mesh, material, transform) in smol_ame_model.mesh_iter() {
+                scene.queue(mesh, material, smol_ame_transform * transform);
             }
         }
 
@@ -365,7 +368,7 @@ fn fallible_main() -> anyhow::Result<()> {
         drop(pipelines);
 
         // Per-device-objects.
-        drop(spinny_helmet_model);
+        drop(smol_ame_model);
         drop(sponza_model);
         drop(assets_textures_arena);
         drop(assets_buffers_arena);
