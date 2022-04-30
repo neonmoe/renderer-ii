@@ -179,6 +179,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let (mut mouse_look, mut sprinting) = (false, false);
     'running: loop {
         let update_start_time = Instant::now();
+        let (mut cam_yaw_delta, mut cam_pitch_delta) = (0.0, 0.0);
         {
             profiling::scope!("handle SDL events");
             for event in event_pump.poll_iter() {
@@ -238,20 +239,27 @@ fn fallible_main() -> anyhow::Result<()> {
 
                     Event::MouseMotion { xrel, yrel, .. } => {
                         if mouse_look {
-                            cam_yaw -= xrel as f32 / 750.0;
-                            cam_pitch = (cam_pitch - yrel as f32 / 750.0).clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
+                            cam_yaw_delta += -xrel as f32 / 750.0;
+                            cam_pitch_delta += -yrel as f32 / 750.0;
                         }
                     }
 
                     Event::Window {
                         win_event: WindowEvent::SizeChanged(_, _),
                         ..
-                    } => resize_timestamp = Some(Instant::now()),
+                    } => {
+                        mouse_look = false;
+                        sdl_context.mouse().set_relative_mouse_mode(false);
+                        sdl_context.mouse().show_cursor(true);
+                        resize_timestamp = Some(Instant::now())
+                    }
 
                     _ => {}
                 }
             }
         }
+        cam_yaw += cam_yaw_delta;
+        cam_pitch = (cam_pitch + cam_pitch_delta).clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
 
         if let Some(duration_since_resize) = resize_timestamp.and_then(|t| Instant::now().checked_duration_since(t)) {
             if duration_since_resize > Duration::from_millis(100) {
