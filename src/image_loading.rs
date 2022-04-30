@@ -109,7 +109,7 @@ fn to_snorm(format: vk::Format) -> vk::Format {
 
 const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
 const BLACK: [u8; 4] = [0, 0, 0, 0xFF];
-const NORMAL_Z: [u8; 4] = [0, 0, 0xFF, 0];
+const NORMAL_Z: [u8; 4] = [0, 0, 0b01111111, 0];
 const M_AND_R: [u8; 4] = [0, 0x88, 0, 0];
 
 pub struct PbrDefaults {
