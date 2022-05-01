@@ -1,5 +1,6 @@
 use glam::{Mat4, Quat, Vec3};
 use log::LevelFilter;
+use sdl2::controller::Axis;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
@@ -40,6 +41,10 @@ fn fallible_main() -> anyhow::Result<()> {
         profiling::scope!("SDL video subsystem init");
         sdl_context.video().map_err(SandboxError::Sdl)?
     };
+
+    // Enable all controllers
+    let controller_subsystem = sdl_context.game_controller().unwrap();
+    let controller = controller_subsystem.open(0).unwrap();
 
     let mut window = {
         profiling::scope!("SDL window creation");
@@ -177,6 +182,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut game_time = 0.0;
     let (mut cam_x, mut cam_y, mut cam_z, mut cam_yaw, mut cam_pitch) = (3.0, 1.6, 0.0, 1.56, 0.0);
     let (mut dx, mut dy, mut dz) = (0.0, 0.0, 0.0);
+    let mut analog_controls = false;
     let (mut mouse_look, mut sprinting) = (false, false);
     'running: loop {
         let update_start_time = Instant::now();
@@ -187,27 +193,30 @@ fn fallible_main() -> anyhow::Result<()> {
                 match event {
                     Event::Quit { .. } => break 'running,
 
-                    Event::KeyDown { keycode, .. } => match keycode {
-                        Some(Keycode::Num0) => debug_value = 0,
-                        Some(Keycode::Num1) => debug_value = 1,
-                        Some(Keycode::Num2) => debug_value = 2,
-                        Some(Keycode::Num3) => debug_value = 3,
-                        Some(Keycode::Num4) => debug_value = 4,
-                        Some(Keycode::Num5) => debug_value = 5,
-                        Some(Keycode::W) => dz = -1.0,
-                        Some(Keycode::A) => dx = -1.0,
-                        Some(Keycode::S) => dz = 1.0,
-                        Some(Keycode::D) => dx = 1.0,
-                        Some(Keycode::E) => dy = 1.0,
-                        Some(Keycode::Q) => dy = -1.0,
-                        Some(Keycode::LShift) => sprinting = true,
-                        Some(Keycode::Escape) if mouse_look => {
-                            mouse_look = false;
-                            sdl_context.mouse().set_relative_mouse_mode(false);
-                            sdl_context.mouse().show_cursor(true);
+                    Event::KeyDown { keycode, .. } => {
+                        analog_controls = false;
+                        match keycode {
+                            Some(Keycode::Num0) => debug_value = 0,
+                            Some(Keycode::Num1) => debug_value = 1,
+                            Some(Keycode::Num2) => debug_value = 2,
+                            Some(Keycode::Num3) => debug_value = 3,
+                            Some(Keycode::Num4) => debug_value = 4,
+                            Some(Keycode::Num5) => debug_value = 5,
+                            Some(Keycode::W) => dz = -1.0,
+                            Some(Keycode::A) => dx = -1.0,
+                            Some(Keycode::S) => dz = 1.0,
+                            Some(Keycode::D) => dx = 1.0,
+                            Some(Keycode::E) => dy = 1.0,
+                            Some(Keycode::Q) => dy = -1.0,
+                            Some(Keycode::LShift) => sprinting = true,
+                            Some(Keycode::Escape) if mouse_look => {
+                                mouse_look = false;
+                                sdl_context.mouse().set_relative_mouse_mode(false);
+                                sdl_context.mouse().show_cursor(true);
+                            }
+                            _ => {}
                         }
-                        _ => {}
-                    },
+                    }
 
                     Event::KeyUp { keycode, .. } => match keycode {
                         Some(Keycode::I) => {
@@ -223,6 +232,19 @@ fn fallible_main() -> anyhow::Result<()> {
                         Some(Keycode::LShift) => sprinting = false,
                         _ => {}
                     },
+
+                    Event::ControllerAxisMotion { axis, value, .. } => {
+                        analog_controls = true;
+                        match axis {
+                            Axis::LeftX => dx = get_axis_deadzoned(value),
+                            Axis::LeftY => dz = get_axis_deadzoned(value),
+                            Axis::TriggerRight if value != 0 => dy = value as f32 / i16::MAX as f32,
+                            Axis::TriggerRight if dy > 0.0 => dy = 0.0,
+                            Axis::TriggerLeft if value != 0 => dy = -(value as f32 / i16::MAX as f32),
+                            Axis::TriggerLeft if dy < 0.0 => dy = 0.0,
+                            _ => {}
+                        }
+                    }
 
                     Event::MouseButtonDown {
                         mouse_btn: MouseButton::Left,
@@ -258,6 +280,11 @@ fn fallible_main() -> anyhow::Result<()> {
                     _ => {}
                 }
             }
+        }
+
+        if analog_controls {
+            cam_yaw_delta = -get_axis_deadzoned(controller.axis(Axis::RightX)) / 50.0;
+            cam_pitch_delta = -get_axis_deadzoned(controller.axis(Axis::RightY)) / 50.0;
         }
         cam_yaw += cam_yaw_delta;
         cam_pitch = (cam_pitch + cam_pitch_delta).clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
@@ -299,7 +326,11 @@ fn fallible_main() -> anyhow::Result<()> {
         scene.camera.orientation = Quat::from_rotation_y(cam_yaw) * Quat::from_rotation_x(cam_pitch);
         if dx != 0.0 || dz != 0.0 || dy != 0.0 {
             let speed = if sprinting { 10.0 } else { 5.0 };
-            let move_vec = (scene.camera.orientation * Vec3::new(dx, dy, dz)).normalize() * speed;
+            let mut control_vec = Vec3::new(dx, dy, dz);
+            if !analog_controls {
+                control_vec = control_vec.normalize();
+            }
+            let move_vec = scene.camera.orientation * control_vec * speed;
             cam_x += move_vec.x * dt;
             cam_y += move_vec.y * dt;
             cam_z += move_vec.z * dt;
@@ -416,6 +447,14 @@ fn find_resources_path() -> PathBuf {
         "src/bin"
     };
     PathBuf::from(path)
+}
+
+fn get_axis_deadzoned(raw: i16) -> f32 {
+    if -9000 < raw && raw < 9000 {
+        0.0
+    } else {
+        (raw as f32 / i16::MAX as f32).powf(3.0)
+    }
 }
 
 mod logger {
