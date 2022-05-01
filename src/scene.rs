@@ -15,10 +15,10 @@ pub enum QueueingError {
 }
 
 pub(crate) struct SkinnedMesh<'a> {
-    mesh: &'a Mesh,
-    material: &'a Material,
-    joints: Vec<Mat4>,
-    transform: Mat4,
+    pub(crate) mesh: &'a Mesh,
+    pub(crate) material: &'a Material,
+    pub(crate) joints: Vec<Mat4>,
+    pub(crate) transform: Mat4,
 }
 
 type StaticMeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
@@ -35,7 +35,7 @@ impl Default for Scene<'_> {
     fn default() -> Self {
         Scene {
             camera: Camera::default(),
-            static_meshes: PipelineMap::new::<(), _>(|_| Ok(HashMap::new())).unwrap(),
+            static_meshes: PipelineMap::new::<(), _>(|_| Ok(HashMap::default())).unwrap(),
             skinned_meshes: PipelineMap::new::<(), _>(|_| Ok(Vec::new())).unwrap(),
         }
     }
@@ -43,8 +43,9 @@ impl Default for Scene<'_> {
 
 impl<'a> Scene<'a> {
     pub fn queue(&mut self, model: &'a Gltf, transform: Mat4) {
+        profiling::scope!("queue model for rendering");
         for mesh in model.mesh_iter() {
-            profiling::scope!("queue mesh for rendering");
+            profiling::scope!("static mesh");
             let mesh_map = self.static_meshes.get_mut(mesh.mesh.pipeline);
             let mesh_vec = mesh_map.entry((mesh.mesh, mesh.material)).or_insert_with(Vec::new);
             mesh_vec.push(transform * mesh.transform);
@@ -57,59 +58,63 @@ impl<'a> Scene<'a> {
         transform: Mat4,
         played_animations: &[(f32, &Animation)],
     ) -> Result<(), QueueingError> {
-        profiling::scope!("queue mesh with animation for rendering");
+        profiling::scope!("queue animated model for rendering");
         for mesh in model.mesh_iter() {
-            profiling::scope!("queue mesh for rendering");
-            let mut animated_transform = mesh.transform;
-            for (time, animation) in played_animations {
-                let time = *time;
-                let animation_channels = if let Some(channels) = &animation.nodes_channels[mesh.node_index] {
-                    channels
-                } else {
-                    continue;
-                };
-                let (mut scale, mut rotation, mut translation) = animated_transform.to_scale_rotation_translation();
-                for channel in animation_channels {
-                    match &channel.keyframes {
-                        Keyframes::Translation(frames) => {
-                            translation = channel.interpolation.interpolate_vec3(frames, time).ok_or_else(|| {
-                                QueueingError::InvalidAnimationTimestamp {
-                                    animation: animation.name.clone(),
-                                    time,
-                                }
-                            })?;
-                        }
-                        Keyframes::Rotation(frames) => {
-                            rotation = channel.interpolation.interpolate_quat(frames, time).ok_or_else(|| {
-                                QueueingError::InvalidAnimationTimestamp {
-                                    animation: animation.name.clone(),
-                                    time,
-                                }
-                            })?;
-                        }
-                        Keyframes::Scale(frames) => {
-                            scale = channel.interpolation.interpolate_vec3(frames, time).ok_or_else(|| {
-                                QueueingError::InvalidAnimationTimestamp {
-                                    animation: animation.name.clone(),
-                                    time,
-                                }
-                            })?;
-                        }
-                        Keyframes::Weight(_) => {}
-                    }
-                }
-                animated_transform = Mat4::from_scale_rotation_translation(scale, rotation, translation);
-            }
-
             if let Some(skin) = mesh.skin {
+                profiling::scope!("skinned mesh");
+                // The mesh transform is completely ignored (unlike in the other branch) because:
+                // > Only the joint transforms are applied to the skinned mesh; the transform of the skinned mesh node MUST be ignored.
+                // https://www.khronos.org/registry/glTF/specs/2.0/glTF-2.0.html#joint-hierarchy
+                // Of course, the transform provided as a parameter is still applied, since it's applied on top of the mesh specific transforms.
                 let mesh_vec = self.skinned_meshes.get_mut(mesh.mesh.pipeline);
                 mesh_vec.push(SkinnedMesh {
                     mesh: mesh.mesh,
                     material: mesh.material,
                     joints: vec![],
-                    transform: transform * animated_transform,
+                    transform,
                 });
             } else {
+                profiling::scope!("static mesh");
+                let mut animated_transform = mesh.transform;
+                for (time, animation) in played_animations {
+                    let time = *time;
+                    let animation_channels = if let Some(channels) = &animation.nodes_channels[mesh.node_index] {
+                        channels
+                    } else {
+                        continue;
+                    };
+                    let (mut scale, mut rotation, mut translation) = animated_transform.to_scale_rotation_translation();
+                    for channel in animation_channels {
+                        match &channel.keyframes {
+                            Keyframes::Translation(frames) => {
+                                translation = channel.interpolation.interpolate_vec3(frames, time).ok_or_else(|| {
+                                    QueueingError::InvalidAnimationTimestamp {
+                                        animation: animation.name.clone(),
+                                        time,
+                                    }
+                                })?;
+                            }
+                            Keyframes::Rotation(frames) => {
+                                rotation = channel.interpolation.interpolate_quat(frames, time).ok_or_else(|| {
+                                    QueueingError::InvalidAnimationTimestamp {
+                                        animation: animation.name.clone(),
+                                        time,
+                                    }
+                                })?;
+                            }
+                            Keyframes::Scale(frames) => {
+                                scale = channel.interpolation.interpolate_vec3(frames, time).ok_or_else(|| {
+                                    QueueingError::InvalidAnimationTimestamp {
+                                        animation: animation.name.clone(),
+                                        time,
+                                    }
+                                })?;
+                            }
+                            Keyframes::Weight(_) => todo!(),
+                        }
+                    }
+                    animated_transform = Mat4::from_scale_rotation_translation(scale, rotation, translation);
+                }
                 let mesh_map = self.static_meshes.get_mut(mesh.mesh.pipeline);
                 let mesh_vec = mesh_map.entry((mesh.mesh, mesh.material)).or_insert_with(Vec::new);
                 mesh_vec.push(transform * animated_transform);
