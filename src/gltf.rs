@@ -15,8 +15,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 pub(crate) mod gltf_json;
-mod mesh_iter;
-pub use mesh_iter::MeshIter;
+pub(crate) mod mesh_iter;
 
 const GLTF_BYTE: i32 = 5120;
 const GLTF_UNSIGNED_BYTE: i32 = 5121;
@@ -80,17 +79,19 @@ pub enum GltfLoadingError {
 type NodeAnimChannels = Vec<AnimationChannel>;
 pub struct Animation {
     pub name: Option<String>,
-    nodes_channels: Vec<Option<NodeAnimChannels>>,
+    pub start_time: f32,
+    pub end_time: f32,
+    pub(crate) nodes_channels: Vec<Option<NodeAnimChannels>>,
 }
 
 #[derive(Clone)]
-struct AnimationChannel {
-    interpolation: AnimationInterpolation,
-    keyframes: Keyframes,
+pub(crate) struct AnimationChannel {
+    pub(crate) interpolation: AnimationInterpolation,
+    pub(crate) keyframes: Keyframes,
 }
 
 #[derive(Clone)]
-enum Keyframes {
+pub(crate) enum Keyframes {
     Translation(Vec<(f32, Vec3)>),
     Rotation(Vec<(f32, Quat)>),
     Scale(Vec<(f32, Vec3)>),
@@ -99,6 +100,7 @@ enum Keyframes {
 
 struct Node {
     mesh: Option<usize>,
+    skin: Option<usize>,
     children: Option<Vec<usize>>,
     transform: Mat4,
 }
@@ -149,8 +151,8 @@ impl Gltf {
         create_gltf(device, uploader, descriptors, arenas, gltf, (gltf_path, resource_path), None)
     }
 
-    pub fn mesh_iter(&self) -> MeshIter<'_> {
-        MeshIter::new(self, self.root_nodes.clone())
+    pub(crate) fn mesh_iter(&self) -> mesh_iter::MeshIter<'_> {
+        mesh_iter::MeshIter::new(self, self.root_nodes.clone())
     }
 }
 
@@ -311,6 +313,7 @@ fn create_gltf(
         };
         nodes.push(Node {
             mesh: node.mesh,
+            skin: node.skin,
             children: node.children.clone(),
             transform,
         });
@@ -411,6 +414,8 @@ fn create_gltf(
     let mut animations = Vec::with_capacity(gltf.animations.len());
     for animation in &gltf.animations {
         let mut nodes_channels = vec![None; gltf.nodes.len()];
+        let mut start_time: Option<f32> = None;
+        let mut end_time: Option<f32> = None;
         for channel in &animation.channels {
             let sampler = animation
                 .samplers
@@ -430,6 +435,17 @@ fn create_gltf(
                 "SCALAR",
             )?;
             let timestamps: &[f32] = bytemuck::cast_slice(timestamps);
+
+            let timestamp_accessor = gltf
+                .accessors
+                .get(sampler.input)
+                .ok_or(GltfLoadingError::Oob("animation sampler input accessor"))?;
+            if let Some(&min) = timestamp_accessor.min.get(0) {
+                start_time = Some(if let Some(min_) = start_time { min_.min(min) } else { min });
+            }
+            if let Some(&max) = timestamp_accessor.max.get(0) {
+                end_time = Some(if let Some(max_) = end_time { max_.max(max) } else { max });
+            }
 
             let keyframes = match channel.target.path {
                 gltf_json::AnimatedProperty::Translation | gltf_json::AnimatedProperty::Scale => {
@@ -499,6 +515,8 @@ fn create_gltf(
         }
         animations.push(Animation {
             name: animation.name.clone(),
+            start_time: start_time.ok_or(GltfLoadingError::Spec("animation channel input accessor must have a min"))?,
+            end_time: end_time.ok_or(GltfLoadingError::Spec("animation channel input accessor must have a max"))?,
             nodes_channels,
         });
     }

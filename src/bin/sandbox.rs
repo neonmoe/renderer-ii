@@ -174,6 +174,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut resize_timestamp = None;
     let mut debug_value = 0;
     let mut update_time = Instant::now();
+    let mut game_time = 0.0;
     let (mut cam_x, mut cam_y, mut cam_z, mut cam_yaw, mut cam_pitch) = (3.0, 1.6, 0.0, 1.56, 0.0);
     let (mut dx, mut dy, mut dz) = (0.0, 0.0, 0.0);
     let (mut mouse_look, mut sprinting) = (false, false);
@@ -291,6 +292,7 @@ fn fallible_main() -> anyhow::Result<()> {
 
         let new_update_time = Instant::now();
         let dt = (new_update_time - update_time).as_secs_f32();
+        game_time += dt;
         update_time = new_update_time;
 
         let mut scene = neonvk::Scene::default();
@@ -306,15 +308,16 @@ fn fallible_main() -> anyhow::Result<()> {
 
         {
             profiling::scope!("queue meshes to render");
-            for (mesh, material, transform) in sponza_model.mesh_iter() {
-                scene.queue(mesh, material, transform);
-            }
+            scene.queue(&sponza_model, Mat4::IDENTITY);
 
+            let animations = smol_ame_model
+                .animations
+                .iter()
+                .map(|animation| (game_time % animation.end_time, animation))
+                .collect::<Vec<(f32, &neonvk::Animation)>>();
             let smol_ame_transform =
                 Mat4::from_scale(Vec3::ONE * 0.7) * Mat4::from_quat(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
-            for (mesh, material, transform) in smol_ame_model.mesh_iter() {
-                scene.queue(mesh, material, smol_ame_transform * transform);
-            }
+            scene.queue_animated(&smol_ame_model, smol_ame_transform, &animations)?;
         }
 
         let update_duration = Instant::now() - update_start_time;

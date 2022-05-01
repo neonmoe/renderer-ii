@@ -1,3 +1,4 @@
+use glam::{Quat, Vec3};
 use serde_derive::Deserialize;
 use std::collections::HashMap;
 
@@ -18,6 +19,7 @@ pub(crate) struct GltfJson {
     #[serde(default)]
     pub images: Vec<Image>,
     pub materials: Vec<Material>,
+    #[serde(default)]
     #[allow(dead_code)]
     /// Deliberately ignored for now. When implemented, remove the dead_code
     /// allowing tags from here and the Sampler definition.
@@ -42,6 +44,7 @@ pub(crate) struct Scene {
 #[derive(Deserialize)]
 pub(crate) struct Node {
     pub mesh: Option<usize>,
+    pub skin: Option<usize>,
     pub children: Option<Vec<usize>>,
     pub matrix: Option<[f32; 16]>,
     pub translation: Option<[f32; 3]>,
@@ -90,6 +93,10 @@ pub(crate) struct Accessor {
     pub count: usize,
     #[serde(rename = "type")]
     pub attribute_type: String,
+    #[serde(default)]
+    pub min: Vec<f32>,
+    #[serde(default)]
+    pub max: Vec<f32>,
 }
 
 #[derive(Deserialize)]
@@ -221,13 +228,64 @@ pub(crate) enum AnimationInterpolation {
     Linear,
     #[serde(rename = "STEP")]
     Step,
-    #[serde(rename = "CUBICSPLINE")]
-    CubicSpline,
+    // TODO: Support cubic animation interpolation
+    // The output values of the sampler include tangents as well, so the animation
+    // data needs to be fiddled with a bit.
+    //#[serde(rename = "CUBICSPLINE")]
+    //CubicSpline,
 }
-
 impl Default for AnimationInterpolation {
     fn default() -> Self {
         AnimationInterpolation::Linear
+    }
+}
+impl AnimationInterpolation {
+    pub fn interpolate_vec3(self, keyframes: &[(f32, Vec3)], time: f32) -> Option<Vec3> {
+        if keyframes.is_empty() {
+            None
+        } else if keyframes.len() == 1 || time < keyframes[0].0 {
+            Some(keyframes[0].1)
+        } else {
+            for window in keyframes.windows(2) {
+                if let &[(t_k, v_k), (t_k_1, v_k_1)] = window {
+                    if t_k <= time && time < t_k_1 {
+                        let result = match self {
+                            AnimationInterpolation::Linear => {
+                                let t = (time - t_k) / (t_k_1 - t_k);
+                                v_k.lerp(v_k_1, t)
+                            }
+                            AnimationInterpolation::Step => v_k,
+                        };
+                        return Some(result);
+                    }
+                }
+            }
+            None
+        }
+    }
+
+    pub fn interpolate_quat(self, keyframes: &[(f32, Quat)], time: f32) -> Option<Quat> {
+        if keyframes.is_empty() {
+            None
+        } else if keyframes.len() == 1 || time < keyframes[0].0 {
+            Some(keyframes[0].1)
+        } else {
+            for window in keyframes.windows(2) {
+                if let &[(t_k, v_k), (t_k_1, v_k_1)] = window {
+                    if t_k <= time && time < t_k_1 {
+                        let result = match self {
+                            AnimationInterpolation::Linear => {
+                                let t = (time - t_k) / (t_k_1 - t_k);
+                                v_k.slerp(v_k_1, t)
+                            }
+                            AnimationInterpolation::Step => v_k,
+                        };
+                        return Some(result);
+                    }
+                }
+            }
+            None
+        }
     }
 }
 

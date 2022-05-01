@@ -2,7 +2,15 @@ use crate::mesh::Mesh;
 use crate::{Gltf, Material};
 use glam::Mat4;
 
-pub struct MeshIter<'a> {
+pub(crate) struct MeshIterItem<'a> {
+    pub node_index: usize,
+    pub mesh: &'a Mesh,
+    pub material: &'a Material,
+    pub skin: Option<usize>,
+    pub transform: Mat4,
+}
+
+pub(crate) struct MeshIter<'a> {
     gltf: &'a Gltf,
     node_queue: Vec<usize>,
     current_sub_iter: Option<InnerMeshIter<'a>>,
@@ -19,7 +27,7 @@ impl MeshIter<'_> {
 }
 
 impl<'a> Iterator for MeshIter<'a> {
-    type Item = (&'a Mesh, &'a Material, Mat4);
+    type Item = MeshIterItem<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.current_sub_iter.as_mut().and_then(Iterator::next) {
@@ -36,6 +44,8 @@ impl<'a> Iterator for MeshIter<'a> {
                 self.current_sub_iter
                     .insert(InnerMeshIter {
                         gltf: self.gltf,
+                        skin: node.skin,
+                        node_index,
                         mesh_index,
                         primitive_index: 0,
                         transform: node.transform,
@@ -50,19 +60,27 @@ impl<'a> Iterator for MeshIter<'a> {
 
 struct InnerMeshIter<'a> {
     gltf: &'a Gltf,
+    skin: Option<usize>,
+    node_index: usize,
     mesh_index: usize,
     primitive_index: usize,
     transform: Mat4,
 }
 
 impl<'a> Iterator for InnerMeshIter<'a> {
-    type Item = (&'a Mesh, &'a Material, Mat4);
+    type Item = MeshIterItem<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let meshes = self.gltf.meshes.get(self.mesh_index)?;
         let (mesh, material_index) = meshes.get(self.primitive_index)?;
         let material = self.gltf.materials.get(*material_index).unwrap();
         self.primitive_index += 1;
-        Some((mesh, material, self.transform))
+        Some(MeshIterItem {
+            node_index: self.node_index,
+            mesh,
+            material,
+            skin: self.skin,
+            transform: self.transform,
+        })
     }
 }

@@ -19,11 +19,11 @@ unsafe impl bytemuck::Pod for PushConstantStruct {}
 
 const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
     PipelineIndex::Opaque,
-    PipelineIndex::AnimatedOpaque,
+    PipelineIndex::SkinnedOpaque,
     PipelineIndex::Clipped,
-    PipelineIndex::AnimatedClipped,
+    PipelineIndex::SkinnedClipped,
     PipelineIndex::Blended,
-    PipelineIndex::AnimatedBlended,
+    PipelineIndex::SkinnedBlended,
     PipelineIndex::RenderResolutionPostProcess,
 ];
 
@@ -32,15 +32,15 @@ pub enum PipelineIndex {
     /// Opaque geometry pass.
     Opaque,
     /// Animated opaque geometry pass.
-    AnimatedOpaque,
+    SkinnedOpaque,
     /// Alpha-to-coverage "fake transparent" geometry pass.
     Clipped,
     /// Animated alpha-to-coverage "fake transparent" geometry pass.
-    AnimatedClipped,
+    SkinnedClipped,
     /// Transparent geomtry pass.
     Blended,
     /// Animated transparent geomtry pass.
-    AnimatedBlended,
+    SkinnedBlended,
     /// Post-processing pass before MSAA resolve and up/downsampling.
     RenderResolutionPostProcess,
     #[doc(hidden)]
@@ -304,7 +304,7 @@ static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     descriptor_sets: &[SHARED_DESCRIPTOR_SET_0, PBR_DESCRIPTOR_SET_1],
 };
 
-static ANIMATED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
+static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     vertex_shader: shaders::include_spirv!("shaders/main.vert", "ANIMATED"),
     fragment_shader: shaders::include_spirv!("shaders/main.frag", "ANIMATED"),
     descriptor_sets: &[
@@ -326,9 +326,9 @@ static CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
     ..OPAQUE_PARAMETERS
 };
 
-static ANIMATED_CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
+static SKINNED_CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: true,
-    ..ANIMATED_OPAQUE_PARAMETERS
+    ..SKINNED_OPAQUE_PARAMETERS
 };
 
 static BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
@@ -336,9 +336,9 @@ static BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
     ..OPAQUE_PARAMETERS
 };
 
-static ANIMATED_BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
+static SKINNED_BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
     blended: true,
-    ..ANIMATED_OPAQUE_PARAMETERS
+    ..SKINNED_OPAQUE_PARAMETERS
 };
 
 static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
@@ -365,11 +365,11 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
 pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = PipelineMap {
     buffer: [
         MaybeUninit::new(OPAQUE_PARAMETERS),
-        MaybeUninit::new(ANIMATED_OPAQUE_PARAMETERS),
+        MaybeUninit::new(SKINNED_OPAQUE_PARAMETERS),
         MaybeUninit::new(CLIPPED_PARAMETERS),
-        MaybeUninit::new(ANIMATED_CLIPPED_PARAMETERS),
+        MaybeUninit::new(SKINNED_CLIPPED_PARAMETERS),
         MaybeUninit::new(BLENDED_PARAMETERS),
-        MaybeUninit::new(ANIMATED_BLENDED_PARAMETERS),
+        MaybeUninit::new(SKINNED_BLENDED_PARAMETERS),
         MaybeUninit::new(RENDER_RESOLUTION_POST_PROCESS),
     ],
 };

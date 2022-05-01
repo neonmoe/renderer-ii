@@ -326,7 +326,7 @@ impl Renderer {
 
         for pl_index in [PipelineIndex::Opaque, PipelineIndex::Clipped, PipelineIndex::Blended] {
             profiling::scope!("pipeline");
-            let meshes = scene.pipeline_map.get(pl_index);
+            let meshes = scene.static_meshes.get(pl_index);
             if meshes.is_empty() {
                 continue;
             }
