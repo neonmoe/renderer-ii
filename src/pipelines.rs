@@ -1,6 +1,6 @@
 use crate::debug_utils;
 use crate::physical_device::HDR_COLOR_ATTACHMENT_FORMAT;
-use crate::pipeline_parameters::{PipelineMap, PIPELINE_PARAMETERS};
+use crate::pipeline_parameters::{PipelineMap, ALL_PIPELINES, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout, RenderPass};
 use crate::{Descriptors, PhysicalDevice};
 use ash::vk;
@@ -253,73 +253,62 @@ fn create_pipelines(
         })
     };
 
-    let shader_stages_per_pipeline = PIPELINE_PARAMETERS
-        .iter()
-        .map(|params| {
-            let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::VERTEX)
-                .module(create_shader_module(params.vertex_shader)?)
-                .name(cstr!("main"));
-            let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::FRAGMENT)
-                .module(create_shader_module(params.fragment_shader)?)
-                .name(cstr!("main"));
-            Ok([vert_shader_stage_create_info.build(), frag_shader_stage_create_info.build()])
-        })
-        .collect::<Result<Vec<[vk::PipelineShaderStageCreateInfo; 2]>, PipelineCreationError>>()?;
+    let shader_stages_per_pipeline = PipelineMap::new(|pipeline| {
+        let params = &PIPELINE_PARAMETERS[pipeline];
+        let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
+            .stage(vk::ShaderStageFlags::VERTEX)
+            .module(create_shader_module(params.vertex_shader)?)
+            .name(cstr!("main"));
+        let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
+            .stage(vk::ShaderStageFlags::FRAGMENT)
+            .module(create_shader_module(params.fragment_shader)?)
+            .name(cstr!("main"));
+        Ok([vert_shader_stage_create_info.build(), frag_shader_stage_create_info.build()])
+    })?;
 
-    let vertex_input_per_pipeline = PIPELINE_PARAMETERS
-        .iter()
-        .map(|params| {
-            vk::PipelineVertexInputStateCreateInfo::builder()
-                .vertex_binding_descriptions(params.bindings)
-                .vertex_attribute_descriptions(params.attributes)
-                .build()
-        })
-        .collect::<Vec<vk::PipelineVertexInputStateCreateInfo>>();
+    let vertex_input_per_pipeline = PipelineMap::new(|pipeline| {
+        let params = &PIPELINE_PARAMETERS[pipeline];
+        Ok(vk::PipelineVertexInputStateCreateInfo::builder()
+            .vertex_binding_descriptions(params.bindings)
+            .vertex_attribute_descriptions(params.attributes)
+            .build())
+    })?;
 
-    let multisample_create_infos = PIPELINE_PARAMETERS
-        .iter()
-        .map(|params| {
-            vk::PipelineMultisampleStateCreateInfo::builder()
-                .rasterization_samples(attachment_sample_count)
-                .alpha_to_coverage_enable(params.alpha_to_coverage)
-                .sample_shading_enable(params.sample_shading)
-                .min_sample_shading(params.min_sample_shading_factor)
-                .build()
-        })
-        .collect::<Vec<vk::PipelineMultisampleStateCreateInfo>>();
+    let multisample_create_infos = PipelineMap::new(|pipeline| {
+        let params = &PIPELINE_PARAMETERS[pipeline];
+        Ok(vk::PipelineMultisampleStateCreateInfo::builder()
+            .rasterization_samples(attachment_sample_count)
+            .alpha_to_coverage_enable(params.alpha_to_coverage)
+            .sample_shading_enable(params.sample_shading)
+            .min_sample_shading(params.min_sample_shading_factor)
+            .build())
+    })?;
 
-    let color_blend_attachment_states_per_pipeline = PIPELINE_PARAMETERS
-        .iter()
-        .map(|params| {
-            let rgba_mask =
-                vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A;
-            let mut blend_attachment_state_builder = vk::PipelineColorBlendAttachmentState::builder()
-                .color_write_mask(rgba_mask)
-                .blend_enable(params.blended);
-            if params.blended {
-                blend_attachment_state_builder = blend_attachment_state_builder
-                    .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-                    .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-                    .color_blend_op(vk::BlendOp::ADD)
-                    .src_alpha_blend_factor(vk::BlendFactor::ONE)
-                    .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
-                    .alpha_blend_op(vk::BlendOp::ADD);
-            }
-            [blend_attachment_state_builder.build()]
-        })
-        .collect::<Vec<[vk::PipelineColorBlendAttachmentState; 1]>>();
+    let color_blend_attachment_states_per_pipeline = PipelineMap::new(|pipeline| {
+        let params = &PIPELINE_PARAMETERS[pipeline];
+        let rgba_mask = vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A;
+        let mut blend_attachment_state_builder = vk::PipelineColorBlendAttachmentState::builder()
+            .color_write_mask(rgba_mask)
+            .blend_enable(params.blended);
+        if params.blended {
+            blend_attachment_state_builder = blend_attachment_state_builder
+                .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+                .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+                .color_blend_op(vk::BlendOp::ADD)
+                .src_alpha_blend_factor(vk::BlendFactor::ONE)
+                .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
+                .alpha_blend_op(vk::BlendOp::ADD);
+        }
+        Ok([blend_attachment_state_builder.build()])
+    })?;
 
-    let color_blend_create_infos = color_blend_attachment_states_per_pipeline
-        .iter()
-        .map(|color_blend_attachment_states| {
-            vk::PipelineColorBlendStateCreateInfo::builder()
-                .logic_op_enable(false)
-                .attachments(&*color_blend_attachment_states)
-                .build()
-        })
-        .collect::<Vec<vk::PipelineColorBlendStateCreateInfo>>();
+    let color_blend_create_infos = PipelineMap::new(|pipeline| {
+        let color_blend_attachment_states = &color_blend_attachment_states_per_pipeline[pipeline];
+        Ok(vk::PipelineColorBlendStateCreateInfo::builder()
+            .logic_op_enable(false)
+            .attachments(&*color_blend_attachment_states)
+            .build())
+    })?;
 
     let input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
@@ -331,16 +320,14 @@ fn create_pipelines(
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .line_width(1.0);
 
-    let pipeline_depth_stencil_create_infos = PIPELINE_PARAMETERS
-        .iter()
-        .map(|params| {
-            vk::PipelineDepthStencilStateCreateInfo::builder()
-                .depth_test_enable(params.depth_test)
-                .depth_write_enable(params.depth_write)
-                .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL)
-                .build()
-        })
-        .collect::<Vec<vk::PipelineDepthStencilStateCreateInfo>>();
+    let pipeline_depth_stencil_create_infos = PipelineMap::new(|pipeline| {
+        let params = &PIPELINE_PARAMETERS[pipeline];
+        Ok(vk::PipelineDepthStencilStateCreateInfo::builder()
+            .depth_test_enable(params.depth_test)
+            .depth_write_enable(params.depth_write)
+            .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL)
+            .build())
+    })?;
 
     let viewports = [vk::Viewport::builder()
         .width(extent.width as f32)
@@ -353,7 +340,10 @@ fn create_pipelines(
         .viewports(&viewports)
         .scissors(&scissors);
 
-    let subpasses = PIPELINE_PARAMETERS.iter().map(|params| params.subpass).collect::<Vec<_>>();
+    let subpasses = PipelineMap::new(|pipeline| {
+        let params = PIPELINE_PARAMETERS[pipeline];
+        Ok(params.subpass)
+    })?;
 
     pipeline_cache = pipeline_cache.or_else(|| {
         // NOTE: Access to the PipelineCache is synchronized because
@@ -370,7 +360,7 @@ fn create_pipelines(
         })
     });
     let mut pipeline_create_infos = Vec::with_capacity(pipeline_layouts.len());
-    for (i, pipeline_layout) in pipeline_layouts.iter().enumerate() {
+    for i in ALL_PIPELINES {
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
             .stages(&shader_stages_per_pipeline[i][..])
             .vertex_input_state(&vertex_input_per_pipeline[i])
@@ -380,7 +370,7 @@ fn create_pipelines(
             .multisample_state(&multisample_create_infos[i])
             .depth_stencil_state(&pipeline_depth_stencil_create_infos[i])
             .color_blend_state(&color_blend_create_infos[i])
-            .layout(pipeline_layout.inner)
+            .layout(pipeline_layouts[i].inner)
             .render_pass(render_pass)
             .subpass(subpasses[i])
             .build();

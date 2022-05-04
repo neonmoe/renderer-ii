@@ -316,7 +316,7 @@ impl Renderer {
                 self.device.cmd_bind_descriptor_sets(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
-                    descriptors.pipeline_layouts.get(pipeline).inner,
+                    descriptors.pipeline_layouts[pipeline].inner,
                     0,
                     &[shared_descriptor_set],
                     &[],
@@ -326,20 +326,17 @@ impl Renderer {
 
         for pl_index in [PipelineIndex::Opaque, PipelineIndex::Clipped, PipelineIndex::Blended] {
             profiling::scope!("pipeline");
-            let meshes = scene.static_meshes.get(pl_index);
+            let meshes = &scene.static_meshes[pl_index];
             if meshes.is_empty() {
                 continue;
             }
 
             unsafe {
-                self.device.cmd_bind_pipeline(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipelines.pipelines.get(pl_index).inner,
-                )
+                self.device
+                    .cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipelines.pipelines[pl_index].inner)
             };
             let bind_point = vk::PipelineBindPoint::GRAPHICS;
-            let layout = descriptors.pipeline_layouts.get(pl_index).inner;
+            let layout = descriptors.pipeline_layouts[pl_index].inner;
             let descriptor_sets = descriptors.descriptor_sets(pl_index);
             if descriptor_sets.len() > 1 {
                 unsafe {
@@ -412,9 +409,9 @@ impl Renderer {
             let bind_point = vk::PipelineBindPoint::GRAPHICS;
             unsafe {
                 self.device
-                    .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines.get(pl_index).inner)
+                    .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines[pl_index].inner)
             };
-            let layout = descriptors.pipeline_layouts.get(pl_index).inner;
+            let layout = descriptors.pipeline_layouts[pl_index].inner;
             let descriptor_sets = descriptors.descriptor_sets(pl_index);
             unsafe {
                 self.device

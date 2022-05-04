@@ -44,7 +44,7 @@ fn fallible_main() -> anyhow::Result<()> {
 
     // Enable all controllers
     let controller_subsystem = sdl_context.game_controller().unwrap();
-    let controller = controller_subsystem.open(0).unwrap();
+    let controller = controller_subsystem.open(0);
 
     let mut window = {
         profiling::scope!("SDL window creation");
@@ -283,8 +283,10 @@ fn fallible_main() -> anyhow::Result<()> {
         }
 
         if analog_controls {
-            cam_yaw_delta = -get_axis_deadzoned(controller.axis(Axis::RightX)) / 50.0;
-            cam_pitch_delta = -get_axis_deadzoned(controller.axis(Axis::RightY)) / 50.0;
+            if let Ok(controller) = &controller {
+                cam_yaw_delta = -get_axis_deadzoned(controller.axis(Axis::RightX)) / 50.0;
+                cam_pitch_delta = -get_axis_deadzoned(controller.axis(Axis::RightY)) / 50.0;
+            }
         }
         cam_yaw += cam_yaw_delta;
         cam_pitch = (cam_pitch + cam_pitch_delta).clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);

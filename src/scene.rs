@@ -46,7 +46,7 @@ impl<'a> Scene<'a> {
         profiling::scope!("queue model for rendering");
         for mesh in model.mesh_iter() {
             profiling::scope!("static mesh");
-            let mesh_map = self.static_meshes.get_mut(mesh.mesh.pipeline);
+            let mesh_map = &mut self.static_meshes[mesh.mesh.pipeline];
             let mesh_vec = mesh_map.entry((mesh.mesh, mesh.material)).or_insert_with(Vec::new);
             mesh_vec.push(transform * mesh.transform);
         }
@@ -66,7 +66,7 @@ impl<'a> Scene<'a> {
                 // > Only the joint transforms are applied to the skinned mesh; the transform of the skinned mesh node MUST be ignored.
                 // https://www.khronos.org/registry/glTF/specs/2.0/glTF-2.0.html#joint-hierarchy
                 // Of course, the transform provided as a parameter is still applied, since it's applied on top of the mesh specific transforms.
-                let mesh_vec = self.skinned_meshes.get_mut(mesh.mesh.pipeline);
+                let mesh_vec = &mut self.skinned_meshes[mesh.mesh.pipeline];
                 mesh_vec.push(SkinnedMesh {
                     mesh: mesh.mesh,
                     material: mesh.material,
@@ -115,7 +115,7 @@ impl<'a> Scene<'a> {
                     }
                     animated_transform = Mat4::from_scale_rotation_translation(scale, rotation, translation);
                 }
-                let mesh_map = self.static_meshes.get_mut(mesh.mesh.pipeline);
+                let mesh_map = &mut self.static_meshes[mesh.mesh.pipeline];
                 let mesh_vec = mesh_map.entry((mesh.mesh, mesh.material)).or_insert_with(Vec::new);
                 mesh_vec.push(transform * animated_transform);
             }

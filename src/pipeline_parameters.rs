@@ -17,7 +17,7 @@ pub struct PushConstantStruct {
 unsafe impl bytemuck::Zeroable for PushConstantStruct {}
 unsafe impl bytemuck::Pod for PushConstantStruct {}
 
-const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
+pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
     PipelineIndex::Opaque,
     PipelineIndex::SkinnedOpaque,
     PipelineIndex::Clipped,
@@ -31,15 +31,15 @@ const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
 pub enum PipelineIndex {
     /// Opaque geometry pass.
     Opaque,
-    /// Animated opaque geometry pass.
+    /// Skinned opaque geometry pass.
     SkinnedOpaque,
     /// Alpha-to-coverage "fake transparent" geometry pass.
     Clipped,
-    /// Animated alpha-to-coverage "fake transparent" geometry pass.
+    /// Skinned alpha-to-coverage "fake transparent" geometry pass.
     SkinnedClipped,
     /// Transparent geomtry pass.
     Blended,
-    /// Animated transparent geomtry pass.
+    /// Skinned transparent geomtry pass.
     SkinnedBlended,
     /// Post-processing pass before MSAA resolve and up/downsampling.
     RenderResolutionPostProcess,
@@ -85,14 +85,6 @@ impl<T> PipelineMap<T> {
     pub const fn len(&self) -> usize {
         PipelineIndex::Count as usize
     }
-    pub fn get(&self, pipeline: PipelineIndex) -> &T {
-        // Safety: initialized in PipelineMap::new
-        unsafe { self.buffer[pipeline as usize].assume_init_ref() }
-    }
-    pub fn get_mut(&mut self, pipeline: PipelineIndex) -> &mut T {
-        // Safety: initialized in PipelineMap::new
-        unsafe { self.buffer[pipeline as usize].assume_init_mut() }
-    }
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         // Safety: initialized in PipelineMap::new
         self.buffer.iter().map(|o| unsafe { o.assume_init_ref() })
@@ -104,6 +96,20 @@ impl<T> PipelineMap<T> {
             .map(|o| unsafe { o.assume_init_ref() })
             .zip(ALL_PIPELINES)
             .map(|(t, pl)| (pl, t))
+    }
+}
+
+impl<T> std::ops::Index<PipelineIndex> for PipelineMap<T> {
+    type Output = T;
+    fn index(&self, index: PipelineIndex) -> &Self::Output {
+        // Safety: initialized in PipelineMap::new
+        unsafe { self.buffer[index as usize].assume_init_ref() }
+    }
+}
+impl<T> std::ops::IndexMut<PipelineIndex> for PipelineMap<T> {
+    fn index_mut(&mut self, index: PipelineIndex) -> &mut Self::Output {
+        // Safety: initialized in PipelineMap::new
+        unsafe { self.buffer[index as usize].assume_init_mut() }
     }
 }
 
@@ -156,6 +162,16 @@ static TANGENT_BINDING_4: vk::VertexInputBindingDescription = vk::VertexInputBin
     stride: mem::size_of::<Vec4>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
+static JOINTS0_BINDING_5: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+    binding: 5,
+    stride: mem::size_of::<[u16; 4]>() as u32,
+    input_rate: vk::VertexInputRate::VERTEX,
+};
+static WEIGHTS0_BINDING_6: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+    binding: 6,
+    stride: mem::size_of::<[f32; 4]>() as u32,
+    input_rate: vk::VertexInputRate::VERTEX,
+};
 
 static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescription; 4] = [
     vk::VertexInputAttributeDescription {
@@ -204,6 +220,18 @@ static NORMAL_BINDING_3_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::Ver
 static TANGENT_BINDING_4_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: 4,
     location: 7,
+    format: vk::Format::R32G32B32A32_SFLOAT,
+    offset: 0,
+};
+static JOINTS0_BINDING_5_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+    binding: 5,
+    location: 8,
+    format: vk::Format::R8G8B8A8_UINT,
+    offset: 0,
+};
+static WEIGHTS0_BINDING_6_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+    binding: 6,
+    location: 9,
     format: vk::Format::R32G32B32A32_SFLOAT,
     offset: 0,
 };
@@ -305,20 +333,47 @@ static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
 };
 
 static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
-    vertex_shader: shaders::include_spirv!("shaders/main.vert", "ANIMATED"),
-    fragment_shader: shaders::include_spirv!("shaders/main.frag", "ANIMATED"),
+    alpha_to_coverage: false,
+    blended: false,
+    depth_test: true,
+    depth_write: true,
+    sample_shading: false,
+    min_sample_shading_factor: 0.0,
+    subpass: 0,
+    vertex_shader: shaders::include_spirv!("shaders/main.vert", "SKINNED"),
+    fragment_shader: shaders::include_spirv!("shaders/main.frag", "SKINNED"),
+    bindings: &[
+        INSTANCED_TRANSFORM_BINDING_0,
+        POSITION_BINDING_1,
+        TEXCOORD0_BINDING_2,
+        NORMAL_BINDING_3,
+        TANGENT_BINDING_4,
+        JOINTS0_BINDING_5,
+        WEIGHTS0_BINDING_6,
+    ],
+    attributes: &[
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[2],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[3],
+        POSITION_BINDING_1_ATTRIBUTE,
+        TEXCOORD0_BINDING_2_ATTRIBUTE,
+        NORMAL_BINDING_3_ATTRIBUTE,
+        TANGENT_BINDING_4_ATTRIBUTE,
+        JOINTS0_BINDING_5_ATTRIBUTE,
+        WEIGHTS0_BINDING_6_ATTRIBUTE,
+    ],
     descriptor_sets: &[
         SHARED_DESCRIPTOR_SET_0,
         PBR_DESCRIPTOR_SET_1,
         &[DescriptorSetLayoutParams {
-            binding: 1,
+            binding: 0,
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::VERTEX,
             binding_flags: vk::DescriptorBindingFlags::empty(),
         }],
     ],
-    ..OPAQUE_PARAMETERS
 };
 
 static CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {

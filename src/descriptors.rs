@@ -102,7 +102,7 @@ impl Material {
         name: String,
     ) -> Result<Rc<Material>, DescriptorError> {
         profiling::scope!("material slot reservation");
-        let material_slot_array = descriptors.material_slots_per_pipeline.get_mut(pipeline);
+        let material_slot_array = &mut descriptors.material_slots_per_pipeline[pipeline];
         if let Some((i, slot)) = material_slot_array.iter_mut().enumerate().find(|(_, slot)| slot.is_none()) {
             let material = Rc::new(Material {
                 name,
@@ -110,7 +110,7 @@ impl Material {
                 array_index: i as u32,
                 data,
             });
-            descriptors.material_updated_per_pipeline.get_mut(pipeline)[i] = false;
+            descriptors.material_updated_per_pipeline[pipeline][i] = false;
             *slot = Some(Rc::downgrade(&material));
             Ok(material)
         } else {
@@ -205,7 +205,7 @@ impl Descriptors {
             };
 
         let pipeline_layouts = PipelineMap::new::<DescriptorError, _>(|pipeline| {
-            let PipelineParameters { descriptor_sets, .. } = PIPELINE_PARAMETERS.get(pipeline);
+            let PipelineParameters { descriptor_sets, .. } = &PIPELINE_PARAMETERS[pipeline];
             let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline, descriptor_sets)?);
             let push_constant_ranges = [vk::PushConstantRange::builder()
                 .offset(0)
@@ -321,7 +321,7 @@ impl Descriptors {
         for (pipeline, material_slots) in self.material_slots_per_pipeline.iter_with_pipeline() {
             for (i, material_slot) in material_slots.iter().enumerate() {
                 if let Some(material) = material_slot.as_ref().and_then(Weak::upgrade) {
-                    let written = self.material_updated_per_pipeline.get(pipeline)[i];
+                    let written = self.material_updated_per_pipeline[pipeline][i];
                     if !written {
                         materials_needing_update.push((pipeline, i, material));
                     }
@@ -346,7 +346,7 @@ impl Descriptors {
 
         for (pipeline, i, material) in &materials_needing_update {
             self.write_material(*pipeline, material, &mut pending_writes);
-            self.material_updated_per_pipeline.get_mut(*pipeline)[*i] = true;
+            self.material_updated_per_pipeline[*pipeline][*i] = true;
         }
 
         let mut writes = Vec::with_capacity(pending_writes.len());
@@ -357,6 +357,7 @@ impl Descriptors {
             profiling::scope!("vk::update_descriptor_sets");
             unsafe { self.device.update_descriptor_sets(&writes, &[]) };
         }
+        drop(materials_needing_update);
     }
 
     fn write_material(&self, pipeline: PipelineIndex, material: &Material, pending_writes: &mut Vec<PendingWrite>) {
@@ -396,7 +397,7 @@ impl Descriptors {
         (buffer, offset, size): (vk::Buffer, vk::DeviceSize, vk::DeviceSize),
     ) {
         let set_idx = set as usize;
-        let descriptor_set = self.descriptor_sets.get(pipeline).inner[set_idx];
+        let descriptor_set = self.descriptor_sets[pipeline].inner[set_idx];
         let descriptor_buffer_info = Box::new(
             vk::DescriptorBufferInfo::builder()
                 .buffer(buffer)
@@ -404,7 +405,7 @@ impl Descriptors {
                 .range(size)
                 .build(),
         );
-        let params = &PIPELINE_PARAMETERS.get(pipeline).descriptor_sets[set_idx][binding as usize];
+        let params = &PIPELINE_PARAMETERS[pipeline].descriptor_sets[set_idx][binding as usize];
         let write_descriptor_set = vk::WriteDescriptorSet {
             dst_set: descriptor_set,
             dst_binding: binding,
@@ -432,7 +433,7 @@ impl Descriptors {
         image_views: &[vk::ImageView],
     ) {
         let set_idx = set as usize;
-        let descriptor_set = self.descriptor_sets.get(pipeline).inner[set_idx];
+        let descriptor_set = self.descriptor_sets[pipeline].inner[set_idx];
         for (i, image_view) in image_views.iter().enumerate() {
             let descriptor_image_info = Box::new(
                 vk::DescriptorImageInfo::builder()
@@ -441,7 +442,7 @@ impl Descriptors {
                     .build(),
             );
             let binding = first_binding + i as u32;
-            let params = &PIPELINE_PARAMETERS.get(pipeline).descriptor_sets[set_idx][binding as usize];
+            let params = &PIPELINE_PARAMETERS[pipeline].descriptor_sets[set_idx][binding as usize];
             let write_descriptor_set = vk::WriteDescriptorSet {
                 dst_set: descriptor_set,
                 dst_binding: binding,
@@ -461,6 +462,6 @@ impl Descriptors {
 
     #[profiling::function]
     pub(crate) fn descriptor_sets(&self, pipeline: PipelineIndex) -> &[vk::DescriptorSet] {
-        &self.descriptor_sets.get(pipeline).inner
+        &self.descriptor_sets[pipeline].inner
     }
 }
