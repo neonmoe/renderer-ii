@@ -674,35 +674,58 @@ fn create_primitive(
     let (index_buffer, index_buffer_offset, index_buffer_size, index_ctype) =
         get_buffer_from_accessor(buffers, gltf, index_accessor, None, "SCALAR")?;
 
+    let mut vertex_buffers = Vec::with_capacity(6);
+    let mut buffer_offsets = Vec::with_capacity(6);
+
     let pos_accessor = *primitive
         .attributes
         .get("POSITION")
         .ok_or(GltfLoadingError::Misc("missing position attributes"))?;
     let (pos_buffer, pos_offset, _, _) = get_buffer_from_accessor(buffers, gltf, pos_accessor, GLTF_FLOAT, "VEC3")?;
+    vertex_buffers.push(pos_buffer);
+    buffer_offsets.push(pos_offset);
 
     let tex_accessor = *primitive
         .attributes
         .get("TEXCOORD_0")
         .ok_or(GltfLoadingError::Misc("missing UV0 attributes"))?;
     let (tex_buffer, tex_offset, _, _) = get_buffer_from_accessor(buffers, gltf, tex_accessor, GLTF_FLOAT, "VEC2")?;
+    vertex_buffers.push(tex_buffer);
+    buffer_offsets.push(tex_offset);
 
     let normal_accessor = *primitive
         .attributes
         .get("NORMAL")
         .ok_or(GltfLoadingError::Misc("missing normal attributes"))?;
     let (normal_buffer, normal_offset, _, _) = get_buffer_from_accessor(buffers, gltf, normal_accessor, GLTF_FLOAT, "VEC3")?;
+    vertex_buffers.push(normal_buffer);
+    buffer_offsets.push(normal_offset);
 
     let tangent_accessor = *primitive
         .attributes
         .get("TANGENT")
         .ok_or(GltfLoadingError::Misc("missing tangent attributes"))?;
     let (tangent_buffer, tangent_offset, _, _) = get_buffer_from_accessor(buffers, gltf, tangent_accessor, GLTF_FLOAT, "VEC4")?;
+    vertex_buffers.push(tangent_buffer);
+    buffer_offsets.push(tangent_offset);
+
+    if let Some(&joints_accessor) = primitive.attributes.get("JOINTS0") {
+        let (joints_buffer, joints_offset, _, _) = get_buffer_from_accessor(buffers, gltf, joints_accessor, GLTF_UNSIGNED_BYTE, "VEC4")?;
+        vertex_buffers.push(joints_buffer);
+        buffer_offsets.push(joints_offset);
+    }
+
+    if let Some(&weights_accessor) = primitive.attributes.get("WEIGHTS0") {
+        let (weights_buffer, weights_offset, _, _) = get_buffer_from_accessor(buffers, gltf, weights_accessor, GLTF_FLOAT, "VEC4")?;
+        vertex_buffers.push(weights_buffer);
+        buffer_offsets.push(weights_offset);
+    }
 
     if index_ctype == GLTF_UNSIGNED_SHORT {
         Ok(Mesh::new::<u16>(
             pipeline,
-            vec![pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
-            vec![pos_offset, tex_offset, normal_offset, tangent_offset],
+            vertex_buffers,
+            buffer_offsets,
             index_buffer,
             index_buffer_offset,
             index_buffer_size,
@@ -710,8 +733,8 @@ fn create_primitive(
     } else if index_ctype == GLTF_UNSIGNED_INT {
         Ok(Mesh::new::<u32>(
             pipeline,
-            vec![pos_buffer, tex_buffer, normal_buffer, tangent_buffer],
-            vec![pos_offset, tex_offset, normal_offset, tangent_offset],
+            vertex_buffers,
+            buffer_offsets,
             index_buffer,
             index_buffer_offset,
             index_buffer_size,

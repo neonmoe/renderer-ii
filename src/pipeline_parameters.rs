@@ -27,6 +27,12 @@ pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
     PipelineIndex::RenderResolutionPostProcess,
 ];
 
+pub const SKINNED_PIPELINES: [PipelineIndex; 3] = [
+    PipelineIndex::SkinnedOpaque,
+    PipelineIndex::SkinnedClipped,
+    PipelineIndex::SkinnedBlended,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PipelineIndex {
     /// Opaque geometry pass.

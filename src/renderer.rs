@@ -29,6 +29,8 @@ pub enum RendererError {
     FrameLocalArenaReset(#[source] VulkanArenaError),
     #[error("failed to create uniform buffer for camera transforms")]
     CameraTransformUniformCreation(#[source] VulkanArenaError),
+    #[error("failed to create uniform buffer for skinned meshes' joint transforms")]
+    JointTransformUniformCreation(#[source] VulkanArenaError),
     #[error("failed to submit rendering command buffers to the graphics queue (device lost or out of memory?)")]
     RenderQueueSubmit(#[source] vk::Result),
     #[error("present was successful, but may display oddly; swapchain is out of date")]
@@ -180,23 +182,46 @@ impl Renderer {
     ) -> Result<(), RendererError> {
         let vk::Extent2D { width, height } = framebuffers.extent;
 
-        let global_transforms = &[scene.camera.create_global_transforms(width as f32, height as f32)];
-        let global_transforms = bytemuck::cast_slice(global_transforms);
-        let buffer_create_info = vk::BufferCreateInfo::builder()
-            .size(global_transforms.len() as u64)
-            .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let global_transforms_buffer = self
-            .temp_arena
-            .create_buffer(
-                *buffer_create_info,
-                global_transforms,
-                None,
-                format_args!("uniform (view+proj matrices)"),
-            )
-            .map_err(RendererError::CameraTransformUniformCreation)?;
-        descriptors.write_descriptors(&global_transforms_buffer, &framebuffers.inner[frame_index.index]);
+        let global_transforms_buffer = {
+            let global_transforms = &[scene.camera.create_global_transforms(width as f32, height as f32)];
+            let global_transforms = bytemuck::cast_slice(global_transforms);
+            let buffer_create_info = vk::BufferCreateInfo::builder()
+                .size(global_transforms.len() as u64)
+                .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE);
+            self.temp_arena
+                .create_buffer(
+                    *buffer_create_info,
+                    global_transforms,
+                    None,
+                    format_args!("uniform (view+proj matrices)"),
+                )
+                .map_err(RendererError::CameraTransformUniformCreation)?
+        };
+
+        let skinned_mesh_joints_buffer = {
+            let skinned_mesh_joints = &scene.skinned_mesh_joints_buffer;
+            let buffer_create_info = vk::BufferCreateInfo::builder()
+                .size(skinned_mesh_joints.len() as u64)
+                .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE);
+            self.temp_arena
+                .create_buffer(
+                    *buffer_create_info,
+                    skinned_mesh_joints,
+                    None,
+                    format_args!("uniform (joint transforms)"),
+                )
+                .map_err(RendererError::JointTransformUniformCreation)?
+        };
+
+        descriptors.write_descriptors(
+            &global_transforms_buffer,
+            &skinned_mesh_joints_buffer,
+            &framebuffers.inner[frame_index.index],
+        );
         self.temp_arena.add_buffer(global_transforms_buffer);
+        self.temp_arena.add_buffer(skinned_mesh_joints_buffer);
 
         let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, framebuffers, scene, debug_value)?;
 

@@ -19,7 +19,7 @@ pub(crate) struct SkinnedModel<'a> {
     pipeline: PipelineIndex,
     pub(crate) meshes: Vec<(&'a Mesh, &'a Material)>,
     pub(crate) transform: Mat4,
-    pub(crate) joints: Vec<Mat4>,
+    pub(crate) joints_offset: usize,
 }
 
 type StaticMeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
@@ -30,6 +30,7 @@ pub struct Scene<'a> {
     pub camera: Camera,
     pub(crate) static_meshes: PipelineMap<StaticMeshMap<'a>>,
     pub(crate) skinned_meshes: PipelineMap<Vec<SkinnedModel<'a>>>,
+    pub(crate) skinned_mesh_joints_buffer: Vec<u8>,
 }
 
 impl Default for Scene<'_> {
@@ -38,6 +39,7 @@ impl Default for Scene<'_> {
             camera: Camera::default(),
             static_meshes: PipelineMap::new::<(), _>(|_| Ok(HashMap::default())).unwrap(),
             skinned_meshes: PipelineMap::new::<(), _>(|_| Ok(Vec::new())).unwrap(),
+            skinned_mesh_joints_buffer: Vec::new(),
         }
     }
 }
@@ -71,19 +73,21 @@ impl<'a> Scene<'a> {
                     skinned_model.meshes.push((mesh.mesh, mesh.material));
                 } else {
                     let skin = &model.skins[skin_index];
-                    let mut joints = Vec::with_capacity(skin.joints.len());
+                    // TODO: Align each skeleton to VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment
+                    let joints_offset = self.skinned_mesh_joints_buffer.len();
                     for joint in &skin.joints {
                         let inverse_bind_matrix = joint.inverse_bind_matrix;
                         let animated_transform = get_animation_transform(joint.node_index, joint.resting_transform, playing_animations)?;
-                        let joint_transform = animated_transform * inverse_bind_matrix;
-                        joints.push(joint_transform);
+                        let joint_transform: Mat4 = animated_transform * inverse_bind_matrix;
+                        self.skinned_mesh_joints_buffer
+                            .extend_from_slice(bytemuck::cast_slice(&[joint_transform]));
                     }
                     skinned_models.push(SkinnedModel {
                         pipeline: mesh.mesh.pipeline,
                         skin: skin_index,
                         meshes: vec![(mesh.mesh, mesh.material)],
-                        joints,
                         transform,
+                        joints_offset,
                     });
                 }
             } else {

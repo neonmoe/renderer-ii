@@ -3,6 +3,7 @@ use crate::image_loading::{ImageLoadingError, PbrDefaults};
 use crate::memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use crate::pipeline_parameters::{
     DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PushConstantStruct, MAX_TEXTURE_COUNT, PIPELINE_PARAMETERS,
+    SKINNED_PIPELINES,
 };
 use crate::uploader::{Uploader, UploaderError};
 use crate::vulkan_raii::{
@@ -314,7 +315,12 @@ impl Descriptors {
         })
     }
 
-    pub(crate) fn write_descriptors(&mut self, global_transforms_buffer: &Buffer, framebuffer: &Framebuffer) {
+    pub(crate) fn write_descriptors(
+        &mut self,
+        global_transforms_buffer: &Buffer,
+        skinned_mesh_joints_buffer: &Buffer,
+        framebuffer: &Framebuffer,
+    ) {
         profiling::scope!("updating descriptors");
 
         let mut materials_needing_update = Vec::new();
@@ -341,8 +347,13 @@ impl Descriptors {
         );
 
         let shared_pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
-        let global_transforms_buffer = (global_transforms_buffer.inner, 0, vk::WHOLE_SIZE);
+        let global_transforms_buffer = (global_transforms_buffer.inner, 0, global_transforms_buffer.size);
         self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, 0, 0), global_transforms_buffer);
+
+        for pipeline in SKINNED_PIPELINES {
+            let skinned_mesh_joints_buffer = (skinned_mesh_joints_buffer.inner, 0, skinned_mesh_joints_buffer.size);
+            self.set_uniform_buffer(pipeline, &mut pending_writes, (2, 0, 0), skinned_mesh_joints_buffer);
+        }
 
         for (pipeline, i, material) in &materials_needing_update {
             self.write_material(*pipeline, material, &mut pending_writes);
@@ -357,6 +368,7 @@ impl Descriptors {
             profiling::scope!("vk::update_descriptor_sets");
             unsafe { self.device.update_descriptor_sets(&writes, &[]) };
         }
+        drop(pending_writes);
         drop(materials_needing_update);
     }
 
