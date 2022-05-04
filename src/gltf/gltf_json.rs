@@ -293,6 +293,5 @@ impl AnimationInterpolation {
 pub(crate) struct Skin {
     #[serde(rename = "inverseBindMatrices")]
     pub inverse_bind_matrices: Option<usize>,
-    pub skeleton: Option<usize>,
     pub joints: Vec<usize>,
 }

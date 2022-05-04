@@ -105,12 +105,23 @@ struct Node {
     transform: Mat4,
 }
 
+pub(crate) struct Joint {
+    pub(crate) inverse_bind_matrix: Mat4,
+    pub(crate) resting_transform: Mat4,
+    pub(crate) node_index: usize,
+}
+
+pub(crate) struct Skin {
+    pub(crate) joints: Vec<Joint>,
+}
+
 pub struct Gltf {
     pub animations: Vec<Animation>,
     nodes: Vec<Node>,
     root_nodes: Vec<usize>,
     meshes: Vec<Vec<(Mesh, usize)>>,
     materials: Vec<Rc<Material>>,
+    pub(crate) skins: Vec<Skin>,
 }
 
 impl Gltf {
@@ -400,17 +411,6 @@ fn create_gltf(
         materials.push(Material::new(descriptors, pipeline, pipeline_specific_data, name).map_err(GltfLoadingError::MaterialCreation)?);
     }
 
-    // TODO: Animations:
-    // TODO: Sending the inverse bind matrices to the GPU
-    // TODO: Sending the transforms of the nodes in the joints-array of skins, animated with the current Animation, to the GPU
-    // The above stuff could probably all be batched into one array of buffers,
-    // or simply a continuous buffer and referring to the sub parts with UBO
-    // offsets. Not sure, but all the animation data should definitely be
-    // written all at once.
-    // TODO: Test by pretending that every vertex has max weight for joint 0 and zero for the rest.
-    // TODO: Sending joints and weights to the GPU (should be easy, just more attributes)
-    // The hard part however, is deciding how to deal with some meshes having them and some not.
-
     let mut animations = Vec::with_capacity(gltf.animations.len());
     for animation in &gltf.animations {
         let mut nodes_channels = vec![None; gltf.nodes.len()];
@@ -521,6 +521,55 @@ fn create_gltf(
         });
     }
 
+    let mut skins = Vec::new();
+    for skin in &gltf.skins {
+        let mut joints = Vec::new();
+        if let Some(inverse_bind_matrices) = skin.inverse_bind_matrices {
+            let (inverse_bind_matrices, _) = get_slice_and_component_type_from_accessor(
+                &mut memmap_holder,
+                resource_path,
+                bin_buffer,
+                &gltf,
+                inverse_bind_matrices,
+                GLTF_FLOAT,
+                "MAT4",
+            )?;
+            if skin.joints.len() * std::mem::size_of::<Mat4>() != inverse_bind_matrices.len() {
+                return Err(GltfLoadingError::Spec(
+                    "skin has a different amount of joints and inverse bind matrices",
+                ));
+            }
+            // Re-allocation needed so that the [u8] is Mat4 aligned.
+            // Don't know why the format doesn't enforce this.
+            let inverse_bind_matrices = Vec::from(inverse_bind_matrices);
+            let inverse_bind_matrices: &[Mat4] = bytemuck::cast_slice(&inverse_bind_matrices);
+            for (&node_index, &inverse_bind_matrix) in skin.joints.iter().zip(inverse_bind_matrices) {
+                joints.push(Joint {
+                    inverse_bind_matrix,
+                    resting_transform: nodes[node_index].transform,
+                    node_index,
+                });
+            }
+        } else {
+            for &node_index in &skin.joints {
+                joints.push(Joint {
+                    inverse_bind_matrix: Mat4::IDENTITY,
+                    resting_transform: nodes[node_index].transform,
+                    node_index,
+                });
+            }
+        }
+        skins.push(Skin { joints });
+    }
+
+    for node in &nodes {
+        if let Some(skin) = node.skin {
+            if skin >= skins.len() {
+                return Err(GltfLoadingError::Oob("node has an out-of-bounds skin index"));
+            }
+        }
+    }
+
     let mut visited_nodes = vec![false; nodes.len()];
     let mut queue = Vec::with_capacity(nodes.len());
     queue.extend_from_slice(&root_nodes);
@@ -543,6 +592,7 @@ fn create_gltf(
         root_nodes,
         materials,
         meshes,
+        skins,
     })
 }
 
