@@ -5,17 +5,25 @@ use std::mem::MaybeUninit;
 
 pub const MAX_TEXTURE_COUNT: u32 = 128; // Keep in sync with shaders/constants.glsl.
 
-/// The push constant pushed to the fragment shader for every draw
-/// call.
+/// The per-frame uniform buffer.
 #[derive(Clone, Copy)]
-pub struct PushConstantStruct {
+pub struct RenderSettingsPushConstants {
     // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
-    pub texture_index: u32,
     pub debug_value: u32,
 }
 
-unsafe impl bytemuck::Zeroable for PushConstantStruct {}
-unsafe impl bytemuck::Pod for PushConstantStruct {}
+unsafe impl bytemuck::Zeroable for RenderSettingsPushConstants {}
+unsafe impl bytemuck::Pod for RenderSettingsPushConstants {}
+
+/// The per-material uniform buffer.
+#[derive(Clone, Copy)]
+pub struct MaterialPushConstants {
+    // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
+    pub texture_index: u32,
+}
+
+unsafe impl bytemuck::Zeroable for MaterialPushConstants {}
+unsafe impl bytemuck::Pod for MaterialPushConstants {}
 
 pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
     PipelineIndex::Opaque,
@@ -57,6 +65,11 @@ impl PipelineIndex {
     /// A pipeline whose first descriptor set is written to and read
     /// from, where the shared descriptor set is concerned.
     pub const SHARED_DESCRIPTOR_PIPELINE: PipelineIndex = PipelineIndex::Opaque;
+
+    pub(crate) fn skinned(&self) -> bool {
+        use PipelineIndex::*;
+        [SkinnedOpaque, SkinnedClipped, SkinnedBlended].contains(self)
+    }
 }
 
 /// Maps every PipelineIndex to a T.
@@ -248,13 +261,22 @@ static WEIGHTS0_BINDING_6_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::V
 ///
 /// In concrete terms, this maps to uniforms in shaders with the
 /// layout `set = 0`, and the bindings are in order.
-static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[DescriptorSetLayoutParams {
-    binding: 0,
-    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-    descriptor_count: 1,
-    stage_flags: vk::ShaderStageFlags::VERTEX,
-    binding_flags: vk::DescriptorBindingFlags::empty(),
-}];
+static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
+    DescriptorSetLayoutParams {
+        binding: 0,
+        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        descriptor_count: 1,
+        stage_flags: vk::ShaderStageFlags::VERTEX,
+        binding_flags: vk::DescriptorBindingFlags::empty(),
+    },
+    DescriptorSetLayoutParams {
+        binding: 1,
+        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        descriptor_count: 1,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::empty(),
+    },
+];
 
 static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
     DescriptorSetLayoutParams {
@@ -414,13 +436,16 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     fragment_shader: shaders::include_spirv!("shaders/render_res_pp.frag"),
     bindings: &[],
     attributes: &[],
-    descriptor_sets: &[&[DescriptorSetLayoutParams {
-        binding: 0,
-        descriptor_type: vk::DescriptorType::INPUT_ATTACHMENT,
-        descriptor_count: 1,
-        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        binding_flags: vk::DescriptorBindingFlags::empty(),
-    }]],
+    descriptor_sets: &[
+        SHARED_DESCRIPTOR_SET_0,
+        &[DescriptorSetLayoutParams {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::INPUT_ATTACHMENT,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            binding_flags: vk::DescriptorBindingFlags::empty(),
+        }],
+    ],
 };
 
 pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = PipelineMap {

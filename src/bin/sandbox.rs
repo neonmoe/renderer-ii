@@ -202,6 +202,8 @@ fn fallible_main() -> anyhow::Result<()> {
                             Some(Keycode::Num3) => debug_value = 3,
                             Some(Keycode::Num4) => debug_value = 4,
                             Some(Keycode::Num5) => debug_value = 5,
+                            Some(Keycode::Num6) => debug_value = 6,
+                            Some(Keycode::Num7) => debug_value = 7,
                             Some(Keycode::W) => dz = -1.0,
                             Some(Keycode::A) => dx = -1.0,
                             Some(Keycode::S) => dz = 1.0,
@@ -359,7 +361,7 @@ fn fallible_main() -> anyhow::Result<()> {
             renderer.wait_frame(&swapchain)?
         };
         let render_start_time = Instant::now();
-        match renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &scene, debug_value) {
+        match renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, scene, debug_value) {
             Ok(_) => {}
             Err(err) => log::warn!("Error during regular frame rendering: {}", err),
         }

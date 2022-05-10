@@ -132,7 +132,7 @@ pub(crate) struct Material {
     pub alpha_cutoff: Option<f32>,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Deserialize, PartialEq, Clone, Copy)]
 pub(crate) enum AlphaMode {
     #[serde(rename = "OPAQUE")]
     Opaque,

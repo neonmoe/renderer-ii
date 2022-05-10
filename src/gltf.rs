@@ -5,7 +5,7 @@ use crate::image_loading::{self, ImageLoadingError, TextureKind};
 use crate::mesh::Mesh;
 use crate::vk;
 use crate::vulkan_raii::{Buffer, Device, ImageView};
-use crate::{Descriptors, ForBuffers, ForImages, Material, PipelineIndex, Uploader};
+use crate::{Descriptors, ForBuffers, ForImages, Material, Uploader};
 use glam::{Mat4, Quat, Vec3, Vec4};
 use memmap2::{Advice, Mmap, MmapOptions};
 use std::collections::HashMap;
@@ -401,14 +401,10 @@ fn create_gltf(
             occlusion,
             emissive,
             factors,
-        };
-        let pipeline = match mat.alpha_mode {
-            gltf_json::AlphaMode::Opaque => PipelineIndex::Opaque,
-            gltf_json::AlphaMode::Mask => PipelineIndex::Clipped,
-            gltf_json::AlphaMode::Blend => PipelineIndex::Blended,
+            alpha_mode: mat.alpha_mode,
         };
         let name = mat.name.clone().unwrap_or_else(|| String::from("unnamed material"));
-        materials.push(Material::new(descriptors, pipeline, pipeline_specific_data, name).map_err(GltfLoadingError::MaterialCreation)?);
+        materials.push(Material::new(descriptors, pipeline_specific_data, name).map_err(GltfLoadingError::MaterialCreation)?);
     }
 
     let mut animations = Vec::with_capacity(gltf.animations.len());
@@ -659,17 +655,6 @@ fn create_primitive(
     buffers: &[Rc<Buffer>],
     primitive: &gltf_json::Primitive,
 ) -> Result<Mesh, GltfLoadingError> {
-    let pipeline = if let Some(material_index) = primitive.material {
-        let material = gltf.materials.get(material_index).ok_or(GltfLoadingError::Oob("material"))?;
-        match material.alpha_mode {
-            gltf_json::AlphaMode::Opaque => PipelineIndex::Opaque,
-            gltf_json::AlphaMode::Mask => PipelineIndex::Clipped,
-            gltf_json::AlphaMode::Blend => PipelineIndex::Blended,
-        }
-    } else {
-        PipelineIndex::Opaque
-    };
-
     let index_accessor = primitive.indices.ok_or(GltfLoadingError::Misc("missing indices"))?;
     let (index_buffer, index_buffer_offset, index_buffer_size, index_ctype) =
         get_buffer_from_accessor(buffers, gltf, index_accessor, None, "SCALAR")?;
@@ -709,13 +694,11 @@ fn create_primitive(
     vertex_buffers.push(tangent_buffer);
     buffer_offsets.push(tangent_offset);
 
-    if let Some(&joints_accessor) = primitive.attributes.get("JOINTS0") {
+    if let (Some(&joints_accessor), Some(&weights_accessor)) = (primitive.attributes.get("JOINTS_0"), primitive.attributes.get("WEIGHTS_0"))
+    {
         let (joints_buffer, joints_offset, _, _) = get_buffer_from_accessor(buffers, gltf, joints_accessor, GLTF_UNSIGNED_BYTE, "VEC4")?;
         vertex_buffers.push(joints_buffer);
         buffer_offsets.push(joints_offset);
-    }
-
-    if let Some(&weights_accessor) = primitive.attributes.get("WEIGHTS0") {
         let (weights_buffer, weights_offset, _, _) = get_buffer_from_accessor(buffers, gltf, weights_accessor, GLTF_FLOAT, "VEC4")?;
         vertex_buffers.push(weights_buffer);
         buffer_offsets.push(weights_offset);
@@ -723,7 +706,6 @@ fn create_primitive(
 
     if index_ctype == GLTF_UNSIGNED_SHORT {
         Ok(Mesh::new::<u16>(
-            pipeline,
             vertex_buffers,
             buffer_offsets,
             index_buffer,
@@ -732,7 +714,6 @@ fn create_primitive(
         ))
     } else if index_ctype == GLTF_UNSIGNED_INT {
         Ok(Mesh::new::<u32>(
-            pipeline,
             vertex_buffers,
             buffer_offsets,
             index_buffer,

@@ -1,12 +1,13 @@
 use crate::arena::VulkanArenaError;
 use crate::debug_utils;
 use crate::descriptors::Descriptors;
-use crate::pipeline_parameters::PushConstantStruct;
-use crate::vulkan_raii::{CommandBuffer, CommandPool, Device, Fence, Semaphore};
+use crate::pipeline_parameters::{MaterialPushConstants, PipelineMap, RenderSettingsPushConstants};
+use crate::scene::{SkinnedModel, StaticMeshMap};
+use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use crate::{ForBuffers, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
 use ash::{vk, Instance};
 use glam::Mat4;
-use std::mem;
+use std::fmt::Arguments;
 use std::rc::Rc;
 
 #[derive(thiserror::Error, Debug)]
@@ -29,6 +30,8 @@ pub enum RendererError {
     FrameLocalArenaReset(#[source] VulkanArenaError),
     #[error("failed to create uniform buffer for camera transforms")]
     CameraTransformUniformCreation(#[source] VulkanArenaError),
+    #[error("failed to create uniform buffer for render settings")]
+    RenderSettingsUniformCreation(#[source] VulkanArenaError),
     #[error("failed to create uniform buffer for skinned meshes' joint transforms")]
     JointTransformUniformCreation(#[source] VulkanArenaError),
     #[error("failed to submit rendering command buffers to the graphics queue (device lost or out of memory?)")]
@@ -177,53 +180,62 @@ impl Renderer {
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
         framebuffers: &Framebuffers,
-        scene: &Scene,
+        scene: Scene,
         debug_value: u32,
     ) -> Result<(), RendererError> {
         let vk::Extent2D { width, height } = framebuffers.extent;
 
-        let global_transforms_buffer = {
-            let global_transforms = &[scene.camera.create_global_transforms(width as f32, height as f32)];
-            let global_transforms = bytemuck::cast_slice(global_transforms);
+        fn create_uniform_buffer<T: bytemuck::Pod>(
+            temp_arena: &mut VulkanArena<ForBuffers>,
+            buffer: &[T],
+            name: &str,
+        ) -> Result<Buffer, VulkanArenaError> {
+            let buffer_bytes: &[u8] = bytemuck::cast_slice(buffer);
             let buffer_create_info = vk::BufferCreateInfo::builder()
-                .size(global_transforms.len() as u64)
+                .size(buffer_bytes.len() as u64)
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            self.temp_arena
-                .create_buffer(
-                    *buffer_create_info,
-                    global_transforms,
-                    None,
-                    format_args!("uniform (view+proj matrices)"),
-                )
-                .map_err(RendererError::CameraTransformUniformCreation)?
-        };
+            temp_arena.create_buffer(*buffer_create_info, buffer_bytes, None, format_args!("uniform ({name})"))
+        }
 
-        let skinned_mesh_joints_buffer = {
-            let skinned_mesh_joints = &scene.skinned_mesh_joints_buffer;
-            let buffer_create_info = vk::BufferCreateInfo::builder()
-                .size(skinned_mesh_joints.len() as u64)
-                .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            self.temp_arena
-                .create_buffer(
-                    *buffer_create_info,
-                    skinned_mesh_joints,
-                    None,
-                    format_args!("uniform (joint transforms)"),
-                )
-                .map_err(RendererError::JointTransformUniformCreation)?
-        };
+        let global_transforms = &[scene.camera.create_global_transforms(width as f32, height as f32)];
+        let global_transforms_buffer = create_uniform_buffer(&mut self.temp_arena, global_transforms, "view+proj matrices")
+            .map_err(RendererError::CameraTransformUniformCreation)?;
+
+        let render_settings = &[RenderSettingsPushConstants { debug_value }];
+        let render_settings_buffer = create_uniform_buffer(&mut self.temp_arena, render_settings, "render settings")
+            .map_err(RendererError::RenderSettingsUniformCreation)?;
+
+        let mut skinned_mesh_joints = scene.skinned_mesh_joints_buffer;
+        // The joints arrays in glsl are 256 long, but the actual memory cuts
+        // off where the joints end for any particular skeleton. To appease the
+        // requirements on dynamic uniform buffers, the buffer still needs to be
+        // 256. So just pad it out by 256, so that the last skeleton has >256
+        // bones worth of backing buffer space.
+        let empty_full_length_skeleton = &[Mat4::ZERO; 256];
+        skinned_mesh_joints.extend_from_slice(bytemuck::cast_slice(empty_full_length_skeleton));
+        let skinned_mesh_joints_buffer = create_uniform_buffer(&mut self.temp_arena, &skinned_mesh_joints, "joint transforms")
+            .map_err(RendererError::JointTransformUniformCreation)?;
 
         descriptors.write_descriptors(
             &global_transforms_buffer,
+            &render_settings_buffer,
             &skinned_mesh_joints_buffer,
             &framebuffers.inner[frame_index.index],
         );
+
         self.temp_arena.add_buffer(global_transforms_buffer);
+        self.temp_arena.add_buffer(render_settings_buffer);
         self.temp_arena.add_buffer(skinned_mesh_joints_buffer);
 
-        let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, framebuffers, scene, debug_value)?;
+        let command_buffer = self.record_command_buffer(
+            frame_index,
+            descriptors,
+            pipelines,
+            framebuffers,
+            &scene.static_meshes,
+            &scene.skinned_meshes,
+        )?;
 
         let signal_semaphores = [self.ready_for_present.inner];
         let command_buffers = [command_buffer];
@@ -267,8 +279,8 @@ impl Renderer {
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
         framebuffers: &Framebuffers,
-        scene: &Scene,
-        debug_value: u32,
+        static_meshes: &PipelineMap<StaticMeshMap>,
+        skinned_meshes: &PipelineMap<Vec<SkinnedModel>>,
     ) -> Result<vk::CommandBuffer, RendererError> {
         let framebuffer = &framebuffers.inner[frame_index.index];
 
@@ -349,49 +361,187 @@ impl Renderer {
             }
         }
 
-        for pl_index in [PipelineIndex::Opaque, PipelineIndex::Clipped, PipelineIndex::Blended] {
+        use PipelineIndex::*;
+        for (static_pl, skinned_pl) in [(Opaque, SkinnedOpaque), (Clipped, SkinnedClipped), (Blended, SkinnedBlended)] {
             profiling::scope!("pipeline");
-            let meshes = &scene.static_meshes[pl_index];
-            if meshes.is_empty() {
-                continue;
+            let static_meshes = &static_meshes[static_pl];
+            if !static_meshes.is_empty() {
+                let pipeline = pipelines.pipelines[static_pl].inner;
+                let layout = descriptors.pipeline_layouts[static_pl].inner;
+                let descriptor_sets = descriptors.descriptor_sets(static_pl);
+                self.record_static_pipeline(
+                    command_buffer,
+                    (pipeline, layout),
+                    descriptor_sets,
+                    static_meshes,
+                    static_pl,
+                    format_args!("instanced statics {static_pl:?}"),
+                )?;
             }
+            let skinned_meshes = &skinned_meshes[skinned_pl];
+            if !skinned_meshes.is_empty() {
+                let pipeline = pipelines.pipelines[skinned_pl].inner;
+                let layout = descriptors.pipeline_layouts[skinned_pl].inner;
+                let descriptor_sets = descriptors.descriptor_sets(skinned_pl);
+                self.record_skinned_pipeline(
+                    command_buffer,
+                    (pipeline, layout),
+                    descriptor_sets,
+                    skinned_meshes,
+                    skinned_pl,
+                    format_args!("skinned model {static_pl:?}"),
+                )?;
+            }
+        }
 
+        unsafe {
+            profiling::scope!("vk::cmd_next_subpass");
+            self.device.cmd_next_subpass(command_buffer, vk::SubpassContents::INLINE);
+        }
+
+        {
+            profiling::scope!("record tonemapping subpass");
+            let pl_index = PipelineIndex::RenderResolutionPostProcess;
+            let bind_point = vk::PipelineBindPoint::GRAPHICS;
             unsafe {
                 self.device
-                    .cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, pipelines.pipelines[pl_index].inner)
+                    .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines[pl_index].inner)
             };
-            let bind_point = vk::PipelineBindPoint::GRAPHICS;
             let layout = descriptors.pipeline_layouts[pl_index].inner;
             let descriptor_sets = descriptors.descriptor_sets(pl_index);
-            if descriptor_sets.len() > 1 {
-                unsafe {
-                    self.device
-                        .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[])
-                };
+            unsafe {
+                self.device
+                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[])
+            };
+            unsafe { self.device.cmd_draw(command_buffer, 3, 1, 0, 0) };
+        }
+
+        unsafe {
+            profiling::scope!("end render pass");
+            self.device.cmd_end_render_pass(command_buffer);
+        }
+
+        unsafe {
+            profiling::scope!("end command buffer");
+            self.device
+                .end_command_buffer(command_buffer)
+                .map_err(RendererError::CommandBufferEnd)?;
+        }
+
+        Ok(command_buffer)
+    }
+
+    fn record_static_pipeline(
+        &mut self,
+        command_buffer: vk::CommandBuffer,
+        (pipeline, layout): (vk::Pipeline, vk::PipelineLayout),
+        descriptor_sets: &[vk::DescriptorSet],
+        meshes: &StaticMeshMap,
+        pl_index: PipelineIndex,
+        pl_name: Arguments,
+    ) -> Result<(), RendererError> {
+        let bind_point = vk::PipelineBindPoint::GRAPHICS;
+        unsafe { self.device.cmd_bind_pipeline(command_buffer, bind_point, pipeline) };
+        unsafe {
+            self.device
+                .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[]);
+        }
+
+        for (i, (&(mesh, material), transforms)) in meshes.iter().enumerate() {
+            profiling::scope!("static instanced meshes");
+            let transform_buffer = {
+                profiling::scope!("create transform buffer");
+                let transforms_bytes = bytemuck::cast_slice(transforms);
+                let buffer_create_info = vk::BufferCreateInfo::builder()
+                    .size(transforms_bytes.len() as vk::DeviceSize)
+                    .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE);
+                self.temp_arena
+                    .create_buffer(
+                        *buffer_create_info,
+                        transforms_bytes,
+                        None,
+                        format_args!("{}. transform buffer ({pl_name})", i + 1),
+                    )
+                    .map_err(RendererError::TransformBufferCreation)?
+            };
+
+            let push_constants = [MaterialPushConstants {
+                // Safety: The material is from a Scene which gets its PipelineIndexes from the materials themselves.
+                texture_index: material.array_index(pl_index).unwrap(),
+            }];
+            let push_constants = bytemuck::bytes_of(&push_constants);
+            unsafe {
+                profiling::scope!("push constants");
+                self.device
+                    .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
             }
 
-            for (i, (&(mesh, material), transforms)) in meshes.iter().enumerate() {
-                profiling::scope!("mesh");
-                let transform_buffer = {
-                    profiling::scope!("create transform buffer");
-                    let buffer_size = (transforms.len() * mem::size_of::<Mat4>()) as vk::DeviceSize;
-                    let buffer_create_info = vk::BufferCreateInfo::builder()
-                        .size(buffer_size)
-                        .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
-                        .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                    self.temp_arena
-                        .create_buffer(
-                            *buffer_create_info,
-                            bytemuck::cast_slice(transforms),
-                            None,
-                            format_args!("{}. transform buffer of pipeline {pl_index:?}", i + 1),
-                        )
-                        .map_err(RendererError::TransformBufferCreation)?
-                };
+            let mut vertex_buffers = Vec::with_capacity(mesh.vertex_buffers.len() + 1);
+            vertex_buffers.push(transform_buffer.inner);
+            for vertex_buffer in &mesh.vertex_buffers {
+                vertex_buffers.push(vertex_buffer.inner);
+            }
+            let mut vertex_offsets = Vec::with_capacity(mesh.vertices_offsets.len() + 1);
+            vertex_offsets.push(0);
+            vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
 
-                let push_constants = [PushConstantStruct {
-                    texture_index: material.array_index,
-                    debug_value,
+            unsafe {
+                profiling::scope!("draw");
+                self.device
+                    .cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
+                self.device
+                    .cmd_bind_index_buffer(command_buffer, mesh.index_buffer.inner, mesh.index_buffer_offset, mesh.index_type);
+                self.device
+                    .cmd_draw_indexed(command_buffer, mesh.index_count, transforms.len() as u32, 0, 0, 0);
+            }
+
+            self.temp_arena.add_buffer(transform_buffer);
+        }
+        Ok(())
+    }
+
+    fn record_skinned_pipeline(
+        &mut self,
+        command_buffer: vk::CommandBuffer,
+        (pipeline, layout): (vk::Pipeline, vk::PipelineLayout),
+        descriptor_sets: &[vk::DescriptorSet],
+        meshes: &[SkinnedModel],
+        pl_index: PipelineIndex,
+        pl_name: Arguments,
+    ) -> Result<(), RendererError> {
+        let bind_point = vk::PipelineBindPoint::GRAPHICS;
+        unsafe { self.device.cmd_bind_pipeline(command_buffer, bind_point, pipeline) };
+
+        for model in meshes {
+            unsafe {
+                self.device
+                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[model.joints_offset]);
+            }
+            let transform_buffer = {
+                profiling::scope!("create transform buffer for skinned model");
+                let transforms = &[model.transform];
+                let transforms_bytes = bytemuck::cast_slice(transforms);
+                let buffer_create_info = vk::BufferCreateInfo::builder()
+                    .size(transforms_bytes.len() as vk::DeviceSize)
+                    .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE);
+                self.temp_arena
+                    .create_buffer(
+                        *buffer_create_info,
+                        transforms_bytes,
+                        None,
+                        format_args!("transform buffer for skinned model ({pl_name})"),
+                    )
+                    .map_err(RendererError::TransformBufferCreation)?
+            };
+
+            for (mesh, material) in &model.meshes {
+                profiling::scope!("skinned mesh");
+
+                let push_constants = [MaterialPushConstants {
+                    // Safety: The material is from a Scene which gets its PipelineIndexes from the materials themselves.
+                    texture_index: material.array_index(pl_index).unwrap(),
                 }];
                 let push_constants = bytemuck::bytes_of(&push_constants);
                 unsafe {
@@ -415,48 +565,12 @@ impl Renderer {
                         .cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
                     self.device
                         .cmd_bind_index_buffer(command_buffer, mesh.index_buffer.inner, mesh.index_buffer_offset, mesh.index_type);
-                    self.device
-                        .cmd_draw_indexed(command_buffer, mesh.index_count, transforms.len() as u32, 0, 0, 0);
+                    self.device.cmd_draw_indexed(command_buffer, mesh.index_count, 1, 0, 0, 0);
                 }
-
-                self.temp_arena.add_buffer(transform_buffer);
             }
-        }
 
-        unsafe {
-            profiling::scope!("vk::cmd_next_subpass");
-            self.device.cmd_next_subpass(command_buffer, vk::SubpassContents::INLINE);
+            self.temp_arena.add_buffer(transform_buffer);
         }
-
-        {
-            profiling::scope!("record tonemapping subpass");
-            let pl_index = PipelineIndex::RenderResolutionPostProcess;
-            let bind_point = vk::PipelineBindPoint::GRAPHICS;
-            unsafe {
-                self.device
-                    .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines[pl_index].inner)
-            };
-            let layout = descriptors.pipeline_layouts[pl_index].inner;
-            let descriptor_sets = descriptors.descriptor_sets(pl_index);
-            unsafe {
-                self.device
-                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 0, descriptor_sets, &[])
-            };
-            unsafe { self.device.cmd_draw(command_buffer, 3, 1, 0, 0) };
-        }
-
-        unsafe {
-            profiling::scope!("end render pass");
-            self.device.cmd_end_render_pass(command_buffer);
-        }
-
-        unsafe {
-            profiling::scope!("end command buffer");
-            self.device
-                .end_command_buffer(command_buffer)
-                .map_err(RendererError::CommandBufferEnd)?;
-        }
-
-        Ok(command_buffer)
+        Ok(())
     }
 }

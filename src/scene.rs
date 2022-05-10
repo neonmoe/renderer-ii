@@ -19,10 +19,10 @@ pub(crate) struct SkinnedModel<'a> {
     pipeline: PipelineIndex,
     pub(crate) meshes: Vec<(&'a Mesh, &'a Material)>,
     pub(crate) transform: Mat4,
-    pub(crate) joints_offset: usize,
+    pub(crate) joints_offset: u32,
 }
 
-type StaticMeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
+pub(crate) type StaticMeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
 
 /// A container for the materials and meshes to render during a particular
 /// frame, and transforms for each instance.
@@ -37,8 +37,8 @@ impl Default for Scene<'_> {
     fn default() -> Self {
         Scene {
             camera: Camera::default(),
-            static_meshes: PipelineMap::new::<(), _>(|_| Ok(HashMap::default())).unwrap(),
-            skinned_meshes: PipelineMap::new::<(), _>(|_| Ok(Vec::new())).unwrap(),
+            static_meshes: PipelineMap::new::<(), _>(|_| Ok(HashMap::with_capacity(0))).unwrap(),
+            skinned_meshes: PipelineMap::new::<(), _>(|_| Ok(Vec::with_capacity(0))).unwrap(),
             skinned_mesh_joints_buffer: Vec::new(),
         }
     }
@@ -49,7 +49,7 @@ impl<'a> Scene<'a> {
         profiling::scope!("queue model for rendering");
         for mesh in model.mesh_iter() {
             profiling::scope!("static mesh");
-            let mesh_map = &mut self.static_meshes[mesh.mesh.pipeline];
+            let mesh_map = &mut self.static_meshes[mesh.material.pipeline(false)];
             let mesh_vec = mesh_map.entry((mesh.mesh, mesh.material)).or_insert_with(Vec::new);
             mesh_vec.push(transform * mesh.transform);
         }
@@ -66,15 +66,16 @@ impl<'a> Scene<'a> {
         for mesh in model.mesh_iter() {
             if let Some(skin_index) = mesh.skin {
                 profiling::scope!("skinned mesh");
+                let pipeline = mesh.material.pipeline(true);
                 if let Some(skinned_model) = skinned_models
                     .iter_mut()
-                    .find(|model| model.skin == skin_index && model.pipeline == mesh.mesh.pipeline)
+                    .find(|model| model.skin == skin_index && model.pipeline == pipeline)
                 {
                     skinned_model.meshes.push((mesh.mesh, mesh.material));
                 } else {
                     let skin = &model.skins[skin_index];
                     // TODO: Align each skeleton to VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment
-                    let joints_offset = self.skinned_mesh_joints_buffer.len();
+                    let joints_offset = self.skinned_mesh_joints_buffer.len() as u32;
                     for joint in &skin.joints {
                         let inverse_bind_matrix = joint.inverse_bind_matrix;
                         let animated_transform = get_animation_transform(joint.node_index, joint.resting_transform, playing_animations)?;
@@ -83,7 +84,7 @@ impl<'a> Scene<'a> {
                             .extend_from_slice(bytemuck::cast_slice(&[joint_transform]));
                     }
                     skinned_models.push(SkinnedModel {
-                        pipeline: mesh.mesh.pipeline,
+                        pipeline,
                         skin: skin_index,
                         meshes: vec![(mesh.mesh, mesh.material)],
                         transform,
@@ -93,7 +94,7 @@ impl<'a> Scene<'a> {
             } else {
                 profiling::scope!("non-skinned mesh");
                 let animated_transform = get_animation_transform(mesh.node_index, mesh.transform, playing_animations)?;
-                let mesh_map = &mut self.static_meshes[mesh.mesh.pipeline];
+                let mesh_map = &mut self.static_meshes[mesh.material.pipeline(false)];
                 let mesh_vec = mesh_map.entry((mesh.mesh, mesh.material)).or_insert_with(Vec::new);
                 mesh_vec.push(transform * animated_transform);
             }

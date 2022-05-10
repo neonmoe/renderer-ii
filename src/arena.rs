@@ -284,7 +284,7 @@ impl VulkanArena<ForBuffers> {
             inner: buffer,
             device: self.device.clone(),
             memory: self.memory.clone(),
-            size: required_size,
+            size: src.len() as vk::DeviceSize,
         })
     }
 }

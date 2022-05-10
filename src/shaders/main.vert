@@ -22,13 +22,37 @@ skeleton;
 layout(location = 0) out vec2 out_uv;
 layout(location = 1) out vec3 out_normal;
 layout(location = 2) out vec4 out_tangent;
+layout(location = 3) out vec3 out_debug_color;
+
+vec3 hsv(float hue, float saturation, float value) {
+    float h = mod(hue * 6.0, 6.0);
+    float c = value * saturation;
+    float x = c * (1 - abs((int(h) % 2) - 1));
+    if (0 <= h && h < 1) {
+        return vec3(c, x, 0);
+    } else if (1 <= h && h < 2) {
+        return vec3(x, c, 0);
+    } else if (2 <= h && h < 3) {
+        return vec3(0, c, x);
+    } else if (3 <= h && h < 4) {
+        return vec3(0, x, c);
+    } else if (4 <= h && h < 5) {
+        return vec3(x, 0, c);
+    } else if (5 <= h && h < 6) {
+        return vec3(c, 0, x);
+    } else {
+        return vec3(1, 1, 1);
+    }
+}
 
 void main() {
+    out_debug_color = vec3(0.0, 0.0, 0.0);
 #ifdef SKINNED
     mat4 transform = in_transform;
-    transform *=
-        skeleton.bones[in_joints.x] * in_weights.x + skeleton.bones[in_joints.y] * in_weights.y +
-        skeleton.bones[in_joints.z] * in_weights.z + skeleton.bones[in_joints.w] * in_weights.w;
+    // transform *=
+    //     skeleton.bones[in_joints.x] * in_weights.x + skeleton.bones[in_joints.y] * in_weights.y +
+    //     skeleton.bones[in_joints.z] * in_weights.z + skeleton.bones[in_joints.w] * in_weights.w;
+    out_debug_color = hsv(in_joints.x / 256.0 * 37.0, 0.8, in_weights.x);
 #else
     mat4 transform = in_transform;
 #endif

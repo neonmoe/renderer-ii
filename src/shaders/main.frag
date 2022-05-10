@@ -7,6 +7,7 @@ layout(location = 0) out vec4 out_color;
 layout(location = 0) in vec2 in_uv;
 layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec4 in_tangent;
+layout(location = 3) in flat vec3 in_debug_color;
 
 layout(set = 1, binding = 0) uniform sampler tex_sampler;
 layout(set = 1, binding = 1) uniform texture2D base_color[MAX_TEXTURE_COUNT];
@@ -21,11 +22,11 @@ layout(set = 1, binding = 6) uniform GltfFactors {
 }
 factors[MAX_TEXTURE_COUNT];
 
-layout(push_constant) uniform PushConstantStruct {
-    int texture_index;
-    int debug_texture;
-}
+layout(push_constant) uniform PushConstantStruct { uint texture_index; }
 push_constant;
+
+layout(set = 0, binding = 1) uniform RenderSettings { uint debug_value; }
+uf_render_settings;
 
 void main() {
     vec4 base_color_factor = factors[push_constant.texture_index].base_color;
@@ -54,7 +55,7 @@ void main() {
     emissive *= emissive_factor;
     metallic_roughness *= metallic_roughness_factor;
 
-    switch (push_constant.debug_texture) {
+    switch (uf_render_settings.debug_value) {
     // The actual rendering case, enabled by default and by pressing 0 in
     // the sandbox:
     default:
@@ -73,7 +74,7 @@ void main() {
         out_color = base_color;
         break;
     case 2:
-        out_color = vec4(metallic_roughness, 0.0, 1.0);
+        out_color = vec4(in_debug_color, 1.0);
         break;
     case 3:
         out_color = vec4(normal, 1.0);
