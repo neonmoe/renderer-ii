@@ -49,9 +49,9 @@ void main() {
     out_debug_color = vec3(0.0, 0.0, 0.0);
 #ifdef SKINNED
     mat4 transform = in_transform;
-    // transform *=
-    //     skeleton.bones[in_joints.x] * in_weights.x + skeleton.bones[in_joints.y] * in_weights.y +
-    //     skeleton.bones[in_joints.z] * in_weights.z + skeleton.bones[in_joints.w] * in_weights.w;
+    transform *=
+        skeleton.bones[in_joints.x] * in_weights.x + skeleton.bones[in_joints.y] * in_weights.y +
+        skeleton.bones[in_joints.z] * in_weights.z + skeleton.bones[in_joints.w] * in_weights.w;
     out_debug_color = hsv(in_joints.x / 256.0 * 37.0, 0.8, in_weights.x);
 #else
     mat4 transform = in_transform;

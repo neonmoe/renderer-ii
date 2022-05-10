@@ -183,7 +183,7 @@ static TANGENT_BINDING_4: vk::VertexInputBindingDescription = vk::VertexInputBin
 };
 static JOINTS0_BINDING_5: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: 5,
-    stride: mem::size_of::<[u16; 4]>() as u32,
+    stride: mem::size_of::<[u8; 4]>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static WEIGHTS0_BINDING_6: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {

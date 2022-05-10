@@ -29,11 +29,6 @@ layout(set = 0, binding = 1) uniform RenderSettings { uint debug_value; }
 uf_render_settings;
 
 void main() {
-    vec4 base_color_factor = factors[push_constant.texture_index].base_color;
-    vec3 emissive_factor = factors[push_constant.texture_index].emissive.xyz;
-    vec2 metallic_roughness_factor =
-        factors[push_constant.texture_index].metallic_roughness_alpha_cutoff.xy;
-    float alpha_cutoff = factors[push_constant.texture_index].metallic_roughness_alpha_cutoff.z;
     vec4 base_color =
         texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
     vec2 metallic_roughness =
@@ -42,6 +37,12 @@ void main() {
     vec4 occlusion = texture(sampler2D(occlusion[push_constant.texture_index], tex_sampler), in_uv);
     vec3 emissive =
         texture(sampler2D(emissive[push_constant.texture_index], tex_sampler), in_uv).xyz;
+
+    vec4 base_color_factor = factors[push_constant.texture_index].base_color;
+    vec3 emissive_factor = factors[push_constant.texture_index].emissive.xyz;
+    vec2 metallic_roughness_factor =
+        factors[push_constant.texture_index].metallic_roughness_alpha_cutoff.xy;
+    float alpha_cutoff = factors[push_constant.texture_index].metallic_roughness_alpha_cutoff.z;
 
     base_color *= base_color_factor;
     if (base_color.a <= alpha_cutoff) {
