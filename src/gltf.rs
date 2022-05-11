@@ -566,6 +566,7 @@ fn create_gltf(
         }
     }
 
+    // Check that the nodes form a proper node graph
     let mut visited_nodes = vec![false; nodes.len()];
     let mut queue = Vec::with_capacity(nodes.len());
     queue.extend_from_slice(&root_nodes);
@@ -579,6 +580,18 @@ fn create_gltf(
                     queue.push(*child);
                 }
             }
+        }
+    }
+
+    // Apply parent transforms to their children
+    let mut parent_nodes = root_nodes.clone();
+    while let Some(parent_node) = parent_nodes.pop() {
+        let parent_node_transform = nodes[parent_node].transform;
+        if let Some(mut children) = nodes[parent_node].children.clone() {
+            for &child in &children {
+                nodes[child].transform = parent_node_transform * nodes[child].transform;
+            }
+            parent_nodes.append(&mut children);
         }
     }
 
