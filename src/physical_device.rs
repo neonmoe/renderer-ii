@@ -128,8 +128,8 @@ fn filter_capable_device(
         profiling::scope!("vk::get_physical_device_properties");
         instance.get_physical_device_properties(physical_device)
     };
-    if properties.api_version < vk::API_VERSION_1_3 {
-        return Ok(Err(PhysicalDeviceRejectionReason::VulkanVersion(1, 3)));
+    if properties.api_version < crate::instance::REQUIRED_VULKAN_VERSION {
+        return Ok(Err(PhysicalDeviceRejectionReason::VulkanVersion(1, 2)));
     };
 
     let extensions = get_extensions(instance, physical_device);

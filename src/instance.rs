@@ -4,6 +4,8 @@ use raw_window_handle::HasRawWindowHandle;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
+pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_2;
+
 #[derive(thiserror::Error, Debug)]
 pub enum InstanceCreationError {
     #[error("failed to enumerate vulkan extensions required to create a surface from a window")]
@@ -39,7 +41,7 @@ impl Instance {
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))
             .application_version(make_api_version(0, 0, 1, 0))
-            .api_version(vk::API_VERSION_1_2);
+            .api_version(REQUIRED_VULKAN_VERSION);
 
         let mut layers = Vec::with_capacity(1);
         let mut validation_layer_enabled = false;
