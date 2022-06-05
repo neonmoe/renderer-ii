@@ -7,7 +7,7 @@ use crate::vk;
 use crate::vulkan_raii::{Buffer, Device, ImageView};
 use crate::{Descriptors, ForBuffers, ForImages, Material, Uploader};
 use glam::{Mat4, Quat, Vec3, Vec4};
-use memmap2::{Advice, Mmap, MmapOptions};
+use memmap2::{Mmap, MmapOptions};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::ops::Range;
@@ -613,8 +613,11 @@ fn map_file<'a>(memmap_holder: &'a mut Option<Mmap>, path: &Path, range: Option<
         memmap_options.len(range.count());
     }
     let memmap = unsafe { memmap_options.map(&file) }.map_err(|err| GltfLoadingError::MapFile(err, path.to_owned()))?;
-    let _ = memmap.advise(Advice::Sequential);
-    let _ = memmap.advise(Advice::WillNeed);
+    #[cfg(target_family = "unix")]
+    {
+        let _ = memmap.advise(memmap2::Advice::Sequential);
+        let _ = memmap.advise(memmap2::Advice::WillNeed);
+    }
     *memmap_holder = Some(memmap);
     Ok(memmap_holder.as_deref().unwrap())
 }

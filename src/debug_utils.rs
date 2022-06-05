@@ -101,7 +101,7 @@ unsafe extern "system" fn debug_utils_messenger_callback(
         if ptr.is_null() {
             String::from("-")
         } else {
-            unsafe { CStr::from_ptr(ptr) }.to_string_lossy().to_string()
+            CStr::from_ptr(ptr).to_string_lossy().to_string()
         }
     };
     let message_id = ptr_to_str((*p_callback_data).p_message_id_name);

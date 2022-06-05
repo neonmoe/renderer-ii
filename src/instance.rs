@@ -39,7 +39,7 @@ impl Instance {
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))
             .application_version(make_api_version(0, 0, 1, 0))
-            .api_version(vk::API_VERSION_1_3);
+            .api_version(vk::API_VERSION_1_2);
 
         let mut layers = Vec::with_capacity(1);
         let mut validation_layer_enabled = false;
@@ -67,9 +67,6 @@ impl Instance {
             extensions.push(cstr!("VK_EXT_debug_utils").as_ptr());
             log::debug!("Instance extension (optional): VK_EXT_debug_utils");
         }
-
-        // Features in core Vulkan, provided by the target api version, used somewhere in the codebase:
-        // - VK_KHR_get_physical_device_properties2 (Vulkan 1.1)
 
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
