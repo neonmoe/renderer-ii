@@ -90,6 +90,11 @@ fn fallible_main() -> anyhow::Result<()> {
         &resources_path.join("smol-ame-by-seafoam/smol-ame.gltf"),
         &resources_path.join("smol-ame-by-seafoam"),
     )?;
+    neonvk::measure_glb_memory_usage(
+        (&mut assets_buffers_measurer, &mut assets_textures_measurer),
+        &resources_path.join("node-transform-test.glb"),
+        &resources_path.join("."),
+    )?;
 
     let mut uploader = neonvk::Uploader::new(
         &instance.inner,
@@ -123,6 +128,7 @@ fn fallible_main() -> anyhow::Result<()> {
 
     let sponza_model;
     let smol_ame_model;
+    let node_transform_test_model;
     {
         profiling::scope!("loading Sponza.gltf from disk to vram");
         let upload_start = Instant::now();
@@ -141,6 +147,14 @@ fn fallible_main() -> anyhow::Result<()> {
             (&mut assets_buffers_arena, &mut assets_textures_arena),
             &resources_path.join("smol-ame-by-seafoam/smol-ame.gltf"),
             &resources_path.join("smol-ame-by-seafoam"),
+        )?;
+        node_transform_test_model = neonvk::Gltf::from_glb(
+            &device,
+            &mut uploader,
+            &mut descriptors,
+            (&mut assets_buffers_arena, &mut assets_textures_arena),
+            &resources_path.join("node-transform-test.glb"),
+            &resources_path.join("."),
         )?;
         let upload_wait_start = Instant::now();
         assert!(uploader.wait(Duration::from_secs(5))?);
@@ -344,6 +358,17 @@ fn fallible_main() -> anyhow::Result<()> {
         {
             profiling::scope!("queue meshes to render");
             scene.queue(&sponza_model, Mat4::IDENTITY);
+            scene.queue(&node_transform_test_model, Mat4::from_translation(Vec3::new(0.0, 0.0, 3.0)));
+            let animations = node_transform_test_model
+                .animations
+                .iter()
+                .map(|animation| (game_time % animation.end_time, animation))
+                .collect::<Vec<(f32, &neonvk::Animation)>>();
+            scene.queue_animated(
+                &node_transform_test_model,
+                Mat4::from_rotation_translation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2), Vec3::new(0.0, 2.0, 0.0)),
+                &animations[2..3],
+            )?;
 
             let animations = smol_ame_model
                 .animations
@@ -352,7 +377,7 @@ fn fallible_main() -> anyhow::Result<()> {
                 .collect::<Vec<(f32, &neonvk::Animation)>>();
             let smol_ame_transform =
                 Mat4::from_scale(Vec3::ONE * 0.7) * Mat4::from_quat(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
-            scene.queue_animated(&smol_ame_model, smol_ame_transform, &animations)?;
+            scene.queue_animated(&smol_ame_model, smol_ame_transform, &animations[2..3])?;
         }
 
         let update_duration = Instant::now() - update_start_time;
@@ -414,6 +439,7 @@ fn fallible_main() -> anyhow::Result<()> {
         drop(pipelines);
 
         // Per-device-objects.
+        drop(node_transform_test_model);
         drop(smol_ame_model);
         drop(sponza_model);
         drop(assets_textures_arena);

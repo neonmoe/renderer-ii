@@ -2,7 +2,7 @@ use crate::gltf::Keyframes;
 use crate::mesh::Mesh;
 use crate::pipeline_parameters::PipelineMap;
 use crate::{Animation, Gltf, Material, PipelineIndex};
-use glam::Mat4;
+use glam::{Mat4, Quat, Vec3};
 use std::collections::HashMap;
 
 mod camera;
@@ -77,9 +77,8 @@ impl<'a> Scene<'a> {
                     // TODO: Align each skeleton to VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment
                     let joints_offset = self.skinned_mesh_joints_buffer.len() as u32;
                     for joint in &skin.joints {
-                        let inverse_bind_matrix = joint.inverse_bind_matrix;
                         let animated_transform = get_animation_transform(joint.node_index, joint.resting_transform, playing_animations)?;
-                        let joint_transform: Mat4 = animated_transform * inverse_bind_matrix;
+                        let joint_transform = animated_transform * joint.inverse_bind_matrix;
                         self.skinned_mesh_joints_buffer
                             .extend_from_slice(bytemuck::cast_slice(&[joint_transform]));
                     }
@@ -107,6 +106,11 @@ impl<'a> Scene<'a> {
     }
 }
 
+// TODO: Move this to gltf, use node.transform instead of neutral_transform, and run this for all nodes when animating.
+// The animate-function should just return a Vec<Option<Mat4>> which matches all
+// the nodes' transforms. Then just do lookups to get the animated transform. No
+// need for joint resting transforms, and parent influence can be done for both
+// skinned and static animations in the same place.
 fn get_animation_transform(
     node_index: usize,
     neutral_transform: Mat4,
@@ -120,7 +124,7 @@ fn get_animation_transform(
         } else {
             continue;
         };
-        let (mut scale, mut rotation, mut translation) = animated_transform.to_scale_rotation_translation();
+        let (mut scale, mut rotation, mut translation) = (Vec3::ONE, Quat::IDENTITY, Vec3::ZERO);
         for channel in animation_channels {
             match &channel.keyframes {
                 Keyframes::Translation(frames) => {
@@ -156,7 +160,7 @@ fn get_animation_transform(
                 Keyframes::Weight(_) => todo!(),
             }
         }
-        animated_transform = Mat4::from_scale_rotation_translation(scale, rotation, translation);
+        animated_transform = Mat4::from_scale_rotation_translation(scale, rotation, translation) * animated_transform;
     }
     Ok(animated_transform)
 }

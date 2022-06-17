@@ -235,6 +235,20 @@ fn filter_capable_device(
         }
     };
 
+    // TODO: Compare PipelineParameters against maxPerStageDescriptor* fields in VkPhysicalDeviceLimits
+    // - maxPerStageDescriptorSamplers (most definitely ok)
+    // - maxPerStageDescriptorUniformBuffers (probably fine)
+    // - maxPerStageDescriptorStorageBuffers (don't think these are used)
+    // - maxPerStageDescriptorSampledImages (this will hit limits! MAX_TEXTURE_COUNT is a multiplier against this)
+    //   Analysis of limits in https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxPerStageDescriptorSampledImages&platform=all
+    //   - sub-128 values (so >25ish MAX_TEXTURE_COUNT) are pretty much only mobile platforms
+    //   - 128 lists phones, llvmpipe and Apple M1. None of these are applicable on Windows, the largest audience.
+    //   - After that there's 200, which includes many integrated intel GPUs. Probably a good low spec target.
+    //   - 256 is just phones.
+    //   - The next datapoint is 8192, which contains old and low-end nvidia GPUs, plenty for anything.
+    // - maxPerStageDescriptorStorageImages (don't think these are used)
+    // - maxPerStageDescriptorInputAttachments (probably fine)
+
     if let (Some(graphics_queue_family), Some(surface_queue_family), Some(transfer_queue_family)) =
         (graphics_queue_family, surface_queue_family, transfer_queue_family)
     {
