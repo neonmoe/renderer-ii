@@ -1,7 +1,7 @@
 use crate::arena::VulkanArenaError;
 use crate::debug_utils;
 use crate::descriptors::Descriptors;
-use crate::pipeline_parameters::{MaterialPushConstants, PipelineMap, RenderSettingsPushConstants};
+use crate::pipeline_parameters::{MaterialPushConstants, PipelineMap, RenderSettings};
 use crate::scene::{SkinnedModel, StaticMeshMap};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use crate::{ForBuffers, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
@@ -181,7 +181,7 @@ impl Renderer {
         pipelines: &Pipelines,
         framebuffers: &Framebuffers,
         scene: Scene,
-        debug_value: u32,
+        render_settings: RenderSettings,
     ) -> Result<(), RendererError> {
         let vk::Extent2D { width, height } = framebuffers.extent;
 
@@ -202,7 +202,7 @@ impl Renderer {
         let global_transforms_buffer = create_uniform_buffer(&mut self.temp_arena, global_transforms, "view+proj matrices")
             .map_err(RendererError::CameraTransformUniformCreation)?;
 
-        let render_settings = &[RenderSettingsPushConstants { debug_value }];
+        let render_settings = &[render_settings];
         let render_settings_buffer = create_uniform_buffer(&mut self.temp_arena, render_settings, "render settings")
             .map_err(RendererError::RenderSettingsUniformCreation)?;
 

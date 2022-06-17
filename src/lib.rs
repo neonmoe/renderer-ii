@@ -96,10 +96,10 @@ mod pipelines;
 pub use pipelines::Pipelines;
 
 mod pipeline_parameters;
-pub use pipeline_parameters::PipelineIndex;
+pub use pipeline_parameters::{PipelineIndex, RenderSettings};
 
 mod renderer;
-pub use renderer::{FrameIndex, Renderer};
+pub use renderer::{FrameIndex, Renderer, RendererError};
 
 mod scene;
 pub use scene::Scene;

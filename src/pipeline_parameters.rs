@@ -7,13 +7,13 @@ pub const MAX_TEXTURE_COUNT: u32 = 32; // Keep in sync with shaders/constants.gl
 
 /// The per-frame uniform buffer.
 #[derive(Clone, Copy)]
-pub struct RenderSettingsPushConstants {
+pub struct RenderSettings {
     // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
-    pub debug_value: u32,
+    pub dummy_value: u32,
 }
 
-unsafe impl bytemuck::Zeroable for RenderSettingsPushConstants {}
-unsafe impl bytemuck::Pod for RenderSettingsPushConstants {}
+unsafe impl bytemuck::Zeroable for RenderSettings {}
+unsafe impl bytemuck::Pod for RenderSettings {}
 
 /// The per-material uniform buffer.
 #[derive(Clone, Copy)]
