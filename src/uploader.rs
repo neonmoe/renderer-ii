@@ -165,10 +165,14 @@ impl Uploader {
         };
         profiling::scope!("waiting on uploader fences");
         let fences = self.upload_fences.iter().map(|fence| fence.inner).collect::<Vec<_>>();
-        match unsafe { self.device.wait_for_fences(&fences, true, timeout) } {
-            Ok(_) => Ok(true),
-            Err(vk::Result::TIMEOUT) => Ok(false),
-            Err(err) => Err(UploaderError::FenceWait(err)),
+        if fences.is_empty() {
+            Ok(true)
+        } else {
+            match unsafe { self.device.wait_for_fences(&fences, true, timeout) } {
+                Ok(_) => Ok(true),
+                Err(vk::Result::TIMEOUT) => Ok(false),
+                Err(err) => Err(UploaderError::FenceWait(err)),
+            }
         }
     }
 

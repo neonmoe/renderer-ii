@@ -133,7 +133,7 @@ pub(crate) struct Material {
 }
 
 #[derive(Deserialize, PartialEq, Clone, Copy)]
-pub(crate) enum AlphaMode {
+pub enum AlphaMode {
     #[serde(rename = "OPAQUE")]
     Opaque,
     #[serde(rename = "MASK")]

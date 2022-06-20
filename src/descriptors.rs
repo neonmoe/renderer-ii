@@ -19,6 +19,8 @@ use std::mem;
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
+pub use gltf_json::AlphaMode;
+
 #[derive(thiserror::Error, Debug)]
 pub enum DescriptorError {
     #[error("material indices have been exhausted (max: {MAX_TEXTURE_COUNT}), cannot create more materials before releasing old ones")]
@@ -72,7 +74,7 @@ unsafe impl Zeroable for GltfFactors {}
 unsafe impl Pod for GltfFactors {}
 
 #[derive(Clone)]
-pub(crate) enum PipelineSpecificData {
+pub enum PipelineSpecificData {
     Gltf {
         base_color: Option<Rc<ImageView>>,
         metallic_roughness: Option<Rc<ImageView>>,
@@ -81,7 +83,7 @@ pub(crate) enum PipelineSpecificData {
         emissive: Option<Rc<ImageView>>,
         /// (Buffer, offset, size) that contains a [GltfFactors].
         factors: (Rc<Buffer>, vk::DeviceSize, vk::DeviceSize),
-        alpha_mode: gltf_json::AlphaMode,
+        alpha_mode: AlphaMode,
     },
 }
 
@@ -93,7 +95,7 @@ pub struct Material {
 }
 
 impl Material {
-    pub(crate) fn new(descriptors: &mut Descriptors, data: PipelineSpecificData, name: String) -> Result<Rc<Material>, DescriptorError> {
+    pub fn new(descriptors: &mut Descriptors, data: PipelineSpecificData, name: String) -> Result<Rc<Material>, DescriptorError> {
         profiling::scope!("material slot reservation");
         let array_indices = get_pipelines(&data)
             .iter()

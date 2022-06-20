@@ -45,13 +45,17 @@ impl Default for Scene<'_> {
 }
 
 impl<'a> Scene<'a> {
+    pub fn queue_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, transform: Mat4) {
+        profiling::scope!("static mesh");
+        let mesh_map = &mut self.static_meshes[material.pipeline(false)];
+        let mesh_vec = mesh_map.entry((mesh, material)).or_insert_with(Vec::new);
+        mesh_vec.push(transform);
+    }
+
     pub fn queue(&mut self, model: &'a Gltf, transform: Mat4) {
         profiling::scope!("queue model for rendering");
         for mesh in model.mesh_iter() {
-            profiling::scope!("static mesh");
-            let mesh_map = &mut self.static_meshes[mesh.material.pipeline(false)];
-            let mesh_vec = mesh_map.entry((mesh.mesh, mesh.material)).or_insert_with(Vec::new);
-            mesh_vec.push(transform * mesh.transform);
+            self.queue_mesh(mesh.mesh, mesh.material, transform * mesh.transform);
         }
     }
 

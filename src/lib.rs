@@ -11,9 +11,7 @@ macro_rules! cstr {
 
 mod debug_utils;
 mod image_loading;
-mod mesh;
 mod physical_device_features;
-mod vulkan_raii;
 
 // public-facing modules:
 
@@ -41,7 +39,7 @@ mod framebuffers;
 pub use framebuffers::Framebuffers;
 
 mod descriptors;
-pub use descriptors::{Descriptors, Material};
+pub use descriptors::{AlphaMode, Descriptors, GltfFactors, Material, PipelineSpecificData};
 
 mod device;
 pub use device::create_device;
@@ -87,6 +85,9 @@ mod memory_measurement {
 }
 pub use memory_measurement::*;
 
+mod mesh;
+pub use mesh::Mesh;
+
 mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 
@@ -126,3 +127,6 @@ pub use swapchain::{Swapchain, SwapchainBase, SwapchainSettings};
 
 mod uploader;
 pub use uploader::Uploader;
+
+mod vulkan_raii;
+pub use vulkan_raii::Device;
