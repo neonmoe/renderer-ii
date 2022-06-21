@@ -41,7 +41,9 @@ impl Instance {
         let app_info = vk::ApplicationInfo::builder()
             .application_name(cstr!("neonvk-sandbox"))
             .application_version(make_api_version(0, 0, 1, 0))
-            .api_version(REQUIRED_VULKAN_VERSION);
+            //.api_version(REQUIRED_VULKAN_VERSION);
+            // FIXME: This makes renderdoc work, change out later.
+            .api_version(vk::API_VERSION_1_3);
 
         let mut layers = Vec::with_capacity(1);
         let mut validation_layer_enabled = false;
