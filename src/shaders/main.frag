@@ -56,35 +56,15 @@ void main() {
     emissive *= emissive_factor;
     metallic_roughness *= metallic_roughness_factor;
 
-    switch (uf_render_settings.debug_value) {
-    // The actual rendering case, enabled by default and by pressing 0 in
-    // the sandbox:
-    default:
-        if (length(emissive) > 0.0) {
-            out_color = vec4(emissive, 1.0);
-        } else {
-            float ambient = 0.3 * occlusion.r;
-            float sun_brightness = 2.0;
-            float sun_dot = max(0.0, dot(normal, normalize(vec3(-1.0, 1.0, 1.0))));
-            float brightness = ambient + sun_dot * sun_brightness;
-            out_color = vec4(brightness * base_color.rgb, base_color.a);
-        }
-        break;
-    // Debugging cases, selectable with keys 1-5 in the sandbox:
-    case 1:
-        out_color = base_color;
-        break;
-    case 2:
-        out_color = vec4(in_debug_color, 1.0);
-        break;
-    case 3:
-        out_color = vec4(normal, 1.0);
-        break;
-    case 4:
-        out_color = occlusion;
-        break;
-    case 5:
-        out_color = vec4(emissive, 1.0);
-        break;
+    if (mod(in_uv.x, 1.0) < 0.5 == mod(in_uv.y, 1.0) < 0.5) {
+        base_color.rgb = vec3(0.4, 0.1, 0.4);
+    } else {
+        base_color.rgb = vec3(0.7, 0.2, 0.7);
     }
+
+    float ambient = 0.3 * occlusion.r;
+    float sun_brightness = 2.0;
+    float sun_dot = max(0.0, dot(normal, normalize(vec3(-1.0, 1.0, 1.0))));
+    float brightness = ambient + sun_dot * sun_brightness;
+    out_color = vec4(brightness * base_color.rgb + emissive, base_color.a);
 }
