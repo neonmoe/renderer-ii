@@ -10,7 +10,6 @@ macro_rules! cstr {
 // internal modules:
 
 mod debug_utils;
-mod image_loading;
 mod physical_device_features;
 
 // public-facing modules:
@@ -39,7 +38,7 @@ mod framebuffers;
 pub use framebuffers::Framebuffers;
 
 mod descriptors;
-pub use descriptors::{AlphaMode, Descriptors, GltfFactors, Material, PipelineSpecificData};
+pub use descriptors::{AlphaMode, DescriptorError, Descriptors, GltfFactors, Material, PipelineSpecificData};
 
 mod device;
 pub use device::create_device;
@@ -66,6 +65,8 @@ pub mod display_utils {
         }
     }
 }
+
+pub mod image_loading;
 
 mod instance;
 pub use instance::Instance;
@@ -129,4 +130,4 @@ mod uploader;
 pub use uploader::Uploader;
 
 mod vulkan_raii;
-pub use vulkan_raii::Device;
+pub use vulkan_raii::{Device, Buffer, ImageView};
