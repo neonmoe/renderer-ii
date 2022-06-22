@@ -4,7 +4,7 @@
 
 layout(location = 0) out vec4 out_color;
 
-layout(location = 0) in vec2 in_uv;
+layout(location = 0) in centroid vec2 in_uv;
 layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec4 in_tangent;
 
@@ -27,15 +27,33 @@ push_constant;
 layout(set = 0, binding = 1) uniform RenderSettings { uint debug_value; }
 uf_render_settings;
 
+// Takes 4 samples of the texture from different spots in the pixel. Very
+// expensive, yes, but needed to avoid aliasing caused by small textures being
+// magnified with the "nearest" algorithm.
+vec4 sample_texture(texture2D tex) {
+    float sample_sparseness = 0.5;
+    vec2 sampling_offsets[] = {
+        vec2(0.5, 0.25) * sample_sparseness,
+        vec2(0.25, -0.5) * sample_sparseness,
+        vec2(-0.5, -0.25) * sample_sparseness,
+        vec2(-0.25, 0.5) * sample_sparseness,
+    };
+    vec2 d_uvx = dFdx(in_uv);
+    vec2 d_uvy = dFdy(in_uv);
+    vec4 sum = vec4(0.0, 0.0, 0.0, 0.0);
+    for (int i = 0; i < 4; i++) {
+        vec2 uv = in_uv + sampling_offsets[i].x * d_uvx + sampling_offsets[i].y * d_uvy;
+        sum += texture(sampler2D(tex, tex_sampler), uv);
+    }
+    return sum / 4;
+}
+
 void main() {
-    vec4 base_color =
-        texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
-    vec2 metallic_roughness =
-        texture(sampler2D(metallic_roughness[push_constant.texture_index], tex_sampler), in_uv).xy;
-    vec4 normal_tex = texture(sampler2D(normal[push_constant.texture_index], tex_sampler), in_uv);
-    vec4 occlusion = texture(sampler2D(occlusion[push_constant.texture_index], tex_sampler), in_uv);
-    vec3 emissive =
-        texture(sampler2D(emissive[push_constant.texture_index], tex_sampler), in_uv).xyz;
+    vec4 base_color = sample_texture(base_color[push_constant.texture_index]);
+    vec2 metallic_roughness = sample_texture(metallic_roughness[push_constant.texture_index]).xy;
+    vec4 normal_tex = sample_texture(normal[push_constant.texture_index]);
+    vec4 occlusion = sample_texture(occlusion[push_constant.texture_index]);
+    vec3 emissive = sample_texture(emissive[push_constant.texture_index]).xyz;
 
     vec4 base_color_factor = factors[push_constant.texture_index].base_color;
     vec3 emissive_factor = factors[push_constant.texture_index].emissive.xyz;
@@ -56,7 +74,7 @@ void main() {
     metallic_roughness *= metallic_roughness_factor;
 
     float ambient = 0.3 * occlusion.r;
-    float sun_brightness = 2.0;
+    float sun_brightness = 1.0;
     float sun_dot = max(0.0, dot(normal, normalize(vec3(-1.0, 1.0, 1.0))));
     float brightness = ambient + sun_dot * sun_brightness;
     out_color = vec4(brightness * base_color.rgb + emissive, base_color.a);
