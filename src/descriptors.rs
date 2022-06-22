@@ -172,7 +172,7 @@ impl Descriptors {
     pub fn new(instance: &Instance, device: &Device, physical_device: &PhysicalDevice) -> Result<Descriptors, DescriptorError> {
         profiling::scope!("creating descriptor sets");
         let sampler_create_info = vk::SamplerCreateInfo::builder()
-            .mag_filter(vk::Filter::LINEAR)
+            .mag_filter(vk::Filter::NEAREST)
             .min_filter(vk::Filter::LINEAR)
             .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
             .mip_lod_bias(0.0)

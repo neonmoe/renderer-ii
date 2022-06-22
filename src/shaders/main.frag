@@ -56,12 +56,6 @@ void main() {
     emissive *= emissive_factor;
     metallic_roughness *= metallic_roughness_factor;
 
-    if (mod(in_uv.x, 1.0) < 0.5 == mod(in_uv.y, 1.0) < 0.5) {
-        base_color.rgb = vec3(0.4, 0.1, 0.4);
-    } else {
-        base_color.rgb = vec3(0.7, 0.2, 0.7);
-    }
-
     float ambient = 0.3 * occlusion.r;
     float sun_brightness = 2.0;
     float sun_dot = max(0.0, dot(normal, normalize(vec3(-1.0, 1.0, 1.0))));
