@@ -69,13 +69,23 @@ impl Default for Camera {
 impl Camera {
     #[profiling::function]
     pub(crate) fn create_global_transforms(&self, width: f32, height: f32) -> GlobalTransforms {
-        let z_up_lh_camera_transform = Mat4::from_rotation_translation(self.orientation, self.position);
-        let mut z_up_lh_to_y_up_rh = Mat4::IDENTITY;
-        z_up_lh_to_y_up_rh.col_mut(1).y = 0.0;
-        z_up_lh_to_y_up_rh.col_mut(1).z = 1.0;
-        z_up_lh_to_y_up_rh.col_mut(2).y = -1.0;
-        z_up_lh_to_y_up_rh.col_mut(2).z = 0.0;
-        let camera_transform = z_up_lh_camera_transform * z_up_lh_to_y_up_rh;
+        // Input coordinates (from arrow-game, which uses Trenchbroom for levels) are in "Quake" coordinates.
+        // Post-camera-transform coordinates should be in Vulkan coordinates.
+        // Quake: +X: forward, +Y: left, +Z: up
+        // Vulkan: +X: right, +Y: up, +Z: backward
+        let quake_camera_transform = Mat4::from_rotation_translation(self.orientation, self.position);
+
+        //  0  0 -1  0
+        // -1  0  0  0
+        //  0  1  0  0
+        //  0  0  0  1
+        let mut quake_to_y_up_rh = Mat4::ZERO;
+        quake_to_y_up_rh.col_mut(0).y = -1.0;
+        quake_to_y_up_rh.col_mut(1).z = 1.0;
+        quake_to_y_up_rh.col_mut(2).x = -1.0;
+        quake_to_y_up_rh.col_mut(3).w = 1.0;
+
+        let camera_transform = quake_camera_transform * quake_to_y_up_rh;
         GlobalTransforms::new(camera_transform, width, height, self.near, self.far)
     }
 }
