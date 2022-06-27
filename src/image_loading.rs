@@ -6,7 +6,7 @@ use crate::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use ash::vk;
 use std::rc::Rc;
 
-mod ntex;
+pub mod ntex;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ImageLoadingError {
