@@ -35,10 +35,8 @@ impl<'a> Iterator for MeshIter<'a> {
         } else {
             let node_index = self.node_queue.pop()?;
             let node = self.gltf.nodes.get(node_index)?;
-            if let Some(children) = &node.children {
-                for child in children {
-                    self.node_queue.push(*child);
-                }
+            for child in &node.children {
+                self.node_queue.push(*child);
             }
             if let Some(mesh_index) = node.mesh {
                 self.current_sub_iter
