@@ -75,7 +75,7 @@ mod error;
 pub use error::Error;
 
 mod gltf;
-pub use gltf::{Animation, Gltf};
+pub use gltf::{Animation, AnimationError, Gltf};
 
 mod memory_measurement {
     mod arena;
@@ -130,4 +130,4 @@ mod uploader;
 pub use uploader::Uploader;
 
 mod vulkan_raii;
-pub use vulkan_raii::{Device, Buffer, ImageView};
+pub use vulkan_raii::{Buffer, Device, ImageView};

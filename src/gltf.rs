@@ -76,6 +76,12 @@ pub enum GltfLoadingError {
     Misc(&'static str),
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum AnimationError {
+    #[error("invalid timestamp {time} for animation {animation:?}")]
+    InvalidAnimationTimestamp { animation: Option<String>, time: f32 },
+}
+
 type NodeAnimChannels = Vec<AnimationChannel>;
 pub struct Animation {
     pub name: Option<String>,
@@ -101,13 +107,12 @@ pub(crate) enum Keyframes {
 struct Node {
     mesh: Option<usize>,
     skin: Option<usize>,
-    children: Option<Vec<usize>>,
+    children: Vec<usize>,
     transform: Mat4,
 }
 
 pub(crate) struct Joint {
     pub(crate) inverse_bind_matrix: Mat4,
-    pub(crate) resting_transform: Mat4,
     pub(crate) node_index: usize,
 }
 
@@ -164,6 +169,64 @@ impl Gltf {
 
     pub(crate) fn mesh_iter(&self) -> mesh_iter::MeshIter<'_> {
         mesh_iter::MeshIter::new(self, self.root_nodes.clone())
+    }
+
+    pub(crate) fn get_node_transforms(&self, playing_animations: &[(f32, &Animation)]) -> Result<Vec<Option<Mat4>>, AnimationError> {
+        let mut transforms = vec![None; self.nodes.len()];
+        let mut nodes_with_parent_transform = self.root_nodes.iter().map(|&node| (node, Mat4::IDENTITY)).collect::<Vec<_>>();
+        while let Some((node_index, parent_transform)) = nodes_with_parent_transform.pop() {
+            let current_transform = parent_transform * self.get_animated_transform(node_index, playing_animations)?;
+            assert_eq!(transforms[node_index], None);
+            transforms[node_index] = Some(current_transform);
+            for &child_index in &self.nodes[node_index].children {
+                nodes_with_parent_transform.push((child_index, current_transform));
+            }
+        }
+        Ok(transforms)
+    }
+
+    fn get_animated_transform(&self, node_index: usize, playing_animations: &[(f32, &Animation)]) -> Result<Mat4, AnimationError> {
+        let mut animated_transform = self.nodes[node_index].transform;
+        for (time, animation) in playing_animations {
+            let time = *time;
+            let animation_channels = if let Some(channels) = &animation.nodes_channels[node_index] {
+                channels
+            } else {
+                continue;
+            };
+            let (mut scale, mut rotation, mut translation) = animated_transform.to_scale_rotation_translation();
+            for channel in animation_channels {
+                match &channel.keyframes {
+                    Keyframes::Translation(frames) => {
+                        translation = channel.interpolation.interpolate_vec3(frames, time).ok_or_else(|| {
+                            AnimationError::InvalidAnimationTimestamp {
+                                animation: animation.name.clone(),
+                                time,
+                            }
+                        })?;
+                    }
+                    Keyframes::Rotation(frames) => {
+                        rotation = channel.interpolation.interpolate_quat(frames, time).ok_or_else(|| {
+                            AnimationError::InvalidAnimationTimestamp {
+                                animation: animation.name.clone(),
+                                time,
+                            }
+                        })?;
+                    }
+                    Keyframes::Scale(frames) => {
+                        scale = channel.interpolation.interpolate_vec3(frames, time).ok_or_else(|| {
+                            AnimationError::InvalidAnimationTimestamp {
+                                animation: animation.name.clone(),
+                                time,
+                            }
+                        })?;
+                    }
+                    Keyframes::Weight(_) => todo!(),
+                }
+            }
+            animated_transform = Mat4::from_scale_rotation_translation(scale, rotation, translation);
+        }
+        Ok(animated_transform)
     }
 }
 
@@ -325,7 +388,7 @@ fn create_gltf(
         nodes.push(Node {
             mesh: node.mesh,
             skin: node.skin,
-            children: node.children.clone(),
+            children: node.children.clone().unwrap_or_default(),
             transform,
         });
     }
@@ -542,7 +605,6 @@ fn create_gltf(
             for (&node_index, &inverse_bind_matrix) in skin.joints.iter().zip(inverse_bind_matrices) {
                 joints.push(Joint {
                     inverse_bind_matrix,
-                    resting_transform: nodes[node_index].transform,
                     node_index,
                 });
             }
@@ -550,7 +612,6 @@ fn create_gltf(
             for &node_index in &skin.joints {
                 joints.push(Joint {
                     inverse_bind_matrix: Mat4::IDENTITY,
-                    resting_transform: nodes[node_index].transform,
                     node_index,
                 });
             }
@@ -575,10 +636,8 @@ fn create_gltf(
             return Err(GltfLoadingError::InvalidNodeGraph);
         } else {
             visited_nodes[node] = true;
-            if let Some(children) = &nodes[node].children {
-                for child in children {
-                    queue.push(*child);
-                }
+            for child in &nodes[node].children {
+                queue.push(*child);
             }
         }
     }
@@ -587,12 +646,11 @@ fn create_gltf(
     let mut parent_nodes = root_nodes.clone();
     while let Some(parent_node) = parent_nodes.pop() {
         let parent_node_transform = nodes[parent_node].transform;
-        if let Some(mut children) = nodes[parent_node].children.clone() {
-            for &child in &children {
-                nodes[child].transform = parent_node_transform * nodes[child].transform;
-            }
-            parent_nodes.append(&mut children);
+        let mut children = nodes[parent_node].children.clone();
+        for &child in &children {
+            nodes[child].transform = parent_node_transform * nodes[child].transform;
         }
+        parent_nodes.append(&mut children);
     }
 
     Ok(Gltf {
