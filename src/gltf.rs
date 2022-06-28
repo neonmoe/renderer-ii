@@ -688,10 +688,7 @@ pub(crate) fn load_image_bytes<'a>(
     gltf: &gltf_json::GltfJson,
 ) -> Result<&'a [u8], GltfLoadingError> {
     profiling::scope!("map image file into memory");
-    if let (Some(mime_type), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
-        if mime_type.as_str() != "image/prs.ntex" {
-            return Err(GltfLoadingError::Spec("mime type of texture is not image/prs.ntex"));
-        }
+    if let (Some(_), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
         let buffer_view = gltf
             .buffer_views
             .get(*buffer_view)
@@ -713,10 +710,8 @@ pub(crate) fn load_image_bytes<'a>(
         }
         Ok(&buffer_bytes[buffer_offset..buffer_offset + buffer_size])
     } else if let Some(uri) = &image.uri {
-        if !uri.ends_with(".ntex") {
-            return Err(GltfLoadingError::Misc("image uri does not end in .ntex"));
-        };
-        let path = resource_path.join(uri);
+        let mut path = resource_path.join(uri);
+        path.set_extension("ntex");
         map_file(memmap_holder, &path, None)
     } else {
         Err(GltfLoadingError::Spec("image does not have an uri nor a mimetype + buffer view"))
