@@ -82,33 +82,35 @@ pub enum AnimationError {
     InvalidAnimationTimestamp { animation: Option<String>, time: f32 },
 }
 
-type NodeAnimChannels = Vec<AnimationChannel>;
+pub type NodeAnimChannels = Vec<AnimationChannel>;
+#[derive(Clone)]
 pub struct Animation {
     pub name: Option<String>,
     pub start_time: f32,
     pub end_time: f32,
-    pub(crate) nodes_channels: Vec<Option<NodeAnimChannels>>,
+    pub nodes_channels: Vec<Option<NodeAnimChannels>>,
 }
 
 #[derive(Clone)]
-pub(crate) struct AnimationChannel {
-    pub(crate) interpolation: AnimationInterpolation,
-    pub(crate) keyframes: Keyframes,
+pub struct AnimationChannel {
+    pub interpolation: AnimationInterpolation,
+    pub keyframes: Keyframes,
 }
 
 #[derive(Clone)]
-pub(crate) enum Keyframes {
+pub enum Keyframes {
     Translation(Vec<(f32, Vec3)>),
     Rotation(Vec<(f32, Quat)>),
     Scale(Vec<(f32, Vec3)>),
     Weight(Vec<(f32, f32)>),
 }
 
-struct Node {
+pub struct Node {
+    pub name: Option<String>,
+    pub transform: Mat4,
+    pub children: Vec<usize>,
     mesh: Option<usize>,
     skin: Option<usize>,
-    children: Vec<usize>,
-    transform: Mat4,
 }
 
 pub(crate) struct Joint {
@@ -122,7 +124,7 @@ pub(crate) struct Skin {
 
 pub struct Gltf {
     pub animations: Vec<Animation>,
-    nodes: Vec<Node>,
+    pub nodes: Vec<Node>,
     root_nodes: Vec<usize>,
     meshes: Vec<Vec<(Mesh, usize)>>,
     materials: Vec<Rc<Material>>,
@@ -177,7 +179,7 @@ impl Gltf {
         mesh_iter::MeshIter::new(self, self.root_nodes.clone())
     }
 
-    pub(crate) fn get_node_transforms(&self, playing_animations: &[(f32, &Animation)]) -> Result<Vec<Option<Mat4>>, AnimationError> {
+    pub fn get_node_transforms(&self, playing_animations: &[(f32, &Animation)]) -> Result<Vec<Option<Mat4>>, AnimationError> {
         let mut transforms = vec![None; self.nodes.len()];
         let mut nodes_with_parent_transform = self.root_nodes.iter().map(|&node| (node, Mat4::IDENTITY)).collect::<Vec<_>>();
         while let Some((node_index, parent_transform)) = nodes_with_parent_transform.pop() {
@@ -392,6 +394,7 @@ fn create_gltf(
             Mat4::from_scale_rotation_translation(scale, rotation, translation)
         };
         nodes.push(Node {
+            name: node.name.clone(),
             mesh: node.mesh,
             skin: node.skin,
             children: node.children.clone().unwrap_or_default(),
