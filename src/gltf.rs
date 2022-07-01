@@ -167,6 +167,12 @@ impl Gltf {
         create_gltf(device, uploader, descriptors, arenas, gltf, (gltf_path, resource_path), None)
     }
 
+    pub fn get_animation(&self, name: &str) -> Option<&Animation> {
+        self.animations
+            .iter()
+            .find(|animation| if let Some(name_) = &animation.name { name == name_ } else { false })
+    }
+
     pub(crate) fn mesh_iter(&self) -> mesh_iter::MeshIter<'_> {
         mesh_iter::MeshIter::new(self, self.root_nodes.clone())
     }
