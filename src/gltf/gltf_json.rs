@@ -43,6 +43,7 @@ pub(crate) struct Scene {
 
 #[derive(Deserialize)]
 pub(crate) struct Node {
+    pub name: Option<String>,
     pub mesh: Option<usize>,
     pub skin: Option<usize>,
     pub children: Option<Vec<usize>>,
@@ -223,7 +224,7 @@ pub(crate) struct AnimationSampler {
 }
 
 #[derive(Deserialize, Clone, Copy)]
-pub(crate) enum AnimationInterpolation {
+pub enum AnimationInterpolation {
     #[serde(rename = "LINEAR")]
     Linear,
     #[serde(rename = "STEP")]

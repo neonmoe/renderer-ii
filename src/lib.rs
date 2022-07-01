@@ -75,7 +75,7 @@ mod error;
 pub use error::Error;
 
 mod gltf;
-pub use gltf::{Animation, AnimationError, Gltf};
+pub use gltf::{Animation, AnimationError, Gltf, Keyframes};
 
 mod memory_measurement {
     mod arena;
