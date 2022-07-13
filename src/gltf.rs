@@ -105,6 +105,7 @@ pub enum Keyframes {
     Weight(Vec<(f32, f32)>),
 }
 
+#[derive(Clone)]
 pub struct Node {
     pub name: Option<String>,
     pub transform: Mat4,
@@ -113,20 +114,23 @@ pub struct Node {
     skin: Option<usize>,
 }
 
+#[derive(Clone)]
 pub(crate) struct Joint {
     pub(crate) inverse_bind_matrix: Mat4,
     pub(crate) node_index: usize,
 }
 
+#[derive(Clone)]
 pub(crate) struct Skin {
     pub(crate) joints: Vec<Joint>,
 }
 
+#[derive(Clone)]
 pub struct Gltf {
     pub animations: Vec<Animation>,
     pub nodes: Vec<Node>,
     root_nodes: Vec<usize>,
-    meshes: Vec<Vec<(Mesh, usize)>>,
+    meshes: Vec<Vec<(Rc<Mesh>, usize)>>,
     materials: Vec<Rc<Material>>,
     pub(crate) skins: Vec<Skin>,
 }
@@ -369,7 +373,7 @@ fn create_gltf(
         for primitive in &mesh.primitives {
             let mesh = create_primitive(&gltf, &buffers, primitive)?;
             let material_index = primitive.material.ok_or(GltfLoadingError::Misc("material missing"))?;
-            primitives.push((mesh, material_index));
+            primitives.push((Rc::new(mesh), material_index));
         }
         meshes.push(primitives);
     }
