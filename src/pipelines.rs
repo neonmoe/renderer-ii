@@ -160,7 +160,8 @@ fn create_render_pass(
         let tonemapping_subpass = vk::SubpassDescription::builder()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(&tonemapping_pass_color_attachment_references)
-            .input_attachments(&hdr_pass_input_attachment_references);
+            .input_attachments(&hdr_pass_input_attachment_references)
+            .depth_stencil_attachment(&depth_attachment_reference);
 
         let attachments = [
             hdr_attachment.build(),
@@ -214,6 +215,7 @@ fn create_render_pass(
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(&tonemapping_pass_color_attachment_references)
             .resolve_attachments(&resolve_attachment_references)
+            .depth_stencil_attachment(&depth_attachment_reference)
             .input_attachments(&hdr_pass_input_attachment_references);
 
         let attachments = [

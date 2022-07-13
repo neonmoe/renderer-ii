@@ -67,7 +67,7 @@ impl HudTransform {
 fn orthographic_projection(aspect_ratio: f32) -> Mat4 {
     let m00 = 1.0 / aspect_ratio;
     let m11 = 1.0;
-    let m22 = 1.0 / 2.0;
+    let m22 = -1.0 / 2.0;
     let m32 = 1.0 / 2.0;
     Mat4::from_cols_array(&[m00, 0.0, 0.0, 0.0, 0.0, m11, 0.0, 0.0, 0.0, 0.0, m22, 0.0, 0.0, 0.0, m32, 1.0])
 }

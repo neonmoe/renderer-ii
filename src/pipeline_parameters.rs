@@ -460,10 +460,10 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
 };
 
 static HUD_PARAMETERS: PipelineParameters = PipelineParameters {
-    alpha_to_coverage: false,
-    blended: true,
-    depth_test: false,
-    depth_write: false,
+    alpha_to_coverage: true,
+    blended: false,
+    depth_test: true,
+    depth_write: true,
     sample_shading: false,
     min_sample_shading_factor: 0.0,
     subpass: 1,
