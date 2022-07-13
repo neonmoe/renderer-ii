@@ -202,6 +202,10 @@ impl Renderer {
         let global_transforms_buffer = create_uniform_buffer(&mut self.temp_arena, global_transforms, "view+proj matrices")
             .map_err(RendererError::CameraTransformUniformCreation)?;
 
+        let hud_transform = &[scene.camera.create_hud_transform(width as f32, height as f32)];
+        let hud_transform_buffer = create_uniform_buffer(&mut self.temp_arena, hud_transform, "hud proj matrix")
+            .map_err(RendererError::CameraTransformUniformCreation)?;
+
         let render_settings = &[render_settings];
         let render_settings_buffer = create_uniform_buffer(&mut self.temp_arena, render_settings, "render settings")
             .map_err(RendererError::RenderSettingsUniformCreation)?;
@@ -220,11 +224,13 @@ impl Renderer {
         descriptors.write_descriptors(
             &global_transforms_buffer,
             &render_settings_buffer,
+            &hud_transform_buffer,
             &skinned_mesh_joints_buffer,
             &framebuffers.inner[frame_index.index],
         );
 
         self.temp_arena.add_buffer(global_transforms_buffer);
+        self.temp_arena.add_buffer(hud_transform_buffer);
         self.temp_arena.add_buffer(render_settings_buffer);
         self.temp_arena.add_buffer(skinned_mesh_joints_buffer);
 
@@ -400,7 +406,7 @@ impl Renderer {
         }
 
         {
-            profiling::scope!("record tonemapping subpass");
+            profiling::scope!("tonemapping pipeline");
             let pl_index = PipelineIndex::RenderResolutionPostProcess;
             let bind_point = vk::PipelineBindPoint::GRAPHICS;
             unsafe {
@@ -414,6 +420,37 @@ impl Renderer {
                     .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[])
             };
             unsafe { self.device.cmd_draw(command_buffer, 3, 1, 0, 0) };
+        }
+
+        {
+            profiling::scope!("hud pipeline");
+            let pl_index = PipelineIndex::Hud;
+            let bind_point = vk::PipelineBindPoint::GRAPHICS;
+            unsafe {
+                self.device
+                    .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines[pl_index].inner)
+            };
+            let layout = descriptors.pipeline_layouts[pl_index].inner;
+            let descriptor_sets = descriptors.descriptor_sets(pl_index);
+            unsafe {
+                self.device
+                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[])
+            };
+
+            let static_meshes = &static_meshes[PipelineIndex::Hud];
+            if !static_meshes.is_empty() {
+                let pipeline = pipelines.pipelines[PipelineIndex::Hud].inner;
+                let layout = descriptors.pipeline_layouts[PipelineIndex::Hud].inner;
+                let descriptor_sets = descriptors.descriptor_sets(PipelineIndex::Hud);
+                self.record_static_pipeline(
+                    command_buffer,
+                    (pipeline, layout),
+                    descriptor_sets,
+                    static_meshes,
+                    PipelineIndex::Hud,
+                    format_args!("hud meshes"),
+                )?;
+            }
         }
 
         unsafe {

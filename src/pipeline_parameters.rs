@@ -33,6 +33,7 @@ pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
     PipelineIndex::Blended,
     PipelineIndex::SkinnedBlended,
     PipelineIndex::RenderResolutionPostProcess,
+    PipelineIndex::Hud,
 ];
 
 pub const SKINNED_PIPELINES: [PipelineIndex; 3] = [
@@ -57,6 +58,8 @@ pub enum PipelineIndex {
     SkinnedBlended,
     /// Post-processing pass before MSAA resolve and up/downsampling.
     RenderResolutionPostProcess,
+    /// HUD pass after up/downsampling.
+    Hud,
     #[doc(hidden)]
     Count,
 }
@@ -88,6 +91,7 @@ impl<T> Drop for PipelineMap<T> {
 impl<T> PipelineMap<T> {
     pub fn new<E, F: FnMut(PipelineIndex) -> Result<T, E>>(mut f: F) -> Result<PipelineMap<T>, E> {
         let mut buffer = [
+            MaybeUninit::uninit(),
             MaybeUninit::uninit(),
             MaybeUninit::uninit(),
             MaybeUninit::uninit(),
@@ -276,6 +280,13 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::empty(),
     },
+    DescriptorSetLayoutParams {
+        binding: 2,
+        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        descriptor_count: 1,
+        stage_flags: vk::ShaderStageFlags::VERTEX,
+        binding_flags: vk::DescriptorBindingFlags::empty(),
+    },
 ];
 
 static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
@@ -448,6 +459,28 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     ],
 };
 
+static HUD_PARAMETERS: PipelineParameters = PipelineParameters {
+    alpha_to_coverage: false,
+    blended: true,
+    depth_test: false,
+    depth_write: false,
+    sample_shading: false,
+    min_sample_shading_factor: 0.0,
+    subpass: 1,
+    vertex_shader: shaders::include_spirv!("shaders/hud.vert"),
+    fragment_shader: shaders::include_spirv!("shaders/hud.frag"),
+    bindings: &[INSTANCED_TRANSFORM_BINDING_0, POSITION_BINDING_1, TEXCOORD0_BINDING_2],
+    attributes: &[
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[2],
+        INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[3],
+        POSITION_BINDING_1_ATTRIBUTE,
+        TEXCOORD0_BINDING_2_ATTRIBUTE,
+    ],
+    descriptor_sets: &[SHARED_DESCRIPTOR_SET_0, PBR_DESCRIPTOR_SET_1],
+};
+
 pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = PipelineMap {
     buffer: [
         MaybeUninit::new(OPAQUE_PARAMETERS),
@@ -457,5 +490,6 @@ pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = Pipelin
         MaybeUninit::new(BLENDED_PARAMETERS),
         MaybeUninit::new(SKINNED_BLENDED_PARAMETERS),
         MaybeUninit::new(RENDER_RESOLUTION_POST_PROCESS),
+        MaybeUninit::new(HUD_PARAMETERS),
     ],
 };

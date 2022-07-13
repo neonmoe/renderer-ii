@@ -47,14 +47,18 @@ pub enum DescriptorError {
     WaitForMaterialDefaultTexturesUpload(#[source] UploaderError),
 }
 
-fn get_pipelines(data: &PipelineSpecificData) -> [PipelineIndex; 2] {
+fn get_pipelines(data: &PipelineSpecificData, name: &str) -> impl Iterator<Item = PipelineIndex> {
     use PipelineIndex::*;
-    match data {
-        PipelineSpecificData::Gltf { alpha_mode, .. } => match alpha_mode {
-            gltf_json::AlphaMode::Opaque => [Opaque, SkinnedOpaque],
-            gltf_json::AlphaMode::Mask => [Clipped, SkinnedClipped],
-            gltf_json::AlphaMode::Blend => [Blended, SkinnedBlended],
-        },
+    if name.starts_with("hud_") {
+        [Hud].iter().copied()
+    } else {
+        match data {
+            PipelineSpecificData::Gltf { alpha_mode, .. } => match alpha_mode {
+                gltf_json::AlphaMode::Opaque => [Opaque, SkinnedOpaque].iter().copied(),
+                gltf_json::AlphaMode::Mask => [Clipped, SkinnedClipped].iter().copied(),
+                gltf_json::AlphaMode::Blend => [Blended, SkinnedBlended].iter().copied(),
+            },
+        }
     }
 }
 
@@ -97,9 +101,8 @@ pub struct Material {
 impl Material {
     pub fn new(descriptors: &mut Descriptors, data: PipelineSpecificData, name: String) -> Result<Rc<Material>, DescriptorError> {
         profiling::scope!("material slot reservation");
-        let array_indices = get_pipelines(&data)
-            .iter()
-            .map(|&pipeline| {
+        let array_indices = get_pipelines(&data, &name)
+            .map(|pipeline| {
                 let (i, _) = descriptors.material_slots_per_pipeline[pipeline]
                     .iter_mut()
                     .enumerate()
@@ -349,6 +352,7 @@ impl Descriptors {
         &mut self,
         global_transforms_buffer: &Buffer,
         render_settings_buffer: &Buffer,
+        hud_transform_buffer: &Buffer,
         skinned_mesh_joints_buffer: &Buffer,
         framebuffer: &Framebuffer,
     ) {
@@ -382,6 +386,8 @@ impl Descriptors {
         self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, 0, 0), global_transforms_buffer);
         let render_settings_buffer = (render_settings_buffer.inner, 0, render_settings_buffer.size);
         self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, 1, 0), render_settings_buffer);
+        let hud_transform_buffer = (hud_transform_buffer.inner, 0, hud_transform_buffer.size);
+        self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, 2, 0), hud_transform_buffer);
 
         for pipeline in SKINNED_PIPELINES {
             let bones_buffer_size = std::mem::size_of::<glam::Mat4>() as vk::DeviceSize * 256;
@@ -428,8 +434,8 @@ impl Descriptors {
                     occlusion.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.occlusion).inner,
                     emissive.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.emissive).inner,
                 ];
-                let factors = (factors.0.inner, factors.1, factors.2);
                 self.set_uniform_images(pipeline, pending_writes, (1, 1, index), &images);
+                let factors = (factors.0.inner, factors.1, factors.2);
                 self.set_uniform_buffer(pipeline, pending_writes, (1, 6, index), factors);
             }
         }
