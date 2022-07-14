@@ -110,6 +110,8 @@ pub struct Node {
     pub name: Option<String>,
     pub transform: Mat4,
     pub children: Vec<usize>,
+    /// The tuple consists of (min coord, max coord).
+    pub bounding_box: Option<(Vec3, Vec3)>,
     mesh: Option<usize>,
     skin: Option<usize>,
 }
@@ -397,12 +399,28 @@ fn create_gltf(
             };
             Mat4::from_scale_rotation_translation(scale, rotation, translation)
         };
+
+        let mut bounding_box = None;
+        if let Some(mesh) = node.mesh {
+            for primitive in &gltf.meshes[mesh].primitives {
+                if let Some(&positions_accessor) = primitive.attributes.get("POSITION") {
+                    let accessor = &gltf.accessors[positions_accessor];
+                    if accessor.min.len() == 3 && accessor.max.len() == 3 {
+                        let min = Vec3::from_slice(&accessor.min);
+                        let max = Vec3::from_slice(&accessor.max);
+                        bounding_box = Some((min, max));
+                    }
+                }
+            }
+        }
+
         nodes.push(Node {
             name: node.name.clone(),
             mesh: node.mesh,
             skin: node.skin,
             children: node.children.clone().unwrap_or_default(),
             transform,
+            bounding_box,
         });
     }
 
