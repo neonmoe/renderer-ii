@@ -145,6 +145,15 @@ pub(crate) struct DescriptorSetLayoutParams {
 }
 
 #[derive(Clone, Copy)]
+pub(crate) enum Shader {
+    SingleVariant((&'static str, &'static [u32])),
+    MsaaVariants {
+        single_sample: (&'static str, &'static [u32]),
+        multi_sample: (&'static str, &'static [u32]),
+    },
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct PipelineParameters {
     pub alpha_to_coverage: bool,
     pub blended: bool,
@@ -153,8 +162,8 @@ pub(crate) struct PipelineParameters {
     pub sample_shading: bool,
     pub min_sample_shading_factor: f32,
     pub subpass: u32,
-    pub vertex_shader: (&'static str, &'static [u32]),
-    pub fragment_shader: (&'static str, &'static [u32]),
+    pub vertex_shader: Shader,
+    pub fragment_shader: Shader,
     pub bindings: &'static [vk::VertexInputBindingDescription],
     pub attributes: &'static [vk::VertexInputAttributeDescription],
     pub descriptor_sets: &'static [&'static [DescriptorSetLayoutParams]],
@@ -349,8 +358,8 @@ static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     sample_shading: false,
     min_sample_shading_factor: 0.0,
     subpass: 0,
-    vertex_shader: shaders::include_spirv!("shaders/main.vert"),
-    fragment_shader: shaders::include_spirv!("shaders/main.frag"),
+    vertex_shader: Shader::SingleVariant(shaders::include_spirv!("shaders/main.vert")),
+    fragment_shader: Shader::SingleVariant(shaders::include_spirv!("shaders/main.frag")),
     bindings: &[
         INSTANCED_TRANSFORM_BINDING_0,
         POSITION_BINDING_1,
@@ -379,8 +388,8 @@ static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     sample_shading: false,
     min_sample_shading_factor: 0.0,
     subpass: 0,
-    vertex_shader: shaders::include_spirv!("shaders/main.vert", "SKINNED"),
-    fragment_shader: shaders::include_spirv!("shaders/main.frag", "SKINNED"),
+    vertex_shader: Shader::SingleVariant(shaders::include_spirv!("shaders/main.vert", "SKINNED")),
+    fragment_shader: Shader::SingleVariant(shaders::include_spirv!("shaders/main.frag", "SKINNED")),
     bindings: &[
         INSTANCED_TRANSFORM_BINDING_0,
         POSITION_BINDING_1,
@@ -443,8 +452,11 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     sample_shading: true,
     min_sample_shading_factor: 1.0,
     subpass: 1,
-    vertex_shader: shaders::include_spirv!("shaders/fullscreen.vert"),
-    fragment_shader: shaders::include_spirv!("shaders/render_res_pp.frag"),
+    vertex_shader: Shader::SingleVariant(shaders::include_spirv!("shaders/fullscreen.vert")),
+    fragment_shader: Shader::MsaaVariants {
+        single_sample: shaders::include_spirv!("shaders/render_res_pp.frag"),
+        multi_sample: shaders::include_spirv!("shaders/render_res_pp.frag", "MULTISAMPLED"),
+    },
     bindings: &[],
     attributes: &[],
     descriptor_sets: &[
@@ -467,8 +479,8 @@ static HUD_PARAMETERS: PipelineParameters = PipelineParameters {
     sample_shading: false,
     min_sample_shading_factor: 0.0,
     subpass: 1,
-    vertex_shader: shaders::include_spirv!("shaders/hud.vert"),
-    fragment_shader: shaders::include_spirv!("shaders/hud.frag"),
+    vertex_shader: Shader::SingleVariant(shaders::include_spirv!("shaders/hud.vert")),
+    fragment_shader: Shader::SingleVariant(shaders::include_spirv!("shaders/hud.frag")),
     bindings: &[INSTANCED_TRANSFORM_BINDING_0, POSITION_BINDING_1, TEXCOORD0_BINDING_2],
     attributes: &[
         INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],

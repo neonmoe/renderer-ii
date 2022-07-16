@@ -1,6 +1,6 @@
 use crate::debug_utils;
 use crate::physical_device::HDR_COLOR_ATTACHMENT_FORMAT;
-use crate::pipeline_parameters::{PipelineMap, ALL_PIPELINES, PIPELINE_PARAMETERS};
+use crate::pipeline_parameters::{PipelineMap, Shader, ALL_PIPELINES, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout, RenderPass};
 use crate::{Descriptors, PhysicalDevice};
 use ash::vk;
@@ -257,13 +257,21 @@ fn create_pipelines(
 
     let shader_stages_per_pipeline = PipelineMap::new(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
+        let multisampled = attachment_sample_count != vk::SampleCountFlags::TYPE_1;
+        let mut create_from_shader_variant = |shader| match shader {
+            Shader::SingleVariant(shader) => create_shader_module(shader),
+            Shader::MsaaVariants { multi_sample: shader, .. } if multisampled => create_shader_module(shader),
+            Shader::MsaaVariants { single_sample: shader, .. } => create_shader_module(shader),
+        };
+        let vertex_module = create_from_shader_variant(params.vertex_shader)?;
+        let fragment_module = create_from_shader_variant(params.fragment_shader)?;
         let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
             .stage(vk::ShaderStageFlags::VERTEX)
-            .module(create_shader_module(params.vertex_shader)?)
+            .module(vertex_module)
             .name(cstr!("main"));
         let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
             .stage(vk::ShaderStageFlags::FRAGMENT)
-            .module(create_shader_module(params.fragment_shader)?)
+            .module(fragment_module)
             .name(cstr!("main"));
         Ok([vert_shader_stage_create_info.build(), frag_shader_stage_create_info.build()])
     })?;
