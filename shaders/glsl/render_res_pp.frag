@@ -1,7 +1,11 @@
-#version 450
+// This file is included in some variants in the "variants" directory.
 
 layout(location = 0) out vec4 out_color;
+#ifdef MULTISAMPLED
 layout(input_attachment_index = 0, set = 1, binding = 0) uniform subpassInputMS in_color;
+#else
+layout(input_attachment_index = 0, set = 1, binding = 0) uniform subpassInput in_color;
+#endif
 
 layout(set = 0, binding = 1) uniform RenderSettings { uint debug_value; }
 uf_render_settings;
@@ -19,7 +23,11 @@ void main() {
     // Handles post-processing effects that are done before MSAA resolve and down/upsampling passes:
     // - Tonemapping
 
+#ifdef MULTISAMPLED
     vec3 linear = subpassLoad(in_color, gl_SampleID).rgb;
+#else
+    vec3 linear = subpassLoad(in_color).rgb;
+#endif
     if (uf_render_settings.debug_value == 6) {
         out_color = vec4(aces(linear), 1.0);
     } else if (uf_render_settings.debug_value == 7) {

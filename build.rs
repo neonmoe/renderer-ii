@@ -7,6 +7,7 @@ use std::time::SystemTime;
 struct ShadersToCompile {
     src_modified: SystemTime,
     dst_modified: SystemTime,
+    first_compile: bool,
     shader_srcs_and_dsts: Vec<(PathBuf, PathBuf)>,
 }
 
@@ -14,11 +15,12 @@ fn main() {
     let mut shaders = ShadersToCompile {
         src_modified: SystemTime::UNIX_EPOCH,
         dst_modified: SystemTime::UNIX_EPOCH,
+        first_compile: false,
         shader_srcs_and_dsts: Vec::new(),
     };
     compile_shaders(PathBuf::from("shaders/glsl"), PathBuf::from("shaders/spirv"), &mut shaders);
 
-    if shaders.src_modified > shaders.dst_modified {
+    if shaders.first_compile || shaders.src_modified > shaders.dst_modified {
         println!(
             "cargo:warning={}: spirv out-of-date, recompiling shaders using glslc",
             env!("CARGO_PKG_NAME"),
@@ -43,6 +45,7 @@ fn compile_shaders(src_path: PathBuf, mut dst_path: PathBuf, shaders: &mut Shade
             shaders.dst_modified = shaders.dst_modified.max(dst_modified);
         }
         if is_glsl_module(&src_path) {
+            shaders.first_compile |= !dst_path.exists();
             shaders.shader_srcs_and_dsts.push((src_path, dst_path));
         }
     } else if src_path.is_dir() {
