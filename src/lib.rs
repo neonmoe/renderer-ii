@@ -96,7 +96,7 @@ mod pipelines;
 pub use pipelines::Pipelines;
 
 mod pipeline_parameters;
-pub use pipeline_parameters::{PipelineIndex, RenderSettings};
+pub use pipeline_parameters::{PipelineIndex, RenderSettings, LIGHT_COUNT};
 
 mod renderer;
 pub use renderer::{FrameIndex, Renderer, RendererError};

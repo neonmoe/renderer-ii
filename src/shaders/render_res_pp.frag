@@ -1,5 +1,7 @@
 #version 450
 
+#include "constants.glsl"
+
 layout(location = 0) out vec4 out_color;
 #ifdef MULTISAMPLED
 layout(input_attachment_index = 0, set = 1, binding = 0) uniform subpassInputMS in_color;
@@ -7,7 +9,7 @@ layout(input_attachment_index = 0, set = 1, binding = 0) uniform subpassInputMS 
 layout(input_attachment_index = 0, set = 1, binding = 0) uniform subpassInput in_color;
 #endif
 
-layout(set = 0, binding = 1) uniform RenderSettings { uint debug_value; }
+layout(set = 0, binding = 1) uniform RenderSettings { vec4 lights[LIGHT_COUNT]; }
 uf_render_settings;
 
 vec3 aces(vec3 x) {

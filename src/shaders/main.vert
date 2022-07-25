@@ -19,9 +19,10 @@ layout(set = 2, binding = 0) uniform Bone { mat4 bones[256]; }
 skeleton;
 #endif
 
-layout(location = 0) out vec2 out_uv;
-layout(location = 1) out vec3 out_normal;
-layout(location = 2) out vec4 out_tangent;
+layout(location = 0) out vec3 out_position;
+layout(location = 1) out vec2 out_uv;
+layout(location = 2) out vec3 out_normal;
+layout(location = 3) out vec4 out_tangent;
 
 vec3 hsv(float hue, float saturation, float value) {
     float h = mod(hue * 6.0, 6.0);
@@ -53,7 +54,9 @@ void main() {
 #else
     mat4 transform = in_transform;
 #endif
-    gl_Position = uf_transforms.proj * uf_transforms.view * transform * vec4(in_position, 1.0);
+    vec4 position = transform * vec4(in_position, 1.0);
+    gl_Position = uf_transforms.proj * uf_transforms.view * position;
+    out_position = position.xyz;
     out_uv = in_uv;
     // Normals and tangents should not be translated, and the translation is
     // specified in the 4th column.

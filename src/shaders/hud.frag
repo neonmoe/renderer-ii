@@ -18,7 +18,7 @@ factors[MAX_TEXTURE_COUNT];
 layout(push_constant) uniform PushConstantStruct { uint texture_index; }
 push_constant;
 
-layout(set = 0, binding = 1) uniform RenderSettings { uint debug_value; }
+layout(set = 0, binding = 1) uniform RenderSettings { vec4 lights[LIGHT_COUNT]; }
 uf_render_settings;
 
 // Takes 4 samples of the texture from different spots in the pixel. Very

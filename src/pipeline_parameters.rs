@@ -4,12 +4,13 @@ use std::mem;
 use std::mem::MaybeUninit;
 
 pub const MAX_TEXTURE_COUNT: u32 = 32; // Keep in sync with shaders/constants.glsl.
+pub const LIGHT_COUNT: usize = 16; // Keep in sync with shaders/constants.glsl.
 
 /// The per-frame uniform buffer.
 #[derive(Clone, Copy)]
 pub struct RenderSettings {
     // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
-    pub dummy_value: u32,
+    pub lights: [Vec4; LIGHT_COUNT],
 }
 
 unsafe impl bytemuck::Zeroable for RenderSettings {}
