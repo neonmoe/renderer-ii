@@ -73,8 +73,8 @@ impl<'a> Scene<'a> {
                     skinned_model.meshes.push((mesh.mesh, mesh.material));
                 } else {
                     let skin = &model.skins[skin_index];
-                    // TODO: Align each skeleton to VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment
-                    let joints_offset = self.skinned_mesh_joints_buffer.len() as u32;
+                    let joints_offset = crate::arena::align_up(self.skinned_mesh_joints_buffer.len() as u64, 256) as u32;
+                    self.skinned_mesh_joints_buffer.resize(joints_offset as usize, 0);
                     for joint in &skin.joints {
                         let animated_transform = animated_node_transforms[joint.node_index].unwrap_or(Mat4::IDENTITY);
                         let joint_transform = animated_transform * joint.inverse_bind_matrix;
