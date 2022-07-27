@@ -371,13 +371,6 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
     },
-    DescriptorSetLayoutParams {
-        binding: 6,
-        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-        descriptor_count: MAX_TEXTURE_COUNT,
-        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-    },
 ];
 
 static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
