@@ -3,7 +3,7 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use std::mem;
 use std::mem::MaybeUninit;
 
-pub const MAX_TEXTURE_COUNT: u32 = 32; // Keep in sync with shaders/constants.glsl.
+pub const MAX_TEXTURE_COUNT: u32 = 14; // Keep in sync with shaders/constants.glsl.
 pub const LIGHT_COUNT: usize = 16; // Keep in sync with shaders/constants.glsl.
 
 /// The per-frame uniform buffer.
