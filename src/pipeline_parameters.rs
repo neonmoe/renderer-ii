@@ -165,6 +165,35 @@ pub(crate) struct PipelineParameters {
     pub descriptor_sets: &'static [&'static [DescriptorSetLayoutParams]],
 }
 
+impl PipelineParameters {
+    fn get_max_per_stage_descriptors_of_type(&self, descriptor_type: vk::DescriptorType) -> u32 {
+        let mut frag_stage_descriptors = 0;
+        let mut vert_stage_descriptors = 0;
+        for descriptor_sets in self.descriptor_sets {
+            for params in *descriptor_sets {
+                if params.descriptor_type != descriptor_type {
+                    continue;
+                }
+                if params.stage_flags.contains(vk::ShaderStageFlags::FRAGMENT) {
+                    frag_stage_descriptors += params.descriptor_count;
+                }
+                if params.stage_flags.contains(vk::ShaderStageFlags::VERTEX) {
+                    vert_stage_descriptors += params.descriptor_count;
+                }
+            }
+        }
+        frag_stage_descriptors.max(vert_stage_descriptors)
+    }
+}
+
+pub fn get_max_per_stage_descriptors_of_type(descriptor_type: vk::DescriptorType) -> u32 {
+    PIPELINE_PARAMETERS
+        .iter()
+        .map(|params| params.get_max_per_stage_descriptors_of_type(descriptor_type))
+        .max()
+        .unwrap_or(0)
+}
+
 static INSTANCED_TRANSFORM_BINDING_0: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: 0,
     stride: mem::size_of::<Mat4>() as u32,
