@@ -157,7 +157,10 @@ impl Renderer {
             swapchain
                 .device()
                 .acquire_next_image(swapchain.inner(), u64::MAX, vk::Semaphore::null(), fence)
-                .map_err(RendererError::AcquireImage)
+                .map_err(|err| match err {
+                    err @ vk::Result::ERROR_OUT_OF_DATE_KHR => RendererError::SwapchainOutOfDate(err),
+                    err => RendererError::AcquireImage(err),
+                })
         }?;
 
         let fences = [self.frame_start_fence.inner, self.frame_end_fence.inner];
