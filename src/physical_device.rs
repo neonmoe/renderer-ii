@@ -1,4 +1,5 @@
 use crate::physical_device_features::{self, SupportedFeatures};
+use crate::pipeline_parameters::get_max_per_stage_descriptors_of_type;
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
@@ -20,6 +21,8 @@ pub enum PhysicalDeviceRejectionReason {
     VulkanVersion(u32, u32),
     #[error("physical device does not support all the required device features: {0:#?}")]
     DeviceRequirements(SupportedFeatures),
+    #[error("physical device only supports {1} {0} descriptors, but {2} are needed")]
+    DeviceLimits(&'static str, u32, u32),
     #[error("physical device does not support the device extension: {0}")]
     Extension(&'static str),
     #[error("the texture format {0:?} is not supported with flags {1:?}")]
@@ -237,7 +240,7 @@ fn filter_capable_device(
 
     // TODO: Compare PipelineParameters against maxPerStageDescriptor* fields in VkPhysicalDeviceLimits
     // - maxPerStageDescriptorSamplers (most definitely ok)
-    // - maxPerStageDescriptorUniformBuffers (probably fine)
+    // - maxPerStageDescriptorUniformBuffers (probably fine) (this was not fine! nvidia gtx 1060 only has 15!)
     // - maxPerStageDescriptorStorageBuffers (don't think these are used)
     // - maxPerStageDescriptorSampledImages (this will hit limits! MAX_TEXTURE_COUNT is a multiplier against this)
     //   Analysis of limits in https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxPerStageDescriptorSampledImages&platform=all
@@ -248,6 +251,26 @@ fn filter_capable_device(
     //   - The next datapoint is 8192, which contains old and low-end nvidia GPUs, plenty for anything.
     // - maxPerStageDescriptorStorageImages (don't think these are used)
     // - maxPerStageDescriptorInputAttachments (probably fine)
+    let req = get_max_per_stage_descriptors_of_type(vk::DescriptorType::SAMPLER);
+    let limit = properties.limits.max_per_stage_descriptor_samplers;
+    if req > limit {
+        return Ok(Err(PhysicalDeviceRejectionReason::DeviceLimits("sampler", limit, req)));
+    }
+    let req = get_max_per_stage_descriptors_of_type(vk::DescriptorType::UNIFORM_BUFFER);
+    let limit = properties.limits.max_per_stage_descriptor_uniform_buffers;
+    if req > limit {
+        return Ok(Err(PhysicalDeviceRejectionReason::DeviceLimits("uniform buffer", limit, req)));
+    }
+    let req = get_max_per_stage_descriptors_of_type(vk::DescriptorType::SAMPLED_IMAGE);
+    let limit = properties.limits.max_per_stage_descriptor_sampled_images;
+    if req > limit {
+        return Ok(Err(PhysicalDeviceRejectionReason::DeviceLimits("sampled image", limit, req)));
+    }
+    let req = get_max_per_stage_descriptors_of_type(vk::DescriptorType::INPUT_ATTACHMENT);
+    let limit = properties.limits.max_per_stage_descriptor_input_attachments;
+    if req > limit {
+        return Ok(Err(PhysicalDeviceRejectionReason::DeviceLimits("input attachment", limit, req)));
+    }
 
     if let (Some(graphics_queue_family), Some(surface_queue_family), Some(transfer_queue_family)) =
         (graphics_queue_family, surface_queue_family, transfer_queue_family)
