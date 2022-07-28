@@ -125,12 +125,8 @@ pub(crate) struct Material {
     pub occlusion_texture: Option<TextureInfo>,
     #[serde(rename = "emissiveTexture")]
     pub emissive_texture: Option<TextureInfo>,
-    #[serde(rename = "emissiveFactor")]
-    pub emissive_factor: Option<[f32; 3]>,
     #[serde(rename = "alphaMode", default)]
     pub alpha_mode: AlphaMode,
-    #[serde(rename = "alphaCutoff")]
-    pub alpha_cutoff: Option<f32>,
 }
 
 #[derive(Deserialize, PartialEq, Clone, Copy)]
@@ -151,12 +147,6 @@ impl Default for AlphaMode {
 
 #[derive(Deserialize)]
 pub(crate) struct PbrMetallicRoughness {
-    #[serde(rename = "baseColorFactor")]
-    pub base_color_factor: Option<[f32; 4]>,
-    #[serde(rename = "metallicFactor")]
-    pub metallic_factor: Option<f32>,
-    #[serde(rename = "roughnessFactor")]
-    pub roughness_factor: Option<f32>,
     #[serde(rename = "baseColorTexture")]
     pub base_color_texture: Option<TextureInfo>,
     #[serde(rename = "metallicRoughnessTexture")]

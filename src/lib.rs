@@ -38,7 +38,7 @@ mod framebuffers;
 pub use framebuffers::Framebuffers;
 
 mod descriptors;
-pub use descriptors::{AlphaMode, DescriptorError, Descriptors, GltfFactors, Material, PipelineSpecificData};
+pub use descriptors::{AlphaMode, DescriptorError, Descriptors, Material, PipelineSpecificData};
 
 mod device;
 pub use device::create_device;

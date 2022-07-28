@@ -12,8 +12,6 @@ use crate::vulkan_raii::{
 };
 use crate::{debug_utils, Instance, PhysicalDevice};
 use ash::vk;
-use bytemuck::{Pod, Zeroable};
-use glam::Vec4;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::rc::{Rc, Weak};
@@ -62,21 +60,6 @@ fn get_pipelines(data: &PipelineSpecificData, name: &str) -> impl Iterator<Item 
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct GltfFactors {
-    /// (r, g, b, a).
-    pub base_color: Vec4,
-    /// (r, g, b, _). Vec4 to make sure there's no padding/alignment issues.
-    pub emissive: Vec4,
-    /// (metallic, roughness, alpha_cutoff, _). Vec4 to make sure there's no padding.
-    pub metallic_roughness_alpha_cutoff: Vec4,
-}
-// Mat4's are Pods, therefore they are Zeroable, therefore this is too.
-unsafe impl Zeroable for GltfFactors {}
-// repr(c), the contents are Pods, and there's no padding.
-unsafe impl Pod for GltfFactors {}
-
 #[derive(Clone)]
 pub enum PipelineSpecificData {
     Gltf {
@@ -85,8 +68,6 @@ pub enum PipelineSpecificData {
         normal: Option<Rc<ImageView>>,
         occlusion: Option<Rc<ImageView>>,
         emissive: Option<Rc<ImageView>>,
-        /// (Buffer, offset, size) that contains a [GltfFactors].
-        factors: (Rc<Buffer>, vk::DeviceSize, vk::DeviceSize),
         alpha_mode: AlphaMode,
     },
 }
@@ -420,7 +401,6 @@ impl Descriptors {
                 normal,
                 occlusion,
                 emissive,
-                factors,
                 ..
             } => {
                 let images = [
@@ -435,8 +415,6 @@ impl Descriptors {
                     emissive.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.emissive).inner,
                 ];
                 self.set_uniform_images(pipeline, pending_writes, (1, 1, index), &images);
-                let factors = (factors.0.inner, factors.1, factors.2);
-                self.set_uniform_buffer(pipeline, pending_writes, (1, 6, index), factors);
             }
         }
     }

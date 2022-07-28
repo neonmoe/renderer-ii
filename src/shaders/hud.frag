@@ -8,12 +8,6 @@ layout(location = 0) in centroid vec2 in_uv;
 
 layout(set = 1, binding = 0) uniform sampler tex_sampler;
 layout(set = 1, binding = 1) uniform texture2D base_color[MAX_TEXTURE_COUNT];
-layout(set = 1, binding = 6) uniform GltfFactors {
-    vec4 base_color;
-    vec4 emissive;
-    vec4 metallic_roughness_alpha_cutoff;
-}
-factors[MAX_TEXTURE_COUNT];
 
 layout(push_constant) uniform PushConstantStruct { uint texture_index; }
 push_constant;
@@ -44,6 +38,5 @@ vec4 sample_texture(texture2D tex) {
 
 void main() {
     vec4 base_color = sample_texture(base_color[push_constant.texture_index]);
-    base_color *= factors[push_constant.texture_index].base_color;
     out_color = base_color;
 }
