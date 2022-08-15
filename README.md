@@ -19,18 +19,7 @@ triangulated). The original model is licensed CC-BY 4.0.
 
 - Rust and Cargo
 - SDL2 development libraries
-
-And if you don't have [shaderc](https://github.com/google/shaderc)
-installed where the shaderc rust crate can find it, the following:
-
-- Git
-- Python 3
-- C++11 compiler
-- Ninja (optional except for windows)
-
-See the documentation for the [shaderc](https://docs.rs/shaderc) and
-[sdl2](https://github.com/Rust-SDL2/rust-sdl2) crates for more info on
-the requirements.
+- Vulkan SDK (or `libvulkan-dev` or similar on linux)
 
 ### Building
 

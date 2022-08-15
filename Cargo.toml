@@ -10,7 +10,6 @@ thiserror = { version = "1.0" }
 ash = { version = "0.37", default-features = false, features = ["linked", "debug"] }
 ash-window = { version = "0.10" }
 raw-window-handle = { version = "0.3.4" }
-shaders = { path = "shaders" }
 glam = { version = "0.20", features = ["bytemuck"] }
 serde = { version = "1.0" }
 serde_derive = { version = "1.0" }
@@ -28,4 +27,4 @@ anyhow = { version = "1.0" }
 [features]
 profile-with-tracy = ["profiling/profile-with-tracy"]
 profile-with-tracing = ["profiling/profile-with-tracing"]
-vulkan-validation = ["shaders/generate-debug-info"]
+vulkan-validation = []

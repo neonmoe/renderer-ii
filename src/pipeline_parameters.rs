@@ -149,8 +149,8 @@ pub(crate) struct PipelineParameters {
     pub sample_shading: bool,
     pub min_sample_shading_factor: f32,
     pub subpass: u32,
-    pub vertex_shader: (&'static str, &'static [u32]),
-    pub fragment_shader: (&'static str, &'static [u32]),
+    pub vertex_shader: (&'static str, &'static [u8]),
+    pub fragment_shader: (&'static str, &'static [u8]),
     pub bindings: &'static [vk::VertexInputBindingDescription],
     pub attributes: &'static [vk::VertexInputAttributeDescription],
     pub descriptor_sets: &'static [&'static [DescriptorSetLayoutParams]],
@@ -330,6 +330,20 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
     },
 ];
 
+/// A hacky newtype to make sure the bytes are aligned for casting into
+/// `&[u32]`. `include_u32s!()` would be nice.
+#[repr(C, align(32))]
+struct AlignedBytes<const SIZE: usize>([u8; SIZE]);
+
+macro_rules! shader {
+    ($src_name:literal, $shader_name:literal) => {
+        (
+            include_str!(concat!("../shaders/glsl/", $src_name)),
+            &AlignedBytes(*include_bytes!(concat!("../shaders/spirv/", $shader_name, ".spv"))).0,
+        )
+    };
+}
+
 static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,
     blended: false,
@@ -338,8 +352,8 @@ static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     sample_shading: false,
     min_sample_shading_factor: 0.0,
     subpass: 0,
-    vertex_shader: shaders::include_spirv!("shaders/main.vert"),
-    fragment_shader: shaders::include_spirv!("shaders/main.frag"),
+    vertex_shader: shader!("main.vert", "main.vert"),
+    fragment_shader: shader!("main.frag", "main.frag"),
     bindings: &[
         INSTANCED_TRANSFORM_BINDING_0,
         POSITION_BINDING_1,
@@ -368,8 +382,8 @@ static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     sample_shading: false,
     min_sample_shading_factor: 0.0,
     subpass: 0,
-    vertex_shader: shaders::include_spirv!("shaders/main.vert", "SKINNED"),
-    fragment_shader: shaders::include_spirv!("shaders/main.frag", "SKINNED"),
+    vertex_shader: shader!("main.vert", "main-skinned.vert"),
+    fragment_shader: shader!("main.frag", "main-skinned.frag"),
     bindings: &[
         INSTANCED_TRANSFORM_BINDING_0,
         POSITION_BINDING_1,
@@ -432,8 +446,8 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     sample_shading: true,
     min_sample_shading_factor: 1.0,
     subpass: 1,
-    vertex_shader: shaders::include_spirv!("shaders/fullscreen.vert"),
-    fragment_shader: shaders::include_spirv!("shaders/render_res_pp.frag"),
+    vertex_shader: shader!("fullscreen.vert", "fullscreen.vert"),
+    fragment_shader: shader!("render_res_pp.frag", "render_res_pp.frag"),
     bindings: &[],
     attributes: &[],
     descriptor_sets: &[
