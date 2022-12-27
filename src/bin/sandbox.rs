@@ -420,6 +420,7 @@ fn fallible_main() -> anyhow::Result<()> {
         drop(assets_buffers_arena);
         drop(descriptors);
         device.destroy();
+        #[allow(clippy::drop_non_drop)]
         drop(device);
         drop(instance);
     }

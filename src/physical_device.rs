@@ -104,7 +104,7 @@ pub fn get_physical_devices(
                 vk::PhysicalDeviceType::CPU => 0,
                 _ => 0,
             };
-            let queue_score = |gfx, surf| if gfx == surf { 1 } else { 0 };
+            let queue_score = |gfx, surf| if gfx == surf { 2 } else { 0 };
             a_score = type_score(&a.properties) + queue_score(a.graphics_queue_family.index, a.surface_queue_family.index);
             b_score = type_score(&b.properties) + queue_score(b.graphics_queue_family.index, b.surface_queue_family.index);
         } else {
@@ -301,7 +301,7 @@ fn get_extensions(instance: &Instance, physical_device: vk::PhysicalDevice) -> V
 }
 
 fn get_device_name(properties: &vk::PhysicalDeviceProperties) -> std::borrow::Cow<'_, str> {
-    unsafe { CStr::from_ptr((&properties.device_name[..]).as_ptr()) }.to_string_lossy()
+    unsafe { CStr::from_ptr(properties.device_name[..].as_ptr()) }.to_string_lossy()
 }
 
 fn is_uncompressed_srgb(format: vk::Format) -> bool {

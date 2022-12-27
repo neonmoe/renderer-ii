@@ -307,7 +307,7 @@ fn create_pipelines(
         let color_blend_attachment_states = &color_blend_attachment_states_per_pipeline[pipeline];
         Ok(vk::PipelineColorBlendStateCreateInfo::builder()
             .logic_op_enable(false)
-            .attachments(&*color_blend_attachment_states)
+            .attachments(color_blend_attachment_states)
             .build())
     })?;
 

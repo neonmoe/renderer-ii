@@ -508,10 +508,10 @@ fn create_gltf(
                 .accessors
                 .get(sampler.input)
                 .ok_or(GltfLoadingError::Oob("animation sampler input accessor"))?;
-            if let Some(&min) = timestamp_accessor.min.get(0) {
+            if let Some(&min) = timestamp_accessor.min.first() {
                 start_time = Some(if let Some(min_) = start_time { min_.min(min) } else { min });
             }
-            if let Some(&max) = timestamp_accessor.max.get(0) {
+            if let Some(&max) = timestamp_accessor.max.first() {
                 end_time = Some(if let Some(max_) = end_time { max_.max(max) } else { max });
             }
 
@@ -673,7 +673,7 @@ fn create_gltf(
 }
 
 fn map_file<'a>(memmap_holder: &'a mut Option<Mmap>, path: &Path, range: Option<Range<usize>>) -> Result<&'a [u8], GltfLoadingError> {
-    let file = File::open(&path).map_err(|err| GltfLoadingError::OpenFile(err, path.to_owned()))?;
+    let file = File::open(path).map_err(|err| GltfLoadingError::OpenFile(err, path.to_owned()))?;
     let mut memmap_options = MmapOptions::new();
     if let Some(range) = range {
         memmap_options.offset(range.start as u64);

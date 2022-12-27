@@ -54,7 +54,7 @@ fn format_object_name(mut object_name: String) -> String {
                     object_name.remove(i);
                 } else {
                     // Everything else gets lowercased.
-                    (&mut object_name[i..i + char_len]).make_ascii_lowercase();
+                    object_name[i..i + char_len].make_ascii_lowercase();
                 }
                 break;
             }
