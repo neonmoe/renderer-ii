@@ -1,4 +1,4 @@
-#version 450
+// This file is included in some variants in the "variants" directory.
 
 layout(set = 0, binding = 0) uniform GlobalTransforms {
     mat4 proj;

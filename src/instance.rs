@@ -72,7 +72,7 @@ impl Instance {
             log::debug!("Instance extension (optional): VK_EXT_debug_utils");
         }
 
-        let create_info = vk::InstanceCreateInfo::builder()
+        let mut create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
             .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions);
@@ -84,12 +84,14 @@ impl Instance {
             vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION,
         ];
         let mut validation_features = vk::ValidationFeaturesEXT::builder().enabled_validation_features(&enabled_validation_features);
+        if validation_layer_enabled {
+            create_info = create_info.push_next(&mut validation_features);
+        }
 
-        let create_info = if validation_layer_enabled {
-            create_info.push_next(&mut validation_features)
-        } else {
-            create_info
-        };
+        let mut debug_utils_messenger_create_info = debug_utils::create_debug_utils_messenger_info();
+        if debug_utils_available {
+            create_info = create_info.push_next(&mut debug_utils_messenger_create_info);
+        }
 
         let instance = {
             profiling::scope!("vk::create_instance");
@@ -98,7 +100,8 @@ impl Instance {
 
         let debug_utils_messenger = if debug_utils_available {
             debug_utils::init_debug_utils(&entry, &instance);
-            debug_utils::create_debug_utils_messenger(&entry, &instance).ok()
+            let debug_utils = ash::extensions::ext::DebugUtils::new(&entry, &instance);
+            unsafe { debug_utils.create_debug_utils_messenger(&debug_utils_messenger_create_info, None) }.ok()
         } else {
             None
         };

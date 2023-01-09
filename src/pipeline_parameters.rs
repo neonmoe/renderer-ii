@@ -336,9 +336,9 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
 struct AlignedBytes<const SIZE: usize>([u8; SIZE]);
 
 macro_rules! shader {
-    ($src_name:literal, $shader_name:literal) => {
+    ($shader_name:literal) => {
         (
-            include_str!(concat!("../shaders/glsl/", $src_name)),
+            $shader_name,
             &AlignedBytes(*include_bytes!(concat!("../shaders/spirv/", $shader_name, ".spv"))).0,
         )
     };
@@ -352,8 +352,8 @@ static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     sample_shading: false,
     min_sample_shading_factor: 0.0,
     subpass: 0,
-    vertex_shader: shader!("main.vert", "main.vert"),
-    fragment_shader: shader!("main.frag", "main.frag"),
+    vertex_shader: shader!("variants/main-static.vert"),
+    fragment_shader: shader!("main.frag"),
     bindings: &[
         INSTANCED_TRANSFORM_BINDING_0,
         POSITION_BINDING_1,
@@ -382,8 +382,8 @@ static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     sample_shading: false,
     min_sample_shading_factor: 0.0,
     subpass: 0,
-    vertex_shader: shader!("main.vert", "main-skinned.vert"),
-    fragment_shader: shader!("main.frag", "main-skinned.frag"),
+    vertex_shader: shader!("variants/main-skinned.vert"),
+    fragment_shader: shader!("main.frag"),
     bindings: &[
         INSTANCED_TRANSFORM_BINDING_0,
         POSITION_BINDING_1,
@@ -446,8 +446,8 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     sample_shading: true,
     min_sample_shading_factor: 1.0,
     subpass: 1,
-    vertex_shader: shader!("fullscreen.vert", "fullscreen.vert"),
-    fragment_shader: shader!("render_res_pp.frag", "render_res_pp.frag"),
+    vertex_shader: shader!("fullscreen.vert"),
+    fragment_shader: shader!("render_res_pp.frag"),
     bindings: &[],
     attributes: &[],
     descriptor_sets: &[

@@ -31,7 +31,7 @@ fn name_vulkan_object_impl(device: &Device, object_type: vk::ObjectType, object_
             p_object_name: name.as_ptr(),
             ..Default::default()
         };
-        let _ = unsafe { debug_utils.debug_utils_set_object_name(device.handle(), &name_info) };
+        let _ = unsafe { debug_utils.set_debug_utils_object_name(device.handle(), &name_info) };
     }
 }
 
@@ -64,7 +64,7 @@ fn format_object_name(mut object_name: String) -> String {
 }
 
 #[profiling::function]
-pub(crate) fn create_debug_utils_messenger(entry: &Entry, instance: &Instance) -> Result<vk::DebugUtilsMessengerEXT, vk::Result> {
+pub(crate) fn create_debug_utils_messenger_info() -> vk::DebugUtilsMessengerCreateInfoEXT {
     let message_severity = vk::DebugUtilsMessageSeverityFlagsEXT::INFO
         | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
         | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
@@ -72,14 +72,10 @@ pub(crate) fn create_debug_utils_messenger(entry: &Entry, instance: &Instance) -
     let message_type = vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
         | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
         | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION;
-    let debug_utils = DebugUtils::new(entry, instance);
-    let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
-        message_severity,
-        message_type,
-        pfn_user_callback: Some(debug_utils_messenger_callback),
-        ..Default::default()
-    };
-    unsafe { debug_utils.create_debug_utils_messenger(&create_info, None) }
+    *vk::DebugUtilsMessengerCreateInfoEXT::builder()
+        .message_severity(message_severity)
+        .message_type(message_type)
+        .pfn_user_callback(Some(debug_utils_messenger_callback))
 }
 
 #[profiling::function]

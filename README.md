@@ -30,6 +30,15 @@ cargo build --release
 This will result in an executable named "sandbox" in
 [target/release/](target/release/).
 
+### Shader compilation
+
+Note that compiled SPIR-V versions of the shaders are included in the
+repository, so you don't need a glsl-to-spirv toolchain just to build the
+library. If you edit the GLSL shader files in `shaders/glsl`, the build script
+will try to build them into SPIR-V using `glslc`, in which case you'll need
+[shaderc][shaderc] to be installed to build the library.
+
 [sponza]: https://github.com/KhronosGroup/glTF-Sample-Models/tree/master/2.0/Sponza
 [smol-ame]: https://sketchfab.com/3d-models/smol-ame-in-an-upcycled-terrarium-hololiveen-490cecc249d242188fda5ad3160a4b24
 [seafoam]: https://sketchfab.com/seafoam
+[shaderc]: https://github.com/google/shaderc
