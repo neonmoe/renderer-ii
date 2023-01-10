@@ -1,5 +1,5 @@
 use crate::physical_device_features::{self, SupportedFeatures};
-use crate::pipeline_parameters::get_max_per_stage_descriptors_of_type;
+use crate::pipeline_parameters::limits::{self, PhysicalDeviceLimitBreak};
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
@@ -8,27 +8,21 @@ use std::ffi::CStr;
 pub const HDR_COLOR_ATTACHMENT_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 
 #[derive(thiserror::Error, Debug)]
-pub enum PhysicalDeviceEnumerationError {
+pub enum PhysicalDeviceRejectionReason {
     #[error("failed to enumerate vulkan physical devices")]
     Enumeration(#[source] vk::Result),
     #[error("failed to query surface support")]
     SurfaceQuery(#[source] vk::Result),
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum PhysicalDeviceRejectionReason {
     #[error("required vulkan version {0}.{1} is not supported")]
     VulkanVersion(u32, u32),
-    #[error("physical device does not support all the required device features: {0:#?}")]
+    #[error("graphics driver does not support all of the required features: {0:#?}")]
     DeviceRequirements(SupportedFeatures),
-    #[error("physical device only supports {1} {0} descriptors, but {2} are needed")]
-    DeviceLimits(&'static str, u32, u32),
-    #[error("physical device does not support the device extension: {0}")]
+    #[error("graphics driver does not support the device extension: {0}")]
     Extension(&'static str),
+    #[error("gpu does not support the amount of resources needed")]
+    DeviceLimits(#[from] PhysicalDeviceLimitBreak),
     #[error("the texture format {0:?} is not supported with flags {1:?}")]
     TextureFormatSupport(vk::Format, vk::FormatFeatureFlags),
-    #[error("the physical device does not support {0:?} nor {1:?}, which should not be possible according to the spec")]
-    DepthFormatSupport(vk::Format, vk::Format),
     #[error("graphics, surface, or transfer queue family not found")]
     QueueFamilyMissing,
 }
@@ -85,17 +79,20 @@ pub fn get_physical_devices(
     entry: &Entry,
     instance: &Instance,
     surface: vk::SurfaceKHR,
-) -> Result<Vec<Result<PhysicalDevice, PhysicalDeviceRejectionReason>>, PhysicalDeviceEnumerationError> {
+) -> Vec<Result<PhysicalDevice, PhysicalDeviceRejectionReason>> {
     profiling::scope!("physical device enumeration");
     let surface_ext = khr::Surface::new(entry, instance);
     let physical_devices = {
         profiling::scope!("vk::enumerate_physical_devices");
-        unsafe { instance.enumerate_physical_devices() }.map_err(PhysicalDeviceEnumerationError::Enumeration)?
+        match unsafe { instance.enumerate_physical_devices() } {
+            Ok(pds) => pds,
+            Err(err) => return vec![Err(PhysicalDeviceRejectionReason::Enumeration(err))],
+        }
     };
     let mut enumerated_physical_devices = physical_devices
         .into_iter()
         .map(|physical_device| filter_capable_device(instance, &surface_ext, surface, physical_device))
-        .collect::<Result<Vec<Result<_, PhysicalDeviceRejectionReason>>, PhysicalDeviceEnumerationError>>()?;
+        .collect::<Vec<Result<_, PhysicalDeviceRejectionReason>>>();
     enumerated_physical_devices.sort_by(|a, b| {
         let a_score;
         let b_score;
@@ -116,7 +113,7 @@ pub fn get_physical_devices(
         }
         b_score.cmp(&a_score)
     });
-    Ok(enumerated_physical_devices)
+    enumerated_physical_devices
 }
 
 fn filter_capable_device(
@@ -124,24 +121,24 @@ fn filter_capable_device(
     surface_ext: &khr::Surface,
     surface: vk::SurfaceKHR,
     physical_device: vk::PhysicalDevice,
-) -> Result<Result<PhysicalDevice, PhysicalDeviceRejectionReason>, PhysicalDeviceEnumerationError> {
+) -> Result<PhysicalDevice, PhysicalDeviceRejectionReason> {
     profiling::scope!("physical device capability checks");
 
-    let properties = unsafe {
+    let props = unsafe {
         profiling::scope!("vk::get_physical_device_properties");
         instance.get_physical_device_properties(physical_device)
     };
-    if properties.api_version < crate::instance::REQUIRED_VULKAN_VERSION {
-        return Ok(Err(PhysicalDeviceRejectionReason::VulkanVersion(1, 2)));
+    if props.api_version < crate::instance::REQUIRED_VULKAN_VERSION {
+        return Err(PhysicalDeviceRejectionReason::VulkanVersion(1, 2));
     };
 
     let extensions = get_extensions(instance, physical_device);
     if extensions.iter().all(|s| s != "VK_KHR_swapchain") {
-        return Ok(Err(PhysicalDeviceRejectionReason::Extension("VK_KHR_swapchain")));
+        return Err(PhysicalDeviceRejectionReason::Extension("VK_KHR_swapchain"));
     }
 
     if let Err(reqs) = physical_device_features::has_required_features(instance, physical_device) {
-        return Ok(Err(PhysicalDeviceRejectionReason::DeviceRequirements(reqs)));
+        return Err(PhysicalDeviceRejectionReason::DeviceRequirements(reqs));
     }
 
     let queue_families = unsafe {
@@ -178,7 +175,7 @@ fn filter_capable_device(
         }
     }
 
-    let format_supported = |format: vk::Format, flags: vk::FormatFeatureFlags| -> Result<(), PhysicalDeviceRejectionReason> {
+    let require_format = |format: vk::Format, flags: vk::FormatFeatureFlags| -> Result<(), PhysicalDeviceRejectionReason> {
         let format_properties = unsafe {
             profiling::scope!("vk::get_physical_device_format_properties");
             instance.get_physical_device_format_properties(physical_device, format)
@@ -192,43 +189,32 @@ fn filter_capable_device(
 
     let texture_usage_features =
         vk::FormatFeatureFlags::SAMPLED_IMAGE | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR | vk::FormatFeatureFlags::TRANSFER_DST;
-    if let Err(err) = format_supported(vk::Format::R8G8B8A8_SRGB, texture_usage_features) // Uncompressed textures
-        .and(format_supported(vk::Format::R8G8B8A8_UNORM, texture_usage_features)) // Uncompressed textures
-        .and(format_supported(vk::Format::R8G8B8A8_SNORM, texture_usage_features)) // Uncompressed textures
-        .and(format_supported(vk::Format::BC6H_SFLOAT_BLOCK, texture_usage_features)) // Compressed textures
-        .and(format_supported(vk::Format::BC6H_UFLOAT_BLOCK, texture_usage_features)) // Compressed textures
-        .and(format_supported(vk::Format::BC7_UNORM_BLOCK, texture_usage_features)) // Compressed textures
-        .and(format_supported(vk::Format::BC7_SRGB_BLOCK, texture_usage_features)) // Compressed textures
-        .and(format_supported(
-            // HDR color attachments (needs to have values above 1.0)
-            HDR_COLOR_ATTACHMENT_FORMAT,
-            vk::FormatFeatureFlags::COLOR_ATTACHMENT,
-        ))
-    {
-        return Ok(Err(err));
-    }
+    require_format(vk::Format::R8G8B8A8_SRGB, texture_usage_features)?; // Uncompressed textures
+    require_format(vk::Format::R8G8B8A8_UNORM, texture_usage_features)?; // Uncompressed textures
+    require_format(vk::Format::R8G8B8A8_SNORM, texture_usage_features)?; // Uncompressed textures
+    require_format(vk::Format::BC6H_SFLOAT_BLOCK, texture_usage_features)?; // Compressed textures
+    require_format(vk::Format::BC6H_UFLOAT_BLOCK, texture_usage_features)?; // Compressed textures
+    require_format(vk::Format::BC7_UNORM_BLOCK, texture_usage_features)?; // Compressed textures
+    require_format(vk::Format::BC7_SRGB_BLOCK, texture_usage_features)?; // Compressed textures
+    require_format(HDR_COLOR_ATTACHMENT_FORMAT, vk::FormatFeatureFlags::COLOR_ATTACHMENT)?; // HDR color attachments
 
     // From the spec:
     // VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT feature...
     // ...must be supported for at least one of VK_FORMAT_D24_UNORM_S8_UINT and VK_FORMAT_D32_SFLOAT_S8_UINT.
     let depth_formats = [vk::Format::D24_UNORM_S8_UINT, vk::Format::D32_SFLOAT_S8_UINT];
-    let depth_format = if format_supported(depth_formats[0], vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT).is_ok() {
+    let depth_format = if require_format(depth_formats[0], vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT).is_ok() {
         depth_formats[0]
-    } else if format_supported(depth_formats[1], vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT).is_ok() {
-        depth_formats[1]
     } else {
-        return Ok(Err(PhysicalDeviceRejectionReason::DepthFormatSupport(
-            depth_formats[0],
-            depth_formats[1],
-        )));
+        depth_formats[1]
     };
 
     let (swapchain_format, swapchain_color_space) = {
         let surface_formats = unsafe {
             profiling::scope!("vk::get_physical_device_surface_formats");
-            surface_ext
-                .get_physical_device_surface_formats(physical_device, surface)
-                .map_err(PhysicalDeviceEnumerationError::SurfaceQuery)?
+            match surface_ext.get_physical_device_surface_formats(physical_device, surface) {
+                Ok(fmts) => fmts,
+                Err(err) => return Err(PhysicalDeviceRejectionReason::SurfaceQuery(err)),
+            }
         };
         if let Some(format) = surface_formats.iter().find(|format| is_uncompressed_srgb(format.format)) {
             (format.format, format.color_space)
@@ -238,45 +224,32 @@ fn filter_capable_device(
         }
     };
 
-    // TODO: Compare PipelineParameters against maxPerStageDescriptor* fields in VkPhysicalDeviceLimits
-    // - maxPerStageDescriptorSamplers (most definitely ok)
-    // - maxPerStageDescriptorUniformBuffers (probably fine) (this was not fine! nvidia gtx 1060 only has 15!)
-    // - maxPerStageDescriptorStorageBuffers (don't think these are used)
-    // - maxPerStageDescriptorSampledImages (this will hit limits! MAX_TEXTURE_COUNT is a multiplier against this)
-    //   Analysis of limits in https://vulkan.gpuinfo.org/displaydevicelimit.php?name=maxPerStageDescriptorSampledImages&platform=all
-    //   - sub-128 values (so >25ish MAX_TEXTURE_COUNT) are pretty much only mobile platforms
-    //   - 128 lists phones, llvmpipe and Apple M1. None of these are applicable on Windows, the largest audience.
-    //   - After that there's 200, which includes many integrated intel GPUs. Probably a good low spec target.
-    //   - 256 is just phones.
-    //   - The next datapoint is 8192, which contains old and low-end nvidia GPUs, plenty for anything.
-    // - maxPerStageDescriptorStorageImages (don't think these are used)
-    // - maxPerStageDescriptorInputAttachments (probably fine)
-    let req = get_max_per_stage_descriptors_of_type(vk::DescriptorType::SAMPLER);
-    let limit = properties.limits.max_per_stage_descriptor_samplers;
-    if req > limit {
-        return Ok(Err(PhysicalDeviceRejectionReason::DeviceLimits("sampler", limit, req)));
-    }
-    let req = get_max_per_stage_descriptors_of_type(vk::DescriptorType::UNIFORM_BUFFER);
-    let limit = properties.limits.max_per_stage_descriptor_uniform_buffers;
-    if req > limit {
-        return Ok(Err(PhysicalDeviceRejectionReason::DeviceLimits("uniform buffer", limit, req)));
-    }
-    let req = get_max_per_stage_descriptors_of_type(vk::DescriptorType::SAMPLED_IMAGE);
-    let limit = properties.limits.max_per_stage_descriptor_sampled_images;
-    if req > limit {
-        return Ok(Err(PhysicalDeviceRejectionReason::DeviceLimits("sampled image", limit, req)));
-    }
-    let req = get_max_per_stage_descriptors_of_type(vk::DescriptorType::INPUT_ATTACHMENT);
-    let limit = properties.limits.max_per_stage_descriptor_input_attachments;
-    if req > limit {
-        return Ok(Err(PhysicalDeviceRejectionReason::DeviceLimits("input attachment", limit, req)));
+    // TODO: Debugging limits based on spec minimums / manually chosen higher limits
+    limits::bound_descriptor_sets(props.limits.max_bound_descriptor_sets)?;
+    limits::per_stage_resources(props.limits.max_per_stage_resources)?;
+    {
+        use vk::DescriptorType as D;
+        limits::per_stage_descriptors(D::SAMPLER, props.limits.max_per_stage_descriptor_samplers)?;
+        limits::per_stage_descriptors(D::UNIFORM_BUFFER, props.limits.max_per_stage_descriptor_uniform_buffers)?;
+        limits::per_stage_descriptors(D::STORAGE_BUFFER, props.limits.max_per_stage_descriptor_storage_buffers)?;
+        limits::per_stage_descriptors(D::SAMPLED_IMAGE, props.limits.max_per_stage_descriptor_sampled_images)?;
+        limits::per_stage_descriptors(D::STORAGE_IMAGE, props.limits.max_per_stage_descriptor_storage_images)?;
+        limits::per_stage_descriptors(D::INPUT_ATTACHMENT, props.limits.max_per_stage_descriptor_input_attachments)?;
+        limits::per_set_descriptors(D::SAMPLER, props.limits.max_descriptor_set_samplers)?;
+        limits::per_set_descriptors(D::UNIFORM_BUFFER, props.limits.max_descriptor_set_uniform_buffers)?;
+        limits::per_set_descriptors(D::UNIFORM_BUFFER_DYNAMIC, props.limits.max_descriptor_set_uniform_buffers_dynamic)?;
+        limits::per_set_descriptors(D::STORAGE_BUFFER, props.limits.max_descriptor_set_storage_buffers)?;
+        limits::per_set_descriptors(D::STORAGE_BUFFER_DYNAMIC, props.limits.max_descriptor_set_storage_buffers_dynamic)?;
+        limits::per_set_descriptors(D::SAMPLED_IMAGE, props.limits.max_descriptor_set_sampled_images)?;
+        limits::per_set_descriptors(D::STORAGE_IMAGE, props.limits.max_descriptor_set_storage_images)?;
+        limits::per_set_descriptors(D::INPUT_ATTACHMENT, props.limits.max_descriptor_set_input_attachments)?;
     }
 
     if let (Some(graphics_queue_family), Some(surface_queue_family), Some(transfer_queue_family)) =
         (graphics_queue_family, surface_queue_family, transfer_queue_family)
     {
-        let name = get_device_name(&properties);
-        let pd_type = match properties.device_type {
+        let name = get_device_name(&props);
+        let pd_type = match props.device_type {
             vk::PhysicalDeviceType::DISCRETE_GPU => " (Discrete GPU)",
             vk::PhysicalDeviceType::INTEGRATED_GPU => " (Integrated GPU)",
             vk::PhysicalDeviceType::VIRTUAL_GPU => " (vGPU)",
@@ -284,13 +257,13 @@ fn filter_capable_device(
             _ => "",
         };
         let name = format!("{}{}", name, pd_type);
-        let uuid = GpuId(properties.pipeline_cache_uuid);
+        let uuid = GpuId(props.pipeline_cache_uuid);
 
-        Ok(Ok(PhysicalDevice {
+        Ok(PhysicalDevice {
             name,
             uuid,
             inner: physical_device,
-            properties,
+            properties: props,
             graphics_queue_family,
             surface_queue_family,
             transfer_queue_family,
@@ -298,9 +271,9 @@ fn filter_capable_device(
             swapchain_color_space,
             depth_format,
             extensions,
-        }))
+        })
     } else {
-        Ok(Err(PhysicalDeviceRejectionReason::QueueFamilyMissing))
+        Err(PhysicalDeviceRejectionReason::QueueFamilyMissing)
     }
 }
 

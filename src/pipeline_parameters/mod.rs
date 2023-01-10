@@ -3,6 +3,8 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use std::mem;
 use std::mem::MaybeUninit;
 
+pub mod limits;
+
 pub const MAX_TEXTURE_COUNT: u32 = 32; // Keep in sync with shaders/constants.glsl.
 
 /// The per-frame uniform buffer.
@@ -163,35 +165,6 @@ pub(crate) struct PipelineParameters {
     pub bindings: &'static [vk::VertexInputBindingDescription],
     pub attributes: &'static [vk::VertexInputAttributeDescription],
     pub descriptor_sets: &'static [&'static [DescriptorSetLayoutParams]],
-}
-
-impl PipelineParameters {
-    fn get_max_per_stage_descriptors_of_type(&self, descriptor_type: vk::DescriptorType) -> u32 {
-        let mut frag_stage_descriptors = 0;
-        let mut vert_stage_descriptors = 0;
-        for descriptor_sets in self.descriptor_sets {
-            for params in *descriptor_sets {
-                if params.descriptor_type != descriptor_type {
-                    continue;
-                }
-                if params.stage_flags.contains(vk::ShaderStageFlags::FRAGMENT) {
-                    frag_stage_descriptors += params.descriptor_count;
-                }
-                if params.stage_flags.contains(vk::ShaderStageFlags::VERTEX) {
-                    vert_stage_descriptors += params.descriptor_count;
-                }
-            }
-        }
-        frag_stage_descriptors.max(vert_stage_descriptors)
-    }
-}
-
-pub fn get_max_per_stage_descriptors_of_type(descriptor_type: vk::DescriptorType) -> u32 {
-    PIPELINE_PARAMETERS
-        .iter()
-        .map(|params| params.get_max_per_stage_descriptors_of_type(descriptor_type))
-        .max()
-        .unwrap_or(0)
 }
 
 static INSTANCED_TRANSFORM_BINDING_0: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
@@ -374,7 +347,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
 struct AlignedBytes<const SIZE: usize>([u8; SIZE]);
 macro_rules! shader {
     ($shader_name:literal) => {{
-        static ALIGNED: &[u8] = &AlignedBytes(*include_bytes!(concat!("../shaders/spirv/", $shader_name, ".spv"))).0;
+        static ALIGNED: &[u8] = &AlignedBytes(*include_bytes!(concat!("../../shaders/spirv/", $shader_name, ".spv"))).0;
         ($shader_name, ALIGNED)
     }};
 }

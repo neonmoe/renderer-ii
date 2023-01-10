@@ -62,7 +62,7 @@ fn fallible_main() -> anyhow::Result<()> {
 
     let instance = neonvk::Instance::new(&window)?;
     let surface = neonvk::create_surface(&instance.entry, &instance.inner, &window)?;
-    let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner)?;
+    let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner);
     let physical_device = physical_devices.remove(0)?;
     let mut device = neonvk::create_device(&instance.inner, &physical_device)?;
     let mut descriptors = neonvk::Descriptors::new(&instance, &device, &physical_device)?;
