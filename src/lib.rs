@@ -68,6 +68,8 @@ pub mod display_utils {
 
 pub mod image_loading;
 
+pub mod include_words;
+
 mod instance;
 pub use instance::Instance;
 

@@ -13,6 +13,7 @@ pub enum PhysicalDeviceLimitBreak {
     DescriptorPerStageTotalLimit(u32, u32),
     #[error("physical device only supports {1} {0:?} descriptors per pipeline layout, but {2} are needed")]
     DescriptorPerSetLimit(vk::DescriptorType, u32, u32),
+    // TODO: Other limits than descriptors
     #[error("physical device only supports {0} vertex input attributes, but {1} are needed")]
     VertexInputAttributes(u32, u32),
 }

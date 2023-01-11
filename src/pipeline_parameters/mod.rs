@@ -142,13 +142,23 @@ pub(crate) struct DescriptorSetLayoutParams {
     pub binding_flags: vk::DescriptorBindingFlags,
 }
 
+/// Shader file names paired with the SPIR-V binaries. There are variants for
+/// cases where a different shader is used based on other pipeline parameters,
+/// e.g. single-sample and multi-sample.
 #[derive(Clone, Copy)]
 pub(crate) enum Shader {
-    SingleVariant((&'static str, &'static [u8])),
+    SingleVariant((&'static str, &'static [u32])),
     MsaaVariants {
-        single_sample: (&'static str, &'static [u8]),
-        multi_sample: (&'static str, &'static [u8]),
+        single_sample: (&'static str, &'static [u32]),
+        multi_sample: (&'static str, &'static [u32]),
     },
+}
+macro_rules! shader {
+    ($shader_name:literal) => {{
+        use crate::include_words;
+        static SPIRV: &[u32] = include_words!(concat!("../../shaders/spirv/", $shader_name, ".spv"));
+        ($shader_name, SPIRV)
+    }};
 }
 
 #[derive(Clone, Copy)]
@@ -340,17 +350,6 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
     },
 ];
-
-/// A hacky newtype to make sure the bytes are aligned for casting into
-/// `&[u32]`. `include_u32s!()` would be nice.
-#[repr(C, align(32))]
-struct AlignedBytes<const SIZE: usize>([u8; SIZE]);
-macro_rules! shader {
-    ($shader_name:literal) => {{
-        static ALIGNED: &[u8] = &AlignedBytes(*include_bytes!(concat!("../../shaders/spirv/", $shader_name, ".spv"))).0;
-        ($shader_name, ALIGNED)
-    }};
-}
 
 static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,

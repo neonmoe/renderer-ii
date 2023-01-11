@@ -244,10 +244,10 @@ fn create_pipelines(
     mut pipeline_cache: Option<PipelineCache>,
 ) -> Result<(Vec<vk::Pipeline>, Option<PipelineCache>), PipelineCreationError> {
     let mut all_shader_modules = HashMap::with_capacity(PIPELINE_PARAMETERS.len() * 2);
-    let mut create_shader_module = |(filename, spirv): (&'static str, &'static [u8])| -> Result<vk::ShaderModule, PipelineCreationError> {
+    let mut create_shader_module = |(filename, spirv): (&'static str, &'static [u32])| -> Result<vk::ShaderModule, PipelineCreationError> {
         *all_shader_modules.entry((filename, spirv)).or_insert_with(|| {
             // TODO: What to do with big-endian systems? Re: spirv consists of u32s.
-            let create_info = vk::ShaderModuleCreateInfo::builder().code(bytemuck::cast_slice(spirv));
+            let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
             let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(PipelineCreationError::ShaderModule)?;
             debug_utils::name_vulkan_object(device, shader_module, format_args!("{}", filename));
             Ok(shader_module)

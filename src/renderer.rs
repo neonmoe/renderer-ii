@@ -52,7 +52,7 @@ pub enum RendererError {
     CommandBufferEnd(#[source] vk::Result),
 }
 
-/// Get from [Gpu::wait_frame].
+/// Get from [Renderer::wait_frame].
 pub struct FrameIndex {
     index: usize,
 }
