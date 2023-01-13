@@ -5,7 +5,7 @@ use crate::{Animation, Gltf, Material, PipelineIndex};
 use glam::Mat4;
 use std::collections::HashMap;
 
-mod camera;
+pub(crate) mod camera;
 pub use camera::Camera;
 
 pub(crate) struct SkinnedModel<'a> {
@@ -73,7 +73,9 @@ impl<'a> Scene<'a> {
                     skinned_model.meshes.push((mesh.mesh, mesh.material));
                 } else {
                     let skin = &model.skins[skin_index];
-                    let joints_offset = crate::arena::align_up(self.skinned_mesh_joints_buffer.len() as u64, 256) as u32;
+                    // TODO: Use the real uniform buffer offset alignment value from physical device limits
+                    let joints_alignment = 256; // The accurate number would be VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment
+                    let joints_offset = crate::arena::align_up(self.skinned_mesh_joints_buffer.len() as u64, joints_alignment) as u32;
                     self.skinned_mesh_joints_buffer.resize(joints_offset as usize, 0);
                     for joint in &skin.joints {
                         let animated_transform = animated_node_transforms[joint.node_index].unwrap_or(Mat4::IDENTITY);

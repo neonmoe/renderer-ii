@@ -1,5 +1,7 @@
 // This file is included in some variants in the "variants" directory.
 
+#include "constants.glsl"
+
 layout(set = 0, binding = 0) uniform GlobalTransforms {
     mat4 proj;
     mat4 view;
@@ -15,7 +17,7 @@ layout(location = 7) in vec4 in_tangent;
 layout(location = 8) in uvec4 in_joints;
 layout(location = 9) in vec4 in_weights;
 
-layout(set = 2, binding = 0) uniform Bone { mat4 bones[256]; }
+layout(set = 2, binding = 0) uniform Bone { mat4 bones[MAX_BONE_COUNT]; }
 skeleton;
 #endif
 

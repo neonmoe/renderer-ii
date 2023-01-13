@@ -1,7 +1,7 @@
 use crate::arena::VulkanArenaError;
 use crate::debug_utils;
 use crate::descriptors::Descriptors;
-use crate::pipeline_parameters::{MaterialPushConstants, PipelineMap, RenderSettingsPushConstants};
+use crate::pipeline_parameters::{MaterialPushConstants, PipelineMap, RenderSettings, MAX_BONE_COUNT};
 use crate::scene::{SkinnedModel, StaticMeshMap};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use crate::{ForBuffers, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
@@ -205,17 +205,15 @@ impl Renderer {
         let global_transforms_buffer = create_uniform_buffer(&mut self.temp_arena, global_transforms, "view+proj matrices")
             .map_err(RendererError::CameraTransformUniformCreation)?;
 
-        let render_settings = &[RenderSettingsPushConstants { debug_value }];
+        let render_settings = &[RenderSettings { debug_value }];
         let render_settings_buffer = create_uniform_buffer(&mut self.temp_arena, render_settings, "render settings")
             .map_err(RendererError::RenderSettingsUniformCreation)?;
 
         let mut skinned_mesh_joints = scene.skinned_mesh_joints_buffer;
-        // The joints arrays in glsl are 256 long, but the actual memory cuts
-        // off where the joints end for any particular skeleton. To appease the
-        // requirements on dynamic uniform buffers, the buffer still needs to be
-        // 256. So just pad it out by 256, so that the last skeleton has >256
-        // bones worth of backing buffer space.
-        let empty_full_length_skeleton = &[Mat4::ZERO; 256];
+        // The joint buffer needs to have backing memory for the entire uniform
+        // buffer's length at all offsets, so without this padding, the last
+        // (few) skeletons would overflow the buffer's end.
+        let empty_full_length_skeleton = &[Mat4::ZERO; MAX_BONE_COUNT as usize];
         skinned_mesh_joints.extend_from_slice(bytemuck::cast_slice(empty_full_length_skeleton));
         let skinned_mesh_joints_buffer = create_uniform_buffer(&mut self.temp_arena, &skinned_mesh_joints, "joint transforms")
             .map_err(RendererError::JointTransformUniformCreation)?;

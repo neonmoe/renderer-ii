@@ -3,7 +3,7 @@ use crate::gltf::gltf_json;
 use crate::image_loading::{ImageLoadingError, PbrDefaults};
 use crate::memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use crate::pipeline_parameters::{
-    DescriptorSetLayoutParams, MaterialPushConstants, PipelineIndex, PipelineMap, PipelineParameters, MAX_TEXTURE_COUNT,
+    DescriptorSetLayoutParams, MaterialPushConstants, PipelineIndex, PipelineMap, PipelineParameters, MAX_BONE_COUNT, MAX_TEXTURE_COUNT,
     PIPELINE_PARAMETERS, SKINNED_PIPELINES,
 };
 use crate::uploader::{Uploader, UploaderError};
@@ -384,7 +384,9 @@ impl Descriptors {
         self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, 1, 0), render_settings_buffer);
 
         for pipeline in SKINNED_PIPELINES {
-            let bones_buffer_size = std::mem::size_of::<glam::Mat4>() as vk::DeviceSize * 256;
+            // NOTE: This is the size of just one buffer. The backing joints
+            // buffer is much longer, but it is offset with dynamic offsets.
+            let bones_buffer_size = std::mem::size_of::<glam::Mat4>() as vk::DeviceSize * MAX_BONE_COUNT as vk::DeviceSize;
             let skinned_mesh_joints_buffer = (skinned_mesh_joints_buffer.inner, 0, bones_buffer_size);
             self.set_uniform_buffer(pipeline, &mut pending_writes, (2, 0, 0), skinned_mesh_joints_buffer);
         }
@@ -394,6 +396,9 @@ impl Descriptors {
             self.material_updated_per_pipeline[*pipeline][*i as usize] = true;
         }
 
+        // NOTE: pending_writes owns the image/buffers that are pointed to by
+        // the write_descriptor_sets, and they need to be dropped only after
+        // update_descriptor_sets.
         let mut writes = Vec::with_capacity(pending_writes.len());
         for pending_write in &pending_writes {
             writes.push(pending_write.write_descriptor_set.unwrap());
@@ -467,6 +472,19 @@ impl Descriptors {
             _buffer_info: Some(descriptor_buffer_info),
             ..Default::default()
         });
+        if let Some(max_size) = params.descriptor_size {
+            if size > max_size {
+                log::warn!(
+                    "Writing {size} bytes to uniform buffer while the expected maximum size is {max_size} bytes! \
+                    (pipeline {pipeline:?} set {set} binding {binding} index {array_index})"
+                );
+            }
+        } else {
+            log::warn!(
+                "Uniform buffer descriptor is missing the descriptor_size hint! \
+                (pipeline {pipeline:?} set {set} binding {binding} index {array_index})"
+            );
+        }
     }
 
     /// Uploads the image_views to the given set, starting at

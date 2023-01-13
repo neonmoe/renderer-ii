@@ -1,21 +1,24 @@
+use crate::scene::camera::GlobalTransforms;
+use crate::GltfFactors;
 use ash::vk;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use std::mem;
 use std::mem::MaybeUninit;
 
+mod constants;
 pub mod limits;
 
-pub const MAX_TEXTURE_COUNT: u32 = 32; // Keep in sync with shaders/constants.glsl.
+pub use constants::*;
 
 /// The per-frame uniform buffer.
 #[derive(Clone, Copy)]
-pub struct RenderSettingsPushConstants {
+pub struct RenderSettings {
     // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
     pub debug_value: u32,
 }
 
-unsafe impl bytemuck::Zeroable for RenderSettingsPushConstants {}
-unsafe impl bytemuck::Pod for RenderSettingsPushConstants {}
+unsafe impl bytemuck::Zeroable for RenderSettings {}
+unsafe impl bytemuck::Pod for RenderSettings {}
 
 /// The per-material uniform buffer.
 #[derive(Clone, Copy)]
@@ -140,6 +143,11 @@ pub(crate) struct DescriptorSetLayoutParams {
     pub descriptor_count: u32,
     pub stage_flags: vk::ShaderStageFlags,
     pub binding_flags: vk::DescriptorBindingFlags,
+    /// Uniform and storage buffer size limit in bytes. This is used to check
+    /// that the hardware can support a descriptor containing a buffer this big
+    /// (maxUniformBufferRange and maxStorageBufferRange), and a warning is
+    /// emitted if the renderer uploads a buffer larger than this.
+    pub descriptor_size: Option<vk::DeviceSize>,
 }
 
 /// Shader file names paired with the SPIR-V binaries. There are variants for
@@ -289,6 +297,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::VERTEX,
         binding_flags: vk::DescriptorBindingFlags::empty(),
+        descriptor_size: Some(mem::size_of::<GlobalTransforms>() as vk::DeviceSize),
     },
     DescriptorSetLayoutParams {
         binding: 1,
@@ -296,6 +305,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::empty(),
+        descriptor_size: Some(mem::size_of::<RenderSettings>() as vk::DeviceSize),
     },
 ];
 
@@ -306,6 +316,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::empty(),
+        descriptor_size: None,
     },
     DescriptorSetLayoutParams {
         binding: 1,
@@ -313,6 +324,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+        descriptor_size: None,
     },
     DescriptorSetLayoutParams {
         binding: 2,
@@ -320,6 +332,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+        descriptor_size: None,
     },
     DescriptorSetLayoutParams {
         binding: 3,
@@ -327,6 +340,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+        descriptor_size: None,
     },
     DescriptorSetLayoutParams {
         binding: 4,
@@ -334,6 +348,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+        descriptor_size: None,
     },
     DescriptorSetLayoutParams {
         binding: 5,
@@ -341,6 +356,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+        descriptor_size: None,
     },
     DescriptorSetLayoutParams {
         binding: 6,
@@ -348,6 +364,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+        descriptor_size: Some(mem::size_of::<GltfFactors>() as vk::DeviceSize),
     },
 ];
 
@@ -421,6 +438,7 @@ static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::VERTEX,
             binding_flags: vk::DescriptorBindingFlags::empty(),
+            descriptor_size: Some(mem::size_of::<Mat4>() as vk::DeviceSize * MAX_BONE_COUNT as vk::DeviceSize),
         }],
     ],
 };
@@ -468,6 +486,7 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
             binding_flags: vk::DescriptorBindingFlags::empty(),
+            descriptor_size: None,
         }],
     ],
 };

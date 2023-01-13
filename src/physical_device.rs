@@ -123,6 +123,7 @@ fn filter_capable_device(
     physical_device: vk::PhysicalDevice,
 ) -> Result<PhysicalDevice, PhysicalDeviceRejectionReason> {
     profiling::scope!("physical device capability checks");
+    // TODO: Collect the rejection reasons and return a Vec instead of short-circuiting
 
     let props = unsafe {
         profiling::scope!("vk::get_physical_device_properties");
@@ -225,8 +226,15 @@ fn filter_capable_device(
     };
 
     // TODO: Debugging limits based on spec minimums / manually chosen higher limits
+    limits::uniform_buffer_range(props.limits.max_uniform_buffer_range)?;
+    limits::storage_buffer_range(props.limits.max_storage_buffer_range)?;
+    limits::push_constants_size(props.limits.max_push_constants_size)?;
     limits::bound_descriptor_sets(props.limits.max_bound_descriptor_sets)?;
     limits::per_stage_resources(props.limits.max_per_stage_resources)?;
+    limits::vertex_input_attributes(props.limits.max_vertex_input_attributes)?;
+    limits::vertex_input_bindings(props.limits.max_vertex_input_bindings)?;
+    limits::vertex_input_attribute_offset(props.limits.max_vertex_input_attribute_offset)?;
+    limits::vertex_input_binding_stride(props.limits.max_vertex_input_binding_stride)?;
     {
         use vk::DescriptorType as D;
         limits::per_stage_descriptors(D::SAMPLER, props.limits.max_per_stage_descriptor_samplers)?;
