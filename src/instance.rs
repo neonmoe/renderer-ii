@@ -17,21 +17,6 @@ pub enum InstanceCreationError {
 pub struct Instance {
     pub entry: Entry,
     pub inner: ash::Instance,
-    pub debug_utils_available: bool,
-    debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
-}
-
-impl Drop for Instance {
-    fn drop(&mut self) {
-        if let Some(debug_utils_messenger) = self.debug_utils_messenger.take() {
-            debug_utils::destroy_debug_utils_messenger(&self.entry, &self.inner, debug_utils_messenger);
-        }
-
-        {
-            profiling::scope!("destroy vulkan instance");
-            unsafe { self.inner.destroy_instance(None) };
-        }
-    }
 }
 
 impl Instance {
@@ -98,20 +83,13 @@ impl Instance {
             unsafe { entry.create_instance(&create_info, None) }.map_err(InstanceCreationError::InstanceCreation)?
         };
 
-        let debug_utils_messenger = if debug_utils_available {
+        if debug_utils_available {
             debug_utils::init_debug_utils(&entry, &instance);
             let debug_utils = ash::extensions::ext::DebugUtils::new(&entry, &instance);
-            unsafe { debug_utils.create_debug_utils_messenger(&debug_utils_messenger_create_info, None) }.ok()
-        } else {
-            None
-        };
+            let _ = unsafe { debug_utils.create_debug_utils_messenger(&debug_utils_messenger_create_info, None) };
+        }
 
-        Ok(Instance {
-            entry,
-            inner: instance,
-            debug_utils_available,
-            debug_utils_messenger,
-        })
+        Ok(Instance { entry, inner: instance })
     }
 }
 

@@ -3,6 +3,7 @@ use crate::vulkan_raii::Device;
 use crate::{debug_utils, physical_device_features, Error, PhysicalDevice};
 use ash::{vk, Instance};
 
+/// Creates a new VkDevice. It only needs to be destroyed if creating a new one.
 pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> Result<Device, Error> {
     profiling::scope!("vulkan device creation");
 

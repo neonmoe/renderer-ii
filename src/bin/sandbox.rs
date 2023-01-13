@@ -64,7 +64,7 @@ fn fallible_main() -> anyhow::Result<()> {
     let surface = neonvk::create_surface(&instance.entry, &instance.inner, &window)?;
     let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner);
     let physical_device = physical_devices.remove(0)?;
-    let mut device = neonvk::create_device(&instance.inner, &physical_device)?;
+    let device = neonvk::create_device(&instance.inner, &physical_device)?;
     let mut descriptors = neonvk::Descriptors::new(&instance, &device, &physical_device)?;
 
     let msaa_samples = neonvk::vk::SampleCountFlags::TYPE_4;
@@ -404,33 +404,8 @@ fn fallible_main() -> anyhow::Result<()> {
     }
 
     {
-        profiling::scope!("clean up on exit");
+        profiling::scope!("wait for gpu to be idle before exit");
         device.wait_idle()?;
-
-        // Per-resize objects.
-        drop(renderer);
-        drop(framebuffers);
-        drop(swapchain);
-        drop(pipelines);
-
-        // Per-device-objects.
-        drop(smol_ame_model);
-        drop(sponza_model);
-        drop(assets_textures_arena);
-        drop(assets_buffers_arena);
-        drop(descriptors);
-        device.destroy();
-        #[allow(clippy::drop_non_drop)]
-        drop(device);
-        drop(instance);
-    }
-
-    {
-        profiling::scope!("clean up on exit (SDL)");
-        drop(event_pump);
-        drop(window);
-        drop(video_subsystem);
-        drop(sdl_context);
     }
 
     Ok(())
