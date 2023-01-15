@@ -151,6 +151,7 @@ impl Gltf {
         glb_path: &Path,
         resource_path: &Path,
     ) -> Result<Gltf, GltfLoadingError> {
+        profiling::scope!("loading glb from disk", &format!("file: {}", glb_path.display()));
         let glb = fs::read(glb_path).map_err(GltfLoadingError::MissingFile)?;
         let (json, buffer) = read_glb_json_and_buffer(&glb)?;
         let gltf: gltf_json::GltfJson = serde_json::from_str(json).map_err(GltfLoadingError::JsonDeserialization)?;
@@ -161,7 +162,6 @@ impl Gltf {
     ///
     /// Any external files referenced in the glTF are searched relative to
     /// `resource_path`.
-    #[profiling::function]
     pub fn from_gltf(
         device: &Device,
         uploader: &mut Uploader,
@@ -170,6 +170,7 @@ impl Gltf {
         gltf_path: &Path,
         resource_path: &Path,
     ) -> Result<Gltf, GltfLoadingError> {
+        profiling::scope!("loading gltf from disk", &format!("file: {}", gltf_path.display()));
         let gltf = fs::read_to_string(gltf_path).map_err(GltfLoadingError::MissingFile)?;
         let gltf: gltf_json::GltfJson = serde_json::from_str(&gltf).map_err(GltfLoadingError::JsonDeserialization)?;
         create_gltf(device, uploader, descriptors, arenas, gltf, (gltf_path, resource_path), None)
@@ -338,6 +339,7 @@ fn create_gltf(
     for buffer in &gltf.buffers {
         let buffer_create_info = get_mesh_buffer_create_info(buffer.byte_length as vk::DeviceSize);
         if let Some(uri) = buffer.uri.as_ref() {
+            profiling::scope!("upload buffer from file", &format!("file: {uri}"));
             let path = resource_path.join(uri);
             let data = map_file(&mut memmap_holder, &path, None)?;
             let data = &data[0..buffer.byte_length];
@@ -351,6 +353,7 @@ fn create_gltf(
                 .map_err(|err| GltfLoadingError::BufferCreationFromFile(err, path))?;
             buffers.push(Rc::new(buffer));
         } else {
+            profiling::scope!("upload buffer from glb");
             match bin_buffer {
                 Some(data) => {
                     let data = &data[0..buffer.byte_length];
@@ -371,6 +374,7 @@ fn create_gltf(
 
     let mut meshes = Vec::with_capacity(gltf.meshes.len());
     for mesh in &gltf.meshes {
+        profiling::scope!("reading primitives");
         let mut primitives = Vec::with_capacity(mesh.primitives.len());
         for primitive in &mesh.primitives {
             let mesh = create_primitive(&gltf, &buffers, primitive)?;
@@ -382,6 +386,7 @@ fn create_gltf(
 
     let mut nodes = Vec::with_capacity(gltf.nodes.len());
     for node in &gltf.nodes {
+        profiling::scope!("reading node transform and bounding box");
         let transform = if let Some(cols_array) = node.matrix {
             Mat4::from_cols_array(&cols_array)
         } else {
@@ -428,6 +433,7 @@ fn create_gltf(
 
     let mut images = Vec::with_capacity(gltf.images.len());
     for (i, image) in gltf.images.iter().enumerate() {
+        profiling::scope!("uploading image", &format!("file: {:?}", image.uri));
         let bytes = load_image_bytes(&mut memmap_holder, resource_path, bin_buffer, image, &gltf)?;
         let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
         let name = image.uri.as_deref().unwrap_or("glb binary buffer");
@@ -437,21 +443,25 @@ fn create_gltf(
         ));
     }
 
-    let material_factors = get_material_factors(&gltf)?;
-    let factors_slice = bytemuck::cast_slice(&material_factors);
-    let buffer_create_info = get_material_factors_buffer_create_info(factors_slice.len() as vk::DeviceSize);
-    let factors_buffer = buffer_arena
-        .create_buffer(
-            buffer_create_info,
-            factors_slice,
-            Some(uploader),
-            format_args!("material parameters ({})", gltf_path.display()),
-        )
-        .map_err(GltfLoadingError::BufferCreationFromMaterialParameters)?;
-    let factors_buffer = Rc::new(factors_buffer);
+    let factors_buffer = {
+        profiling::scope!("uploading material factors");
+        let material_factors = get_material_factors(&gltf)?;
+        let factors_slice = bytemuck::cast_slice(&material_factors);
+        let buffer_create_info = get_material_factors_buffer_create_info(factors_slice.len() as vk::DeviceSize);
+        let factors_buffer = buffer_arena
+            .create_buffer(
+                buffer_create_info,
+                factors_slice,
+                Some(uploader),
+                format_args!("material parameters ({})", gltf_path.display()),
+            )
+            .map_err(GltfLoadingError::BufferCreationFromMaterialParameters)?;
+        Rc::new(factors_buffer)
+    };
 
     let mut materials = Vec::with_capacity(gltf.materials.len());
     for (i, mat) in gltf.materials.iter().enumerate() {
+        profiling::scope!("reading material");
         let mktex = |images: &[Rc<ImageView>], texture_info: &gltf_json::TextureInfo| {
             if texture_info.texcoord.is_some() && texture_info.texcoord != Some(0) {
                 return Some(Err(GltfLoadingError::Misc("non-0 texCoord used for texture")));
@@ -503,6 +513,7 @@ fn create_gltf(
 
     let mut animations = Vec::with_capacity(gltf.animations.len());
     for animation in &gltf.animations {
+        profiling::scope!("reading animation data");
         let mut nodes_channels = vec![None; gltf.nodes.len()];
         let mut start_time: Option<f32> = None;
         let mut end_time: Option<f32> = None;
@@ -613,6 +624,7 @@ fn create_gltf(
 
     let mut skins = Vec::new();
     for skin in &gltf.skins {
+        profiling::scope!("reading skin (bones)");
         let mut joints = Vec::new();
         if let Some(inverse_bind_matrices) = skin.inverse_bind_matrices {
             let (inverse_bind_matrices, _) = get_slice_and_component_type_from_accessor(

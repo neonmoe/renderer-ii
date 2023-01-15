@@ -1,6 +1,6 @@
 use glam::{Mat4, Quat, Vec3};
 use log::LevelFilter;
-use sdl2::controller::Axis;
+use sdl2::controller::{Axis, GameController};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
@@ -19,9 +19,11 @@ enum SandboxError {
     MsaaSampleCountNotSupported(neonvk::vk::SampleCountFlags),
 }
 
-#[profiling::function]
 fn main() -> anyhow::Result<()> {
-    if let Err(err) = fallible_main() {
+    #[cfg(feature = "profile-with-tracy")]
+    let _client = tracy_client::Client::start();
+
+    if let Err(err) = main_() {
         let message = format!("{:?}", err);
         let _ = show_simple_message_box(MessageBoxFlag::ERROR, "Fatal Error", &message, None);
         Err(err)
@@ -30,7 +32,8 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-fn fallible_main() -> anyhow::Result<()> {
+#[profiling::function]
+fn main_() -> anyhow::Result<()> {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Trace)).unwrap();
 
     let sdl_context = {
@@ -41,10 +44,6 @@ fn fallible_main() -> anyhow::Result<()> {
         profiling::scope!("SDL video subsystem init");
         sdl_context.video().map_err(SandboxError::Sdl)?
     };
-
-    // Enable all controllers
-    let controller_subsystem = sdl_context.game_controller().unwrap();
-    let controller = controller_subsystem.open(0);
 
     let mut window = {
         profiling::scope!("SDL window creation");
@@ -124,7 +123,6 @@ fn fallible_main() -> anyhow::Result<()> {
     let sponza_model;
     let smol_ame_model;
     {
-        profiling::scope!("loading Sponza.gltf from disk to vram");
         let upload_start = Instant::now();
         sponza_model = neonvk::Gltf::from_gltf(
             &device,
@@ -143,7 +141,10 @@ fn fallible_main() -> anyhow::Result<()> {
             &resources_path.join("smol-ame-by-seafoam"),
         )?;
         let upload_wait_start = Instant::now();
-        assert!(uploader.wait(Duration::from_secs(5))?);
+        {
+            profiling::scope!("wait for uploads to finish");
+            assert!(uploader.wait(Duration::from_secs(5))?);
+        }
         let now = Instant::now();
         log::info!(
             "Spent {:?} loading resources, of which {:?} was waiting for upload.",
@@ -175,6 +176,13 @@ fn fallible_main() -> anyhow::Result<()> {
     let mut frame_processing_durations = Vec::with_capacity(10_000);
 
     window.show();
+
+    let controller_subsystem = {
+        profiling::scope!("SDL controller subsystem init");
+        sdl_context.game_controller().unwrap()
+    };
+    let mut controller: Option<GameController> = None;
+
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
     let mut resize_timestamp = None;
     let mut debug_value = 0;
@@ -279,13 +287,17 @@ fn fallible_main() -> anyhow::Result<()> {
                         resize_timestamp = Some(Instant::now())
                     }
 
+                    Event::ControllerDeviceAdded { which, .. } => {
+                        controller = Some(controller_subsystem.open(which).unwrap());
+                    }
+
                     _ => {}
                 }
             }
         }
 
         if analog_controls {
-            if let Ok(controller) = &controller {
+            if let Some(controller) = &controller {
                 cam_yaw_delta = -get_axis_deadzoned(controller.axis(Axis::RightX)) / 50.0;
                 cam_pitch_delta = -get_axis_deadzoned(controller.axis(Axis::RightY)) / 50.0;
             }

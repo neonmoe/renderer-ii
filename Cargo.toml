@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 log = { version = "0.4" }
 profiling = { version = "1.0" }
+tracy-client = { version = "0.14.2", optional = true }
 thiserror = { version = "1.0" }
 ash = { version = "0.37", default-features = false, features = ["linked", "debug"] }
 ash-window = { version = "0.11" }
@@ -25,6 +26,7 @@ sdl2 = { version = "0.35", features = ["raw-window-handle"] }
 anyhow = { version = "1.0" }
 
 [features]
-profile-with-tracy = ["profiling/profile-with-tracy"]
+profile-with-tracy = ["profiling/profile-with-tracy", "tracy-client"]
 profile-with-tracing = ["profiling/profile-with-tracing"]
+profile-with-puffin = ["profiling/profile-with-puffin"]
 vulkan-validation = []
