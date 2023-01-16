@@ -1,6 +1,7 @@
 use std::fs::{self};
 use std::io::{BufRead, Cursor, Write};
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
@@ -57,23 +58,34 @@ struct Opts {
     silent: bool,
 }
 
-fn main() {
+fn main() -> ExitCode {
     let opts: Opts = argh::from_env();
     if opts.images.is_empty() {
         print(&opts, "No images provided. Use --help to display usage info.");
-        return;
+        std::process::exit(2);
     }
 
     let count = opts.images.len();
     let counter = AtomicUsize::new(0);
-    opts.images
+    let failures: u32 = opts
+        .images
         .par_iter()
         .map(|path| (path, convert(&opts, &path, &counter, count)))
-        .for_each(|(path, result)| {
+        .map(|(path, result)| {
             if let Err(err) = result {
-                print(&opts, format_args!("failed to convert {}, {}", path, err));
+                print(&opts, format_args!("Failed to convert {}, {}.", path, err));
+                1
+            } else {
+                0
             }
-        });
+        })
+        .sum();
+    if failures == 0 {
+        ExitCode::SUCCESS
+    } else {
+        print(&opts, format_args!("Conversion failures: {failures}."));
+        ExitCode::FAILURE
+    }
 }
 
 fn print<T: std::fmt::Display>(opts: &Opts, message: T) {
@@ -88,6 +100,7 @@ enum Error {
     WriteFile(std::io::Error),
     ImageDecode(image::ImageError),
     OverwriteCheckStdinRead(std::io::Error),
+    ImageSmallerThanBlock,
 }
 
 impl std::fmt::Display for Error {
@@ -99,6 +112,7 @@ impl std::fmt::Display for Error {
             Error::OverwriteCheckStdinRead(err) => {
                 write!(fmt, "error reading stdin for overwriting check: {}", err)
             }
+            Error::ImageSmallerThanBlock => write!(fmt, "image is smaller than 4px on at least one axis"),
         }
     }
 }
@@ -114,7 +128,7 @@ fn convert(opts: &Opts, path: &str, counter: &AtomicUsize, count: usize) -> Resu
         let stdin = std::io::stdin();
         let mut stdin = stdin.lock();
         loop {
-            eprint!("{} exists, replace? [y/n]: ", path);
+            eprint!("{} exists, replace? [y/n]: ", dst_path.display());
             let _ = std::io::stderr().flush();
             stdin.read_line(&mut line).map_err(Error::OverwriteCheckStdinRead)?;
             line.make_ascii_lowercase();
@@ -127,6 +141,13 @@ fn convert(opts: &Opts, path: &str, counter: &AtomicUsize, count: usize) -> Resu
             }
         }
     }
+    let lowercase_path = path.to_lowercase();
+    let sharpen = lowercase_path.contains("color") || lowercase_path.contains("albedo");
+    if sharpen {
+        print(opts, format_args!("Path {path} contains color/albedo: using lanczos for mipmaps.",));
+    } else {
+        print(opts, format_args!("Path {path} does not imply color: making linear mipmaps."));
+    }
     let start_time = Instant::now();
 
     let input_bytes = fs::read(path).map_err(Error::ReadFile)?;
@@ -135,7 +156,15 @@ fn convert(opts: &Opts, path: &str, counter: &AtomicUsize, count: usize) -> Resu
         .unwrap()
         .decode()
         .map_err(Error::ImageDecode)?;
-    let mip_levels = ((image.width().max(image.height()) as f32).log2().floor() as u32).max(2) - 1;
+    let mip_levels = (0..)
+        .take_while(|i| {
+            let d = 4 * (1 << i);
+            image.width() % d == 0 && image.height() % d == 0
+        })
+        .count() as u32;
+    if mip_levels == 0 {
+        return Err(Error::ImageSmallerThanBlock);
+    }
     let mut output_len = 1024;
     for mip in 0..mip_levels {
         let width = ((image.width() / (1 << mip)) as f32 / 4.0).ceil() as usize;
@@ -163,14 +192,30 @@ fn convert(opts: &Opts, path: &str, counter: &AtomicUsize, count: usize) -> Resu
     output_bytes.extend_from_slice(&(128u32 /* 128 bits */ / 8).to_le_bytes());
     assert_eq!(output_bytes.len(), 1024);
     // the rest of the bytes: the raw images for each mip level with no padding
-    for mip in 0..mip_levels {
-        let mip_image = if mip == 0 {
-            image.clone()
-        } else {
-            image.resize_exact(image.width() / (1 << mip), image.height() / (1 << mip), FilterType::Triangle)
-        };
+    print(
+        opts,
+        format_args!(
+            "Compressing {mip_levels} mips of {} ({}x{}).",
+            dst_path.display(),
+            image.width(),
+            image.height(),
+        ),
+    );
+    let compressed_images = (0..mip_levels)
+        .collect::<Vec<u32>>()
+        .into_par_iter()
+        .map(|mip| {
+            let mip_image = if mip == 0 {
+                image.clone()
+            } else {
+                image.resize_exact(image.width() / (1 << mip), image.height() / (1 << mip), FilterType::Lanczos3)
+            };
+            compress_image(mip_image)
+        })
+        .collect::<Vec<Vec<u8>>>();
+    for mut compressed_image in compressed_images {
         assert_eq!(output_bytes.len() % 16, 0);
-        output_bytes.append(&mut compress_image(mip_image));
+        output_bytes.append(&mut compressed_image);
     }
     assert_eq!(output_bytes.len(), output_len);
 
@@ -178,7 +223,7 @@ fn convert(opts: &Opts, path: &str, counter: &AtomicUsize, count: usize) -> Resu
     print(
         opts,
         format_args!(
-            "Converted {} in {:.2}s, {}/{} done.",
+            "Compressed {} in {:.2}s, {}/{} done.",
             dst_path.display(),
             (Instant::now() - start_time).as_secs_f32(),
             counter.fetch_add(1, Ordering::Relaxed) + 1,
