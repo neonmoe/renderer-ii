@@ -5,6 +5,7 @@ use crate::pipelines::AttachmentLayout;
 use crate::vulkan_raii::{AnyImage, Device, Framebuffer, ImageView};
 use crate::{PhysicalDevice, Pipelines, Swapchain};
 use ash::{vk, Instance};
+use smallvec::{smallvec, SmallVec};
 use std::rc::Rc;
 
 #[derive(thiserror::Error, Debug)]
@@ -23,7 +24,7 @@ pub enum FramebufferCreationError {
 
 pub struct Framebuffers {
     pub extent: vk::Extent2D,
-    pub(crate) inner: Vec<Framebuffer>,
+    pub(crate) inner: SmallVec<[Framebuffer; 8]>,
 }
 
 impl Framebuffers {
@@ -71,7 +72,7 @@ impl Framebuffers {
         let mut framebuffer_size = 0;
         {
             profiling::scope!("framebuffer memory requirements querying");
-            let mut image_infos = vec![hdr_image_info, depth_image_info];
+            let mut image_infos: SmallVec<[vk::ImageCreateInfo; 3]> = smallvec![hdr_image_info, depth_image_info];
             if let Some(resolve_src_image_info) = resolve_src_image_info {
                 image_infos.push(resolve_src_image_info);
             }
@@ -130,7 +131,7 @@ impl Framebuffers {
             .images
             .iter()
             .map(|image| create_image_view(image.clone(), vk::ImageAspectFlags::COLOR, swapchain_format))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<SmallVec<[Rc<ImageView>; 8]>, _>>()?;
         for (i, sc) in swapchain_image_views.iter().enumerate() {
             let frame_count = swapchain_image_views.len();
             let nth = i + 1;
@@ -179,16 +180,18 @@ impl Framebuffers {
             .map(|swapchain_image_view| {
                 profiling::scope!("one frame's framebuffer creation");
                 let attachments = if let Some(resolve_src_image_view) = &resolve_src_image_view {
-                    vec![
+                    smallvec![
                         hdr_image_view.clone(),
                         depth_image_view.clone(),
                         resolve_src_image_view.clone(),
                         swapchain_image_view,
                     ]
                 } else {
-                    vec![hdr_image_view.clone(), depth_image_view.clone(), swapchain_image_view]
+                    smallvec![hdr_image_view.clone(), depth_image_view.clone(), swapchain_image_view]
                 };
-                let raw_attachments = attachments.iter().map(|image_view| image_view.inner).collect::<Vec<_>>();
+                debug_assert!(!attachments.spilled());
+                let raw_attachments: SmallVec<[vk::ImageView; 4]> =
+                    attachments.iter().map(|image_view: &Rc<ImageView>| image_view.inner).collect();
                 let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
                     .render_pass(pipelines.render_pass.inner)
                     .attachments(&raw_attachments)
@@ -204,7 +207,7 @@ impl Framebuffers {
                     attachments,
                 })
             })
-            .collect::<Result<Vec<Framebuffer>, FramebufferCreationError>>()?;
+            .collect::<Result<SmallVec<[Framebuffer; 8]>, FramebufferCreationError>>()?;
 
         for (i, framebuffer) in framebuffers.iter().enumerate() {
             let frame_count = framebuffers.len();

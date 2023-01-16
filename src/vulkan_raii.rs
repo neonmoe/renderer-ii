@@ -7,32 +7,24 @@
 
 use ash::extensions::khr;
 use ash::vk;
+use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-/// **Device::destroy must be called manually after the Device is no longer
-/// being used**. The Vulkan device, which is used to make pretty much all
-/// Vulkan calls after its creation. It's safe to clone to share, until
-/// destruction time, as the only function where it must be externally
-/// synchronized according to the
+/// The Vulkan device, which is used to make pretty much all Vulkan calls after
+/// its creation.
+///
+/// It's safe to clone to share, until destruction time, as the only function
+/// where it must be externally synchronized according to the
 /// [spec](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/chap3.html#fundamentals-threadingbehavior)
 /// is vkDestroyDevice.
 ///
 /// The reason Device isn't shared via borrows or Rcs is that it is pretty much
 /// as global as a structure as it gets, and the ergonomics of just copying it
 /// everywhere outweigh the possibility that destroy does not get called.
-///
-/// The downside is that the VkDevice doesn't get destroyed when the program
-/// crashes, since the destruction is not done in a Drop implementation.
-/// However, the program has crashed at this point. So it probably isn't too bad
-/// to leak one object, all the resources should be reclaimed by the OS anyway.
 #[derive(Clone)]
 pub struct Device {
-    // NOTE(opt): ash::Device is pretty big, as it contains about ~1KiB of
-    // function pointers. There may be a point to Boxing it, since all the
-    // Vulkan objects in this file contain a copy of Device, which adds quite a
-    // bit of overhead to objects that would otherwise be simple handles.
-    pub inner: ash::Device,
+    pub inner: &'static ash::Device,
     pub graphics_queue: vk::Queue,
     pub surface_queue: vk::Queue,
     pub transfer_queue: vk::Queue,
@@ -45,7 +37,7 @@ impl Device {
 impl std::ops::Deref for Device {
     type Target = ash::Device;
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        self.inner
     }
 }
 impl Device {
@@ -196,7 +188,7 @@ pub struct Framebuffer {
     pub inner: vk::Framebuffer,
     pub device: Device,
     pub render_pass: Rc<RenderPass>,
-    pub attachments: Vec<Rc<ImageView>>,
+    pub attachments: SmallVec<[Rc<ImageView>; 4]>,
 }
 trivial_drop_impl!(Framebuffer, destroy_framebuffer);
 
@@ -214,9 +206,9 @@ pub struct Sampler {
 trivial_drop_impl!(Sampler, destroy_sampler);
 
 pub struct DescriptorSetLayouts {
-    pub inner: Vec<vk::DescriptorSetLayout>,
+    pub inner: SmallVec<[vk::DescriptorSetLayout; 8]>,
     pub device: Device,
-    pub immutable_samplers: Vec<Rc<Sampler>>,
+    pub immutable_samplers: SmallVec<[Rc<Sampler>; 1]>,
 }
 impl Drop for DescriptorSetLayouts {
     fn drop(&mut self) {
@@ -244,7 +236,7 @@ trivial_drop_impl!(DescriptorPool, destroy_descriptor_pool);
 /// Does not implement drop, as the resources are freed when the pool
 /// is destroyed.
 pub struct DescriptorSets {
-    pub inner: Vec<vk::DescriptorSet>,
+    pub inner: SmallVec<[vk::DescriptorSet; 8]>,
     pub device: Device,
     pub descriptor_pool: Rc<DescriptorPool>,
 }

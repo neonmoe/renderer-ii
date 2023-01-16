@@ -338,7 +338,7 @@ fn main_() -> anyhow::Result<()> {
         game_time += dt;
         update_time = new_update_time;
 
-        let mut scene = neonvk::Scene::default();
+        let mut scene = neonvk::Scene::new(&physical_device);
         scene.camera.orientation = Quat::from_rotation_y(cam_yaw) * Quat::from_rotation_x(cam_pitch);
         if dx != 0.0 || dz != 0.0 || dy != 0.0 {
             let speed = if sprinting { 10.0 } else { 5.0 };

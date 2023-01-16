@@ -1,6 +1,7 @@
 use crate::debug_utils;
 use ash::{vk, Entry};
 use raw_window_handle::HasRawWindowHandle;
+use smallvec::SmallVec;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -30,7 +31,7 @@ impl Instance {
             // FIXME: This makes renderdoc work, change out later.
             .api_version(vk::API_VERSION_1_3);
 
-        let mut layers = Vec::with_capacity(1);
+        let mut layers: SmallVec<[*const c_char; 1]> = SmallVec::new();
         let mut validation_layer_enabled = false;
         if cfg!(feature = "vulkan-validation") {
             if is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
@@ -50,7 +51,7 @@ impl Instance {
                 }
                 cs
             })
-            .collect::<Vec<*const c_char>>();
+            .collect::<SmallVec<[*const c_char; 4]>>();
         let debug_utils_available = is_extension_supported(&entry, "VK_EXT_debug_utils");
         if debug_utils_available {
             extensions.push(cstr!("VK_EXT_debug_utils").as_ptr());

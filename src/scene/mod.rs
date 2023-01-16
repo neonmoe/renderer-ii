@@ -1,7 +1,9 @@
+use crate::arena::align_up;
 use crate::gltf::AnimationError;
 use crate::mesh::Mesh;
 use crate::pipeline_parameters::PipelineMap;
-use crate::{Animation, Gltf, Material, PipelineIndex};
+use crate::{Animation, Gltf, Material, PhysicalDevice, PipelineIndex};
+use ash::vk;
 use glam::Mat4;
 use std::collections::HashMap;
 
@@ -25,20 +27,24 @@ pub struct Scene<'a> {
     pub(crate) static_meshes: PipelineMap<StaticMeshMap<'a>>,
     pub(crate) skinned_meshes: PipelineMap<Vec<SkinnedModel<'a>>>,
     pub(crate) skinned_mesh_joints_buffer: Vec<u8>,
+    joints_alignment: vk::DeviceSize,
 }
 
-impl Default for Scene<'_> {
-    fn default() -> Self {
+impl<'a> Scene<'a> {
+    /// Creates a new scene for queueing meshes to render.
+    ///
+    /// Needs the PhysicalDevice which is currently being used for rendering to
+    /// prepare the mesh data with proper alignment.
+    pub fn new(physical_device: &PhysicalDevice) -> Self {
         Scene {
             camera: Camera::default(),
             static_meshes: PipelineMap::new::<(), _>(|_| Ok(HashMap::with_capacity(0))).unwrap(),
             skinned_meshes: PipelineMap::new::<(), _>(|_| Ok(Vec::with_capacity(0))).unwrap(),
             skinned_mesh_joints_buffer: Vec::new(),
+            joints_alignment: physical_device.properties.limits.min_uniform_buffer_offset_alignment,
         }
     }
-}
 
-impl<'a> Scene<'a> {
     pub fn queue_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, transform: Mat4) {
         profiling::scope!("static mesh");
         let mesh_map = &mut self.static_meshes[material.pipeline(false)];
@@ -73,9 +79,7 @@ impl<'a> Scene<'a> {
                     skinned_model.meshes.push((mesh.mesh, mesh.material));
                 } else {
                     let skin = &model.skins[skin_index];
-                    // TODO: Use the real uniform buffer offset alignment value from physical device limits
-                    let joints_alignment = 256; // The accurate number would be VkPhysicalDeviceLimits::minUniformBufferOffsetAlignment
-                    let joints_offset = crate::arena::align_up(self.skinned_mesh_joints_buffer.len() as u64, joints_alignment) as u32;
+                    let joints_offset = align_up(self.skinned_mesh_joints_buffer.len() as u64, self.joints_alignment) as u32;
                     self.skinned_mesh_joints_buffer.resize(joints_offset as usize, 0);
                     for joint in &skin.joints {
                         let animated_transform = animated_node_transforms[joint.node_index].unwrap_or(Mat4::IDENTITY);

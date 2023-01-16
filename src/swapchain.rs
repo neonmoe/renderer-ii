@@ -3,6 +3,7 @@ use crate::vulkan_raii::{self, AnyImage, Device, Surface};
 use crate::PhysicalDevice;
 use ash::extensions::khr;
 use ash::{vk, Entry, Instance};
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 #[derive(thiserror::Error, Debug)]
@@ -31,7 +32,7 @@ pub enum SwapchainBase {
 
 pub struct Swapchain {
     pub extent: vk::Extent2D,
-    pub(crate) images: Vec<Rc<AnyImage>>,
+    pub(crate) images: SmallVec<[Rc<AnyImage>; 8]>,
     inner: Rc<vulkan_raii::Swapchain>,
 }
 
@@ -47,7 +48,7 @@ impl Swapchain {
         profiling::scope!("swapchain creation");
 
         let surface_ext = khr::Surface::new(entry, instance);
-        let swapchain_ext = khr::Swapchain::new(instance, &device.inner);
+        let swapchain_ext = khr::Swapchain::new(instance, device);
         let queue_family_indices = [
             physical_device.graphics_queue_family.index,
             physical_device.surface_queue_family.index,
@@ -85,7 +86,7 @@ impl Swapchain {
             .map_err(SwapchainError::GetSwapchainImages)?
             .into_iter()
             .map(|image| Rc::new(AnyImage::Swapchain(image, swapchain.clone())))
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<_>>();
         let frame_count = images.len() as u32;
         debug_utils::name_vulkan_object(
             device,

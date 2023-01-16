@@ -8,6 +8,7 @@ use crate::vulkan_raii::{Buffer, Device, ImageView};
 use crate::{Descriptors, ForBuffers, ForImages, Material, Uploader};
 use glam::{Mat4, Quat, Vec3, Vec4};
 use memmap2::{Mmap, MmapOptions};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::ops::Range;
@@ -142,7 +143,6 @@ impl Gltf {
     ///
     /// Any external files referenced in the glTF are searched relative to
     /// `resource_path`.
-    #[profiling::function]
     pub fn from_glb(
         device: &Device,
         uploader: &mut Uploader,
@@ -771,8 +771,8 @@ fn create_primitive(
     let (index_buffer, index_buffer_offset, index_buffer_size, index_ctype) =
         get_buffer_from_accessor(buffers, gltf, index_accessor, None, "SCALAR")?;
 
-    let mut vertex_buffers = Vec::with_capacity(6);
-    let mut buffer_offsets = Vec::with_capacity(6);
+    let mut vertex_buffers = SmallVec::new();
+    let mut buffer_offsets = SmallVec::new();
 
     let pos_accessor = *primitive
         .attributes

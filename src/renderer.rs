@@ -1,12 +1,14 @@
 use crate::arena::VulkanArenaError;
 use crate::debug_utils;
 use crate::descriptors::Descriptors;
+use crate::mesh::VERTEX_BUFFERS;
 use crate::pipeline_parameters::{MaterialPushConstants, PipelineMap, RenderSettings, MAX_BONE_COUNT};
 use crate::scene::{SkinnedModel, StaticMeshMap};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use crate::{ForBuffers, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
 use ash::{vk, Instance};
 use glam::Mat4;
+use smallvec::SmallVec;
 use std::fmt::Arguments;
 use std::rc::Rc;
 
@@ -70,8 +72,7 @@ pub struct Renderer {
     frame_end_fence: Fence,
     temp_arena: VulkanArena<ForBuffers>,
     command_pool: Rc<CommandPool>,
-    command_buffers_in_use: Vec<CommandBuffer>,
-    command_buffers_unused: Vec<CommandBuffer>,
+    command_buffer: Option<CommandBuffer>,
 }
 
 impl Renderer {
@@ -140,8 +141,7 @@ impl Renderer {
             frame_end_fence,
             temp_arena,
             command_pool,
-            command_buffers_in_use: Vec::new(),
-            command_buffers_unused: Vec::new(),
+            command_buffer: None,
         })
     }
 
@@ -292,34 +292,24 @@ impl Renderer {
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .map_err(RendererError::CommandPoolReset)
         }?;
-        self.command_buffers_unused.append(&mut self.command_buffers_in_use);
 
-        let command_buffer = if let Some(command_buffer) = self.command_buffers_unused.pop() {
-            debug_utils::name_vulkan_object(&self.device, command_buffer.inner, format_args!("frame rendering cmds"));
-            command_buffer
+        let command_buffer = if let Some(command_buffer) = &self.command_buffer {
+            command_buffer.inner
         } else {
             profiling::scope!("allocate command buffer");
-            unsafe {
-                let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-                    .command_pool(command_pool)
-                    .level(vk::CommandBufferLevel::PRIMARY)
-                    .command_buffer_count(1);
-                let command_buffers = self
-                    .device
-                    .allocate_command_buffers(&command_buffer_allocate_info)
-                    .map_err(RendererError::CommandBufferAllocation)?;
-                debug_utils::name_vulkan_object(&self.device, command_buffers[0], format_args!("frame rendering cmds"));
-                CommandBuffer {
-                    inner: command_buffers[0],
-                    device: self.device.clone(),
-                    command_pool: self.command_pool.clone(),
-                }
-            }
-        };
-        let command_buffer = {
-            let inner = command_buffer.inner;
-            self.command_buffers_in_use.push(command_buffer);
-            inner
+            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+                .command_pool(command_pool)
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_buffer_count(1);
+            let command_buffers = unsafe { self.device.allocate_command_buffers(&command_buffer_allocate_info) }
+                .map_err(RendererError::CommandBufferAllocation)?;
+            debug_utils::name_vulkan_object(&self.device, command_buffers[0], format_args!("frame rendering cmds"));
+            self.command_buffer = Some(CommandBuffer {
+                inner: command_buffers[0],
+                device: self.device.clone(),
+                command_pool: self.command_pool.clone(),
+            });
+            command_buffers[0]
         };
 
         let begin_info = vk::CommandBufferBeginInfo::default();
@@ -478,12 +468,12 @@ impl Renderer {
                     .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
             }
 
-            let mut vertex_buffers = Vec::with_capacity(mesh.vertex_buffers.len() + 1);
+            let mut vertex_buffers = SmallVec::<[vk::Buffer; VERTEX_BUFFERS + 1]>::new();
             vertex_buffers.push(transform_buffer.inner);
             for vertex_buffer in &mesh.vertex_buffers {
                 vertex_buffers.push(vertex_buffer.inner);
             }
-            let mut vertex_offsets = Vec::with_capacity(mesh.vertices_offsets.len() + 1);
+            let mut vertex_offsets = SmallVec::<[vk::DeviceSize; VERTEX_BUFFERS + 1]>::new();
             vertex_offsets.push(0);
             vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
 
@@ -551,12 +541,12 @@ impl Renderer {
                         .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
                 }
 
-                let mut vertex_buffers = Vec::with_capacity(mesh.vertex_buffers.len() + 1);
+                let mut vertex_buffers = SmallVec::<[vk::Buffer; VERTEX_BUFFERS + 1]>::new();
                 vertex_buffers.push(transform_buffer.inner);
                 for vertex_buffer in &mesh.vertex_buffers {
                     vertex_buffers.push(vertex_buffer.inner);
                 }
-                let mut vertex_offsets = Vec::with_capacity(mesh.vertices_offsets.len() + 1);
+                let mut vertex_offsets = SmallVec::<[vk::DeviceSize; VERTEX_BUFFERS + 1]>::new();
                 vertex_offsets.push(0);
                 vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
 

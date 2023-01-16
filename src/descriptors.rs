@@ -14,6 +14,7 @@ use crate::{debug_utils, Instance, PhysicalDevice};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use glam::Vec4;
+use smallvec::{smallvec, smallvec_inline, SmallVec};
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::rc::{Rc, Weak};
@@ -47,13 +48,14 @@ pub enum DescriptorError {
     WaitForMaterialDefaultTexturesUpload(#[source] UploaderError),
 }
 
-fn get_pipelines(data: &PipelineSpecificData) -> [PipelineIndex; 2] {
+const MAX_PIPELINES_PER_MATERIAL: usize = 2;
+fn get_pipelines(data: &PipelineSpecificData) -> SmallVec<[PipelineIndex; MAX_PIPELINES_PER_MATERIAL]> {
     use PipelineIndex::*;
     match data {
         PipelineSpecificData::Gltf { alpha_mode, .. } => match alpha_mode {
-            gltf_json::AlphaMode::Opaque => [Opaque, SkinnedOpaque],
-            gltf_json::AlphaMode::Mask => [Clipped, SkinnedClipped],
-            gltf_json::AlphaMode::Blend => [Blended, SkinnedBlended],
+            gltf_json::AlphaMode::Opaque => smallvec![Opaque, SkinnedOpaque],
+            gltf_json::AlphaMode::Mask => smallvec![Clipped, SkinnedClipped],
+            gltf_json::AlphaMode::Blend => smallvec![Blended, SkinnedBlended],
         },
     }
 }
@@ -90,7 +92,7 @@ pub enum PipelineSpecificData {
 /// A unique index into one pipeline's textures and other material data.
 pub struct Material {
     pub name: String,
-    array_indices: Vec<(PipelineIndex, u32)>,
+    array_indices: SmallVec<[(PipelineIndex, u32); MAX_PIPELINES_PER_MATERIAL]>,
     data: PipelineSpecificData,
 }
 
@@ -107,7 +109,7 @@ impl Material {
                     .ok_or(DescriptorError::MaterialIndexReserve)?;
                 Ok((pipeline, i as u32))
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<SmallVec<_>, _>>()?;
         let material = Rc::new(Material { name, array_indices, data });
         for &(pipeline, index) in &material.array_indices {
             descriptors.material_slots_per_pipeline[pipeline][index as usize] = Some(Rc::downgrade(&material));
@@ -157,6 +159,13 @@ struct PendingWrite {
     _buffer_info: Option<Box<vk::DescriptorBufferInfo>>,
     _image_info: Option<Box<vk::DescriptorImageInfo>>,
 }
+/// Descriptor writes done every frame:
+/// - HDR framebuffer attachment (post-process descriptor set)
+/// - Global transforms (shared descriptor set)
+/// - Render settings (shared descriptor set)
+/// - Joints (each of the skinned pipelines)
+const CONST_WRITES: usize = 3 + SKINNED_PIPELINES.len();
+type PendingWritesVec = SmallVec<[PendingWrite; CONST_WRITES]>;
 
 pub struct Descriptors {
     pub(crate) pipeline_layouts: PipelineMap<PipelineLayout>,
@@ -164,8 +173,8 @@ pub struct Descriptors {
     device: Device,
     pbr_defaults: PbrDefaults,
     // Both of these are heap-allocated, MAX_TEXTURE_COUNT long arrays.
-    material_slots_per_pipeline: PipelineMap<Vec<MaterialSlot>>,
-    material_updated_per_pipeline: PipelineMap<Vec<bool>>,
+    material_slots_per_pipeline: PipelineMap<SmallVec<[MaterialSlot; MAX_TEXTURE_COUNT as usize]>>,
+    material_updated_per_pipeline: PipelineMap<SmallVec<[bool; MAX_TEXTURE_COUNT as usize]>>,
 }
 
 impl Descriptors {
@@ -193,7 +202,7 @@ impl Descriptors {
         let create_descriptor_set_layouts =
             |pl: PipelineIndex, sets: &[&[DescriptorSetLayoutParams]]| -> Result<DescriptorSetLayouts, DescriptorError> {
                 let samplers_vk = [sampler.inner];
-                let samplers_rc = vec![sampler.clone()];
+                let samplers_rc = smallvec![sampler.clone()];
 
                 let descriptor_set_layouts = sets
                     .iter()
@@ -202,7 +211,8 @@ impl Descriptors {
                         let binding_flags = bindings
                             .iter()
                             .map(|params| params.binding_flags)
-                            .collect::<Vec<vk::DescriptorBindingFlags>>();
+                            .collect::<SmallVec<[vk::DescriptorBindingFlags; 8]>>();
+                        debug_assert!(!binding_flags.spilled());
                         let bindings = bindings
                             .iter()
                             .map(|params| {
@@ -216,7 +226,8 @@ impl Descriptors {
                                 }
                                 builder.build()
                             })
-                            .collect::<Vec<vk::DescriptorSetLayoutBinding>>();
+                            .collect::<SmallVec<[vk::DescriptorSetLayoutBinding; 8]>>();
+                        debug_assert!(!bindings.spilled());
                         let mut binding_flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&binding_flags);
                         let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
                             .push_next(&mut binding_flags)
@@ -226,7 +237,7 @@ impl Descriptors {
                         debug_utils::name_vulkan_object(device, dsl, format_args!("set {i} for pipeline {pl:?}"));
                         Ok(dsl)
                     })
-                    .collect::<Result<Vec<vk::DescriptorSetLayout>, DescriptorError>>()?;
+                    .collect::<Result<SmallVec<_>, DescriptorError>>()?;
 
                 Ok(DescriptorSetLayouts {
                     inner: descriptor_set_layouts,
@@ -267,7 +278,8 @@ impl Descriptors {
                     .descriptor_count(descriptor_layout.descriptor_count)
                     .build()
             })
-            .collect::<Vec<vk::DescriptorPoolSize>>();
+            .collect::<SmallVec<[vk::DescriptorPoolSize; PipelineIndex::Count as usize * 16]>>();
+        debug_assert!(!pool_sizes.spilled());
         let descriptor_sets_per_frame = pipeline_layouts.iter().flat_map(|pl| &pl.descriptor_set_layouts.inner).count() as u32;
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
             .max_sets(descriptor_sets_per_frame)
@@ -295,15 +307,16 @@ impl Descriptors {
                 debug_utils::name_vulkan_object(device, *descriptor_set, format_args!("set {i} for pipeline {pl:?}"));
             }
             Ok(DescriptorSets {
-                inner: descriptor_sets,
+                inner: descriptor_sets.into(),
                 device: device.clone(),
                 descriptor_pool: descriptor_pool.clone(),
             })
         })?;
         drop(descriptor_set_layouts_per_pipeline);
 
-        let material_slots_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| Ok(vec![None; MAX_TEXTURE_COUNT as usize]))?;
-        let material_updated_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| Ok(vec![true; MAX_TEXTURE_COUNT as usize]))?;
+        let material_slots_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| Ok(smallvec![None; MAX_TEXTURE_COUNT as usize]))?;
+        let material_updated_per_pipeline =
+            PipelineMap::new::<DescriptorError, _>(|_| Ok(smallvec_inline![true; MAX_TEXTURE_COUNT as usize]))?;
 
         let mut pbr_defaults_measurer = VulkanArenaMeasurer::new(device);
         PbrDefaults::measure(&mut pbr_defaults_measurer).map_err(DescriptorError::MeasureMaterialDefaultTextures)?;
@@ -366,7 +379,7 @@ impl Descriptors {
             }
         }
 
-        let mut pending_writes = Vec::with_capacity(materials_needing_update.len() * 6 + 1);
+        let mut pending_writes = PendingWritesVec::with_capacity(CONST_WRITES + materials_needing_update.len() * 6);
 
         // 0 is the index of the HDR attachment.
         let framebuffer_hdr_view = [framebuffer.attachments[0].inner];
@@ -396,10 +409,12 @@ impl Descriptors {
             self.material_updated_per_pipeline[*pipeline][*i as usize] = true;
         }
 
+        debug_assert_eq!(pending_writes.spilled(), !materials_needing_update.is_empty());
+
         // NOTE: pending_writes owns the image/buffers that are pointed to by
         // the write_descriptor_sets, and they need to be dropped only after
         // update_descriptor_sets.
-        let mut writes = Vec::with_capacity(pending_writes.len());
+        let mut writes = SmallVec::<[vk::WriteDescriptorSet; CONST_WRITES]>::with_capacity(pending_writes.len());
         for pending_write in &pending_writes {
             writes.push(pending_write.write_descriptor_set.unwrap());
         }
@@ -411,7 +426,7 @@ impl Descriptors {
         drop(materials_needing_update);
     }
 
-    fn write_material(&self, pipeline: PipelineIndex, index: u32, material: &Material, pending_writes: &mut Vec<PendingWrite>) {
+    fn write_material(&self, pipeline: PipelineIndex, index: u32, material: &Material, pending_writes: &mut PendingWritesVec) {
         match &material.data {
             PipelineSpecificData::Gltf {
                 base_color,
@@ -444,7 +459,7 @@ impl Descriptors {
     fn set_uniform_buffer(
         &self,
         pipeline: PipelineIndex,
-        pending_writes: &mut Vec<PendingWrite>,
+        pending_writes: &mut PendingWritesVec,
         (set, binding, array_index): (u32, u32, u32),
         (buffer, offset, size): (vk::Buffer, vk::DeviceSize, vk::DeviceSize),
     ) {
@@ -493,7 +508,7 @@ impl Descriptors {
     fn set_uniform_images(
         &self,
         pipeline: PipelineIndex,
-        pending_writes: &mut Vec<PendingWrite>,
+        pending_writes: &mut PendingWritesVec,
         (set, first_binding, array_index): (u32, u32, u32),
         image_views: &[vk::ImageView],
     ) {
