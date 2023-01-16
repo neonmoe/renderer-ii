@@ -56,6 +56,12 @@ struct Opts {
     #[argh(switch)]
     /// don't print anything (if --overwrite is not set, skips files that exist)
     silent: bool,
+    #[argh(switch)]
+    /// assume all input files are color files, use lanczos for all mip maps
+    assume_color: bool,
+    #[argh(switch)]
+    /// assume all input files are not color files, use linear filter for all mips
+    assume_linear: bool,
 }
 
 fn main() -> ExitCode {
@@ -142,11 +148,11 @@ fn convert(opts: &Opts, path: &str, counter: &AtomicUsize, count: usize) -> Resu
         }
     }
     let lowercase_path = path.to_lowercase();
-    let sharpen = lowercase_path.contains("color") || lowercase_path.contains("albedo");
+    let sharpen = !opts.assume_linear && (opts.assume_color || lowercase_path.contains("color") || lowercase_path.contains("albedo"));
     if sharpen {
-        print(opts, format_args!("Path {path} contains color/albedo: using lanczos for mipmaps.",));
+        print(opts, format_args!("Path {path} assumed color: using lanczos for mipmaps.",));
     } else {
-        print(opts, format_args!("Path {path} does not imply color: making linear mipmaps."));
+        print(opts, format_args!("Path {path} assumed not color: making linear mipmaps."));
     }
     let start_time = Instant::now();
 
@@ -208,7 +214,12 @@ fn convert(opts: &Opts, path: &str, counter: &AtomicUsize, count: usize) -> Resu
             let mip_image = if mip == 0 {
                 image.clone()
             } else {
-                image.resize_exact(image.width() / (1 << mip), image.height() / (1 << mip), FilterType::Lanczos3)
+                let filter = if sharpen {
+                    FilterType::Lanczos3
+                } else {
+                    FilterType::Triangle
+                };
+                image.resize_exact(image.width() / (1 << mip), image.height() / (1 << mip), filter)
             };
             compress_image(mip_image)
         })
