@@ -25,6 +25,14 @@ pub enum PhysicalDeviceRejectionReason {
     TextureFormatSupport(vk::Format, vk::FormatFeatureFlags),
     #[error("graphics, surface, or transfer queue family not found")]
     QueueFamilyMissing,
+    #[error("graphics driver or hardware does not support the required features")]
+    MultipleReasons(#[from] ManyPhysicalDeviceRejectionReasons),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ManyPhysicalDeviceRejectionReasons {
+    #[error("{0:#?}")]
+    Reasons(Vec<PhysicalDeviceRejectionReason>),
 }
 
 /// A unique id for every distinct GPU.
@@ -123,23 +131,25 @@ fn filter_capable_device(
     physical_device: vk::PhysicalDevice,
 ) -> Result<PhysicalDevice, PhysicalDeviceRejectionReason> {
     profiling::scope!("physical device capability checks");
-    // TODO: Collect the rejection reasons and return a Vec instead of short-circuiting
+
+    let mut rejection_reasons = Vec::new();
+    let mut reject = |reason: PhysicalDeviceRejectionReason| rejection_reasons.push(reason);
 
     let props = unsafe {
         profiling::scope!("vk::get_physical_device_properties");
         instance.get_physical_device_properties(physical_device)
     };
     if props.api_version < crate::instance::REQUIRED_VULKAN_VERSION {
-        return Err(PhysicalDeviceRejectionReason::VulkanVersion(1, 2));
+        reject(PhysicalDeviceRejectionReason::VulkanVersion(1, 2));
     };
 
     let extensions = get_extensions(instance, physical_device);
     if extensions.iter().all(|s| s != "VK_KHR_swapchain") {
-        return Err(PhysicalDeviceRejectionReason::Extension("VK_KHR_swapchain"));
+        reject(PhysicalDeviceRejectionReason::Extension("VK_KHR_swapchain"));
     }
 
     if let Err(reqs) = physical_device_features::has_required_features(instance, physical_device) {
-        return Err(PhysicalDeviceRejectionReason::DeviceRequirements(reqs));
+        reject(PhysicalDeviceRejectionReason::DeviceRequirements(reqs));
     }
 
     let queue_families = unsafe {
@@ -176,34 +186,40 @@ fn filter_capable_device(
         }
     }
 
-    let require_format = |format: vk::Format, flags: vk::FormatFeatureFlags| -> Result<(), PhysicalDeviceRejectionReason> {
+    // Checks that the device supports the format with the flags. Returns false
+    // and adds a rejection reason if not.
+    let format_supported = |format: vk::Format, flags: vk::FormatFeatureFlags| -> bool {
         let format_properties = unsafe {
             profiling::scope!("vk::get_physical_device_format_properties");
             instance.get_physical_device_format_properties(physical_device, format)
         };
-        if format_properties.optimal_tiling_features.contains(flags) {
-            Ok(())
+        format_properties.optimal_tiling_features.contains(flags)
+    };
+    let mut require_format = |format: vk::Format, flags: vk::FormatFeatureFlags| -> bool {
+        if !format_supported(format, flags) {
+            reject(PhysicalDeviceRejectionReason::TextureFormatSupport(format, flags));
+            false
         } else {
-            Err(PhysicalDeviceRejectionReason::TextureFormatSupport(format, flags))
+            true
         }
     };
 
     let texture_usage_features =
         vk::FormatFeatureFlags::SAMPLED_IMAGE | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR | vk::FormatFeatureFlags::TRANSFER_DST;
-    require_format(vk::Format::R8G8B8A8_SRGB, texture_usage_features)?; // Uncompressed textures
-    require_format(vk::Format::R8G8B8A8_UNORM, texture_usage_features)?; // Uncompressed textures
-    require_format(vk::Format::R8G8B8A8_SNORM, texture_usage_features)?; // Uncompressed textures
-    require_format(vk::Format::BC6H_SFLOAT_BLOCK, texture_usage_features)?; // Compressed textures
-    require_format(vk::Format::BC6H_UFLOAT_BLOCK, texture_usage_features)?; // Compressed textures
-    require_format(vk::Format::BC7_UNORM_BLOCK, texture_usage_features)?; // Compressed textures
-    require_format(vk::Format::BC7_SRGB_BLOCK, texture_usage_features)?; // Compressed textures
-    require_format(HDR_COLOR_ATTACHMENT_FORMAT, vk::FormatFeatureFlags::COLOR_ATTACHMENT)?; // HDR color attachments
+    require_format(vk::Format::R8G8B8A8_SRGB, texture_usage_features); // Uncompressed textures
+    require_format(vk::Format::R8G8B8A8_UNORM, texture_usage_features); // Uncompressed textures
+    require_format(vk::Format::R8G8B8A8_SNORM, texture_usage_features); // Uncompressed textures
+    require_format(vk::Format::BC6H_SFLOAT_BLOCK, texture_usage_features); // Compressed textures
+    require_format(vk::Format::BC6H_UFLOAT_BLOCK, texture_usage_features); // Compressed textures
+    require_format(vk::Format::BC7_UNORM_BLOCK, texture_usage_features); // Compressed textures
+    require_format(vk::Format::BC7_SRGB_BLOCK, texture_usage_features); // Compressed textures
+    require_format(HDR_COLOR_ATTACHMENT_FORMAT, vk::FormatFeatureFlags::COLOR_ATTACHMENT); // HDR color attachments
 
     // From the spec:
     // VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT feature...
     // ...must be supported for at least one of VK_FORMAT_D24_UNORM_S8_UINT and VK_FORMAT_D32_SFLOAT_S8_UINT.
     let depth_formats = [vk::Format::D24_UNORM_S8_UINT, vk::Format::D32_SFLOAT_S8_UINT];
-    let depth_format = if require_format(depth_formats[0], vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT).is_ok() {
+    let depth_format = if format_supported(depth_formats[0], vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT) {
         depth_formats[0]
     } else {
         depth_formats[1]
@@ -214,7 +230,10 @@ fn filter_capable_device(
             profiling::scope!("vk::get_physical_device_surface_formats");
             match surface_ext.get_physical_device_surface_formats(physical_device, surface) {
                 Ok(fmts) => fmts,
-                Err(err) => return Err(PhysicalDeviceRejectionReason::SurfaceQuery(err)),
+                Err(err) => {
+                    reject(PhysicalDeviceRejectionReason::SurfaceQuery(err));
+                    Vec::with_capacity(0)
+                }
             }
         };
         if let Some(format) = surface_formats.iter().find(|format| is_uncompressed_srgb(format.format)) {
@@ -225,32 +244,53 @@ fn filter_capable_device(
         }
     };
 
-    // TODO: Debugging limits based on spec minimums / manually chosen higher limits
-    limits::uniform_buffer_range(props.limits.max_uniform_buffer_range)?;
-    limits::storage_buffer_range(props.limits.max_storage_buffer_range)?;
-    limits::push_constants_size(props.limits.max_push_constants_size)?;
-    limits::bound_descriptor_sets(props.limits.max_bound_descriptor_sets)?;
-    limits::per_stage_resources(props.limits.max_per_stage_resources)?;
-    limits::vertex_input_attributes(props.limits.max_vertex_input_attributes)?;
-    limits::vertex_input_bindings(props.limits.max_vertex_input_bindings)?;
-    limits::vertex_input_attribute_offset(props.limits.max_vertex_input_attribute_offset)?;
-    limits::vertex_input_binding_stride(props.limits.max_vertex_input_binding_stride)?;
     {
+        use limits::*;
         use vk::DescriptorType as D;
-        limits::per_stage_descriptors(D::SAMPLER, props.limits.max_per_stage_descriptor_samplers)?;
-        limits::per_stage_descriptors(D::UNIFORM_BUFFER, props.limits.max_per_stage_descriptor_uniform_buffers)?;
-        limits::per_stage_descriptors(D::STORAGE_BUFFER, props.limits.max_per_stage_descriptor_storage_buffers)?;
-        limits::per_stage_descriptors(D::SAMPLED_IMAGE, props.limits.max_per_stage_descriptor_sampled_images)?;
-        limits::per_stage_descriptors(D::STORAGE_IMAGE, props.limits.max_per_stage_descriptor_storage_images)?;
-        limits::per_stage_descriptors(D::INPUT_ATTACHMENT, props.limits.max_per_stage_descriptor_input_attachments)?;
-        limits::per_set_descriptors(D::SAMPLER, props.limits.max_descriptor_set_samplers)?;
-        limits::per_set_descriptors(D::UNIFORM_BUFFER, props.limits.max_descriptor_set_uniform_buffers)?;
-        limits::per_set_descriptors(D::UNIFORM_BUFFER_DYNAMIC, props.limits.max_descriptor_set_uniform_buffers_dynamic)?;
-        limits::per_set_descriptors(D::STORAGE_BUFFER, props.limits.max_descriptor_set_storage_buffers)?;
-        limits::per_set_descriptors(D::STORAGE_BUFFER_DYNAMIC, props.limits.max_descriptor_set_storage_buffers_dynamic)?;
-        limits::per_set_descriptors(D::SAMPLED_IMAGE, props.limits.max_descriptor_set_sampled_images)?;
-        limits::per_set_descriptors(D::STORAGE_IMAGE, props.limits.max_descriptor_set_storage_images)?;
-        limits::per_set_descriptors(D::INPUT_ATTACHMENT, props.limits.max_descriptor_set_input_attachments)?;
+
+        // TODO: Debugging limits based on spec minimums / manually chosen higher limits
+        let limits = &props.limits;
+
+        let mut check_limit_break = |r: Result<(), PhysicalDeviceLimitBreak>| {
+            if let Err(reason) = r {
+                reject(reason.into());
+            }
+        };
+        check_limit_break(uniform_buffer_range(limits.max_uniform_buffer_range));
+        check_limit_break(storage_buffer_range(limits.max_storage_buffer_range));
+        check_limit_break(push_constants_size(limits.max_push_constants_size));
+        check_limit_break(bound_descriptor_sets(limits.max_bound_descriptor_sets));
+        check_limit_break(per_stage_resources(limits.max_per_stage_resources));
+        check_limit_break(vertex_input_attributes(limits.max_vertex_input_attributes));
+        check_limit_break(vertex_input_bindings(limits.max_vertex_input_bindings));
+        check_limit_break(vertex_input_attribute_offset(limits.max_vertex_input_attribute_offset));
+        check_limit_break(vertex_input_binding_stride(limits.max_vertex_input_binding_stride));
+
+        let mut check_per_stage_descs = |dt: vk::DescriptorType, limit: u32| {
+            if let Err(reason) = per_stage_descriptors(dt, limit) {
+                reject(reason.into());
+            }
+        };
+        check_per_stage_descs(D::SAMPLER, limits.max_per_stage_descriptor_samplers);
+        check_per_stage_descs(D::UNIFORM_BUFFER, limits.max_per_stage_descriptor_uniform_buffers);
+        check_per_stage_descs(D::STORAGE_BUFFER, limits.max_per_stage_descriptor_storage_buffers);
+        check_per_stage_descs(D::SAMPLED_IMAGE, limits.max_per_stage_descriptor_sampled_images);
+        check_per_stage_descs(D::STORAGE_IMAGE, limits.max_per_stage_descriptor_storage_images);
+        check_per_stage_descs(D::INPUT_ATTACHMENT, limits.max_per_stage_descriptor_input_attachments);
+
+        let mut check_per_set_descs = |dt: vk::DescriptorType, limit: u32| {
+            if let Err(reason) = per_set_descriptors(dt, limit) {
+                reject(reason.into());
+            }
+        };
+        check_per_set_descs(D::SAMPLER, limits.max_descriptor_set_samplers);
+        check_per_set_descs(D::UNIFORM_BUFFER, limits.max_descriptor_set_uniform_buffers);
+        check_per_set_descs(D::UNIFORM_BUFFER_DYNAMIC, limits.max_descriptor_set_uniform_buffers_dynamic);
+        check_per_set_descs(D::STORAGE_BUFFER, limits.max_descriptor_set_storage_buffers);
+        check_per_set_descs(D::STORAGE_BUFFER_DYNAMIC, limits.max_descriptor_set_storage_buffers_dynamic);
+        check_per_set_descs(D::SAMPLED_IMAGE, limits.max_descriptor_set_sampled_images);
+        check_per_set_descs(D::STORAGE_IMAGE, limits.max_descriptor_set_storage_images);
+        check_per_set_descs(D::INPUT_ATTACHMENT, limits.max_descriptor_set_input_attachments);
     }
 
     if let (Some(graphics_queue_family), Some(surface_queue_family), Some(transfer_queue_family)) =
@@ -267,21 +307,29 @@ fn filter_capable_device(
         let name = format!("{}{}", name, pd_type);
         let uuid = GpuId(props.pipeline_cache_uuid);
 
-        Ok(PhysicalDevice {
-            name,
-            uuid,
-            inner: physical_device,
-            properties: props,
-            graphics_queue_family,
-            surface_queue_family,
-            transfer_queue_family,
-            swapchain_format,
-            swapchain_color_space,
-            depth_format,
-            extensions,
-        })
+        if rejection_reasons.is_empty() {
+            return Ok(PhysicalDevice {
+                name,
+                uuid,
+                inner: physical_device,
+                properties: props,
+                graphics_queue_family,
+                surface_queue_family,
+                transfer_queue_family,
+                swapchain_format,
+                swapchain_color_space,
+                depth_format,
+                extensions,
+            });
+        }
     } else {
-        Err(PhysicalDeviceRejectionReason::QueueFamilyMissing)
+        reject(PhysicalDeviceRejectionReason::QueueFamilyMissing);
+    }
+
+    if rejection_reasons.len() == 1 {
+        Err(rejection_reasons.remove(0))
+    } else {
+        Err(ManyPhysicalDeviceRejectionReasons::Reasons(rejection_reasons).into())
     }
 }
 
