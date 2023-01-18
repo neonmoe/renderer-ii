@@ -3,7 +3,9 @@ use crate::pipeline_parameters::limits::{self, PhysicalDeviceLimitBreak};
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
+use std::error::Error;
 use std::ffi::CStr;
+use std::fmt::{Display, Formatter};
 
 pub const HDR_COLOR_ATTACHMENT_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 
@@ -26,13 +28,30 @@ pub enum PhysicalDeviceRejectionReason {
     #[error("graphics, surface, or transfer queue family not found")]
     QueueFamilyMissing,
     #[error("graphics driver or hardware does not support the required features")]
-    MultipleReasons(#[from] ManyPhysicalDeviceRejectionReasons),
+    MultipleReasons(#[from] RejectionReasonList),
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum ManyPhysicalDeviceRejectionReasons {
-    #[error("{0:#?}")]
-    Reasons(Vec<PhysicalDeviceRejectionReason>),
+#[derive(Debug)]
+pub struct RejectionReasonList(Vec<PhysicalDeviceRejectionReason>);
+impl Error for RejectionReasonList {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+}
+impl Display for RejectionReasonList {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        for reason in &self.0 {
+            write!(f, "• ")?;
+            let mut next_reason: Option<&(dyn Error + 'static)> = Some(reason);
+            let mut indents = 0;
+            while let Some(reason) = next_reason {
+                writeln!(f, "{:indents$}{reason}", "")?;
+                next_reason = reason.source();
+                indents += 4;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// A unique id for every distinct GPU.
@@ -186,8 +205,6 @@ fn filter_capable_device(
         }
     }
 
-    // Checks that the device supports the format with the flags. Returns false
-    // and adds a rejection reason if not.
     let format_supported = |format: vk::Format, flags: vk::FormatFeatureFlags| -> bool {
         let format_properties = unsafe {
             profiling::scope!("vk::get_physical_device_format_properties");
@@ -329,7 +346,7 @@ fn filter_capable_device(
     if rejection_reasons.len() == 1 {
         Err(rejection_reasons.remove(0))
     } else {
-        Err(ManyPhysicalDeviceRejectionReasons::Reasons(rejection_reasons).into())
+        Err(RejectionReasonList(rejection_reasons).into())
     }
 }
 
