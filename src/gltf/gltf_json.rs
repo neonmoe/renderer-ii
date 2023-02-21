@@ -133,20 +133,15 @@ pub(crate) struct Material {
     pub alpha_cutoff: Option<f32>,
 }
 
-#[derive(Deserialize, PartialEq, Clone, Copy)]
+#[derive(Deserialize, PartialEq, Clone, Copy, Default)]
 pub enum AlphaMode {
+    #[default]
     #[serde(rename = "OPAQUE")]
     Opaque,
     #[serde(rename = "MASK")]
     Mask,
     #[serde(rename = "BLEND")]
     Blend,
-}
-
-impl Default for AlphaMode {
-    fn default() -> Self {
-        AlphaMode::Opaque
-    }
 }
 
 #[derive(Deserialize)]
@@ -223,8 +218,9 @@ pub(crate) struct AnimationSampler {
     pub output: usize,
 }
 
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Deserialize, Clone, Copy, Default)]
 pub enum AnimationInterpolation {
+    #[default]
     #[serde(rename = "LINEAR")]
     Linear,
     #[serde(rename = "STEP")]
@@ -234,11 +230,6 @@ pub enum AnimationInterpolation {
     // data needs to be fiddled with a bit.
     //#[serde(rename = "CUBICSPLINE")]
     //CubicSpline,
-}
-impl Default for AnimationInterpolation {
-    fn default() -> Self {
-        AnimationInterpolation::Linear
-    }
 }
 impl AnimationInterpolation {
     pub fn interpolate_vec3(self, keyframes: &[(f32, Vec3)], time: f32) -> Option<Vec3> {

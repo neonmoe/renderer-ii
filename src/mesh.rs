@@ -33,7 +33,7 @@ impl Mesh {
             vertices_offsets,
             index_buffer,
             index_buffer_offset,
-            index_count: (index_buffer_size / std::mem::size_of::<I>() as u64) as u32,
+            index_count: (index_buffer_size / core::mem::size_of::<I>() as u64) as u32,
             index_type: I::vk_index_type(),
         }
     }

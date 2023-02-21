@@ -1,3 +1,8 @@
+#![feature(error_in_core)]
+
+extern crate alloc;
+extern crate thiserror_core as thiserror;
+
 use glam::{Mat4, Quat, Vec3};
 use log::LevelFilter;
 use sdl2::controller::{Axis, GameController};
