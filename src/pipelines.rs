@@ -1,4 +1,4 @@
-use crate::physical_device::HDR_COLOR_ATTACHMENT_FORMAT;
+use crate::framebuffers::HDR_COLOR_ATTACHMENT_FORMAT;
 use crate::pipeline_parameters::{PipelineMap, Shader, ALL_PIPELINES, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout, RenderPass};
 use crate::{debug_utils, PipelineIndex};

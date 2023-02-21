@@ -1,6 +1,7 @@
 use crate::physical_device::QueueFamily;
 use crate::vulkan_raii::Device;
 use crate::{debug_utils, physical_device_features, Error, PhysicalDevice};
+use ash::extensions::khr;
 use ash::{vk, Instance};
 use smallvec::{smallvec, SmallVec};
 use std::ffi::c_char;
@@ -17,8 +18,9 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
         physical_device.surface_queue_family,
     ];
     let queue_create_infos = create_device_queue_create_infos(&queue_families, &ones);
-    let mut extensions: SmallVec<[*const c_char; 2]> = smallvec![cstr!("VK_KHR_swapchain").as_ptr()];
-    log::debug!("Device extension: VK_KHR_swapchain");
+
+    let mut extensions: SmallVec<[*const c_char; 2]> = smallvec![khr::Swapchain::name().as_ptr()];
+    log::debug!("Device extension: {}", khr::Swapchain::name().to_str().unwrap());
     if physical_device.extension_supported("VK_EXT_memory_budget") {
         extensions.push(cstr!("VK_EXT_memory_budget").as_ptr());
         log::debug!("Device extension (optional): VK_EXT_memory_budget");

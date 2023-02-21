@@ -1,3 +1,4 @@
+use crate::framebuffers::HDR_COLOR_ATTACHMENT_FORMAT;
 use crate::physical_device_features::{self, SupportedFeatures};
 use crate::pipeline_parameters::limits::{self, PhysicalDeviceLimitBreak};
 use ash::extensions::khr;
@@ -6,8 +7,6 @@ use ash::{Entry, Instance};
 use std::error::Error;
 use std::ffi::CStr;
 use std::fmt::{Display, Formatter};
-
-pub const HDR_COLOR_ATTACHMENT_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 
 #[derive(thiserror::Error, Debug)]
 pub enum PhysicalDeviceRejectionReason {
@@ -163,8 +162,9 @@ fn filter_capable_device(
     };
 
     let extensions = get_extensions(instance, physical_device);
-    if extensions.iter().all(|s| s != "VK_KHR_swapchain") {
-        reject(PhysicalDeviceRejectionReason::Extension("VK_KHR_swapchain"));
+    let swapchain_ext_name = khr::Swapchain::name().to_str().unwrap();
+    if extensions.iter().all(|s| s != swapchain_ext_name) {
+        reject(PhysicalDeviceRejectionReason::Extension(swapchain_ext_name));
     }
 
     if let Err(reqs) = physical_device_features::has_required_features(instance, physical_device) {

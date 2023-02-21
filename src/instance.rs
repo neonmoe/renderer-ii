@@ -1,4 +1,5 @@
 use crate::debug_utils;
+use ash::extensions::ext;
 use ash::{vk, Entry};
 use raw_window_handle::HasRawWindowHandle;
 use smallvec::SmallVec;
@@ -52,10 +53,11 @@ impl Instance {
                 cs
             })
             .collect::<SmallVec<[*const c_char; 4]>>();
-        let debug_utils_available = is_extension_supported(&entry, "VK_EXT_debug_utils");
+        let debug_utils_name = ext::DebugUtils::name().to_str().unwrap();
+        let debug_utils_available = is_extension_supported(&entry, debug_utils_name);
         if debug_utils_available {
-            extensions.push(cstr!("VK_EXT_debug_utils").as_ptr());
-            log::debug!("Instance extension (optional): VK_EXT_debug_utils");
+            extensions.push(ext::DebugUtils::name().as_ptr());
+            log::debug!("Instance extension (optional): {debug_utils_name}");
         }
 
         let mut create_info = vk::InstanceCreateInfo::builder()
