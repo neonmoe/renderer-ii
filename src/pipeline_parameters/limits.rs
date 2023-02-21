@@ -52,7 +52,7 @@ pub fn storage_buffer_range(max_storage_buffer_range: u32) -> Result<(), Physica
 }
 
 pub fn push_constants_size(max_push_constants_size: u32) -> Result<(), PhysicalDeviceLimitBreak> {
-    let req = std::mem::size_of::<MaterialPushConstants>() as u32;
+    let req = core::mem::size_of::<MaterialPushConstants>() as u32;
     if max_push_constants_size >= req {
         Ok(())
     } else {

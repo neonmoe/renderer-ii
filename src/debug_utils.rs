@@ -1,9 +1,10 @@
+use alloc::ffi::CString;
 use ash::extensions::ext;
 use ash::extensions::ext::DebugUtils;
 use ash::{vk, Device, Entry, Instance};
+use core::ffi::CStr;
+use core::fmt::Arguments;
 use once_cell::sync::Lazy;
-use std::ffi::{CStr, CString};
-use std::fmt::Arguments;
 use std::os::raw::{c_char, c_void};
 use std::sync::Mutex;
 
@@ -123,7 +124,7 @@ fn vulkan_debug(
     object_name: Option<&str>,
 ) {
     let formatted_message = {
-        use std::fmt::Write;
+        use core::fmt::Write;
         let mut msg = String::with_capacity(256);
         let _ = write!(&mut msg, "[{}] {}", message_id, message);
         if let Some(object_name) = object_name {

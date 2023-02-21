@@ -1,9 +1,8 @@
 use crate::scene::camera::GlobalTransforms;
 use crate::GltfFactors;
 use ash::vk;
+use core::mem::{self, MaybeUninit};
 use glam::{Mat4, Vec2, Vec3, Vec4};
-use std::mem;
-use std::mem::MaybeUninit;
 
 mod constants;
 pub mod limits;
@@ -123,14 +122,14 @@ impl<T> PipelineMap<T> {
     }
 }
 
-impl<T> std::ops::Index<PipelineIndex> for PipelineMap<T> {
+impl<T> core::ops::Index<PipelineIndex> for PipelineMap<T> {
     type Output = T;
     fn index(&self, index: PipelineIndex) -> &Self::Output {
         // Safety: initialized in PipelineMap::new
         unsafe { self.buffer[index as usize].assume_init_ref() }
     }
 }
-impl<T> std::ops::IndexMut<PipelineIndex> for PipelineMap<T> {
+impl<T> core::ops::IndexMut<PipelineIndex> for PipelineMap<T> {
     fn index_mut(&mut self, index: PipelineIndex) -> &mut Self::Output {
         // Safety: initialized in PipelineMap::new
         unsafe { self.buffer[index as usize].assume_init_mut() }
@@ -232,19 +231,19 @@ static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescri
         binding: 0,
         location: 1,
         format: vk::Format::R32G32B32A32_SFLOAT,
-        offset: std::mem::size_of::<[Vec4; 1]>() as u32,
+        offset: mem::size_of::<[Vec4; 1]>() as u32,
     },
     vk::VertexInputAttributeDescription {
         binding: 0,
         location: 2,
         format: vk::Format::R32G32B32A32_SFLOAT,
-        offset: std::mem::size_of::<[Vec4; 2]>() as u32,
+        offset: mem::size_of::<[Vec4; 2]>() as u32,
     },
     vk::VertexInputAttributeDescription {
         binding: 0,
         location: 3,
         format: vk::Format::R32G32B32A32_SFLOAT,
-        offset: std::mem::size_of::<[Vec4; 3]>() as u32,
+        offset: mem::size_of::<[Vec4; 3]>() as u32,
     },
 ];
 static POSITION_BINDING_1_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {

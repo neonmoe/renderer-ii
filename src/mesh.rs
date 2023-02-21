@@ -1,7 +1,7 @@
 use crate::vulkan_raii::Buffer;
+use alloc::rc::Rc;
 use ash::vk;
 use smallvec::SmallVec;
-use std::rc::Rc;
 
 pub(crate) const VERTEX_BUFFERS: usize = 6;
 

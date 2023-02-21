@@ -3,8 +3,8 @@ use crate::uploader::UploadError;
 use crate::vulkan_raii::{Device, ImageView};
 use crate::{debug_utils, ForImages, Uploader, VulkanArena};
 use crate::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
+use alloc::rc::Rc;
 use ash::vk;
-use std::rc::Rc;
 
 pub mod ntex;
 

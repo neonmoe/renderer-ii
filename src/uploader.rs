@@ -4,8 +4,8 @@ use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
 use crate::{ForBuffers, PhysicalDevice, VulkanArena};
 use ash::vk;
 use ash::Instance;
-use std::fmt::Arguments;
-use std::time::Duration;
+use core::fmt::Arguments;
+use core::time::Duration;
 
 /// General errors related to the creation and usage of [Uploader]. The actual
 /// uploads have their own error type, [UploadError].

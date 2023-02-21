@@ -1,10 +1,10 @@
 use crate::debug_utils;
 use crate::vulkan_raii::{self, AnyImage, Device, Surface};
 use crate::PhysicalDevice;
+use alloc::rc::Rc;
 use ash::extensions::khr;
 use ash::{vk, Entry, Instance};
 use smallvec::SmallVec;
-use std::rc::Rc;
 
 #[derive(thiserror::Error, Debug)]
 pub enum SwapchainError {

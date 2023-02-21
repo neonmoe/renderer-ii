@@ -3,12 +3,13 @@ use crate::debug_utils;
 use crate::uploader::UploadError;
 use crate::vulkan_raii::{Buffer, Device, DeviceMemory, Image};
 use crate::{display_utils, PhysicalDevice, Uploader};
+use alloc::rc::Rc;
 use ash::vk;
 use ash::Instance;
-use std::fmt::{Arguments, Debug};
-use std::marker::PhantomData;
-use std::ptr;
-use std::rc::Rc;
+use core::fmt::{Arguments, Debug};
+use core::marker::PhantomData;
+use core::ptr;
+use core::sync::atomic::Ordering;
 
 #[derive(thiserror::Error, Debug)]
 pub enum VulkanArenaError {
@@ -75,7 +76,7 @@ impl<T: ArenaType> Drop for VulkanArena<T> {
         }
         // The memory may still be in use, and after this, usage can't be
         // tracked. So assume the entire memory block is in use.
-        crate::allocation::IN_USE.fetch_add(self.total_size - self.offset, std::sync::atomic::Ordering::Relaxed);
+        crate::allocation::IN_USE.fetch_add(self.total_size - self.offset, Ordering::Relaxed);
     }
 }
 
@@ -115,7 +116,7 @@ impl<T: ArenaType> VulkanArena<T> {
 
         let memory = Rc::new(DeviceMemory::new(memory, device.clone(), size));
         // IN_USE gets bumped by DeviceMemory::new, subtract it back down because none of it is actually in use.
-        crate::allocation::IN_USE.fetch_sub(size, std::sync::atomic::Ordering::Relaxed);
+        crate::allocation::IN_USE.fetch_sub(size, core::sync::atomic::Ordering::Relaxed);
 
         Ok(VulkanArena {
             device: device.clone(),
@@ -144,7 +145,7 @@ impl<T: ArenaType> VulkanArena<T> {
         } else {
             self.pinned_buffers.clear();
             // Everything created from this arena no longer exists, so none of the memory is in use anymore.
-            crate::allocation::IN_USE.fetch_sub(self.offset, std::sync::atomic::Ordering::Relaxed);
+            crate::allocation::IN_USE.fetch_sub(self.offset, Ordering::Relaxed);
             self.offset = 0;
             Ok(())
         }
@@ -277,7 +278,7 @@ impl VulkanArena<ForBuffers> {
         }
 
         let new_offset = offset + required_size;
-        crate::allocation::IN_USE.fetch_add(new_offset - self.offset, std::sync::atomic::Ordering::Relaxed);
+        crate::allocation::IN_USE.fetch_add(new_offset - self.offset, Ordering::Relaxed);
         self.offset = new_offset;
 
         Ok(Buffer {
@@ -320,7 +321,7 @@ impl VulkanArena<ForImages> {
         debug_utils::name_vulkan_object(&self.device, image, name);
 
         let new_offset = offset + size;
-        crate::allocation::IN_USE.fetch_add(new_offset - self.offset, std::sync::atomic::Ordering::Relaxed);
+        crate::allocation::IN_USE.fetch_add(new_offset - self.offset, Ordering::Relaxed);
         self.offset = new_offset;
 
         Ok(Image {

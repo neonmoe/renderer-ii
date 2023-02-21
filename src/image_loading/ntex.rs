@@ -1,8 +1,8 @@
 use crate::display_utils::Bytes;
 use ash::vk;
+use core::convert::TryInto;
+use core::ops::Range;
 use smallvec::SmallVec;
-use std::convert::TryInto;
-use std::ops::Range;
 
 #[derive(thiserror::Error, Debug)]
 pub enum NtexDecodeError {

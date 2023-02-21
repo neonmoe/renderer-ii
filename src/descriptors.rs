@@ -11,14 +11,14 @@ use crate::vulkan_raii::{
     Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, Framebuffer, ImageView, PipelineLayout, Sampler,
 };
 use crate::{debug_utils, Instance, PhysicalDevice};
+use alloc::rc::{Rc, Weak};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
+use core::hash::{Hash, Hasher};
+use core::mem;
+use core::time::Duration;
 use glam::Vec4;
 use smallvec::{smallvec, smallvec_inline, SmallVec};
-use std::hash::{Hash, Hasher};
-use std::mem;
-use std::rc::{Rc, Weak};
-use std::time::Duration;
 
 pub use gltf_json::AlphaMode;
 
@@ -399,7 +399,7 @@ impl Descriptors {
         for pipeline in SKINNED_PIPELINES {
             // NOTE: This is the size of just one buffer. The backing joints
             // buffer is much longer, but it is offset with dynamic offsets.
-            let bones_buffer_size = std::mem::size_of::<glam::Mat4>() as vk::DeviceSize * MAX_BONE_COUNT as vk::DeviceSize;
+            let bones_buffer_size = mem::size_of::<glam::Mat4>() as vk::DeviceSize * MAX_BONE_COUNT as vk::DeviceSize;
             let skinned_mesh_joints_buffer = (skinned_mesh_joints_buffer.inner, 0, bones_buffer_size);
             self.set_uniform_buffer(pipeline, &mut pending_writes, (2, 0, 0), skinned_mesh_joints_buffer);
         }

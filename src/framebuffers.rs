@@ -3,9 +3,9 @@ use crate::debug_utils;
 use crate::pipelines::AttachmentLayout;
 use crate::vulkan_raii::{AnyImage, Device, Framebuffer, ImageView};
 use crate::{PhysicalDevice, Pipelines, Swapchain};
+use alloc::rc::Rc;
 use ash::{vk, Instance};
 use smallvec::{smallvec, SmallVec};
-use std::rc::Rc;
 
 pub const HDR_COLOR_ATTACHMENT_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 

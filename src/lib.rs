@@ -1,9 +1,11 @@
 //! A Vulkan renderer for 3D games. The mission statement will
 //! probably narrow down over time.
 
+extern crate alloc;
+
 macro_rules! cstr {
     ($string:literal) => {
-        unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(concat!($string, "\0").as_bytes()) }
+        unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(concat!($string, "\0").as_bytes()) }
     };
 }
 
@@ -15,7 +17,7 @@ mod physical_device_features;
 // public-facing modules:
 
 mod allocation {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use core::sync::atomic::{AtomicU64, Ordering};
     pub(crate) static ALLOCATED: AtomicU64 = AtomicU64::new(0);
     pub(crate) static IN_USE: AtomicU64 = AtomicU64::new(0);
 
@@ -44,7 +46,7 @@ mod device;
 pub use device::create_device;
 
 pub mod display_utils {
-    use std::fmt::{Display, Formatter, Result};
+    use core::fmt::{Display, Formatter, Result};
 
     #[derive(Debug)]
     pub struct Bytes(pub u64);

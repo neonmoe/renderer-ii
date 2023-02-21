@@ -1,9 +1,9 @@
 use crate::debug_utils;
 use ash::extensions::ext;
 use ash::{vk, Entry};
+use core::ffi::CStr;
 use raw_window_handle::HasRawWindowHandle;
 use smallvec::SmallVec;
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_2;

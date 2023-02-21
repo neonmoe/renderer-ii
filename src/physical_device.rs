@@ -4,9 +4,9 @@ use crate::pipeline_parameters::limits::{self, PhysicalDeviceLimitBreak};
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
+use core::ffi::CStr;
+use core::fmt::{Display, Formatter, self};
 use std::error::Error;
-use std::ffi::CStr;
-use std::fmt::{Display, Formatter};
 
 #[derive(thiserror::Error, Debug)]
 pub enum PhysicalDeviceRejectionReason {
@@ -38,7 +38,7 @@ impl Error for RejectionReasonList {
     }
 }
 impl Display for RejectionReasonList {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         for reason in &self.0 {
             write!(f, "• ")?;
             let mut next_reason: Option<&(dyn Error + 'static)> = Some(reason);
@@ -369,7 +369,7 @@ fn get_extensions(instance: &Instance, physical_device: vk::PhysicalDevice) -> V
     }
 }
 
-fn get_device_name(properties: &vk::PhysicalDeviceProperties) -> std::borrow::Cow<'_, str> {
+fn get_device_name(properties: &vk::PhysicalDeviceProperties) -> alloc::borrow::Cow<'_, str> {
     unsafe { CStr::from_ptr(properties.device_name[..].as_ptr()) }.to_string_lossy()
 }
 

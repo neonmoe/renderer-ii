@@ -6,14 +6,15 @@ use crate::mesh::Mesh;
 use crate::vk;
 use crate::vulkan_raii::{Buffer, Device, ImageView};
 use crate::{Descriptors, ForBuffers, ForImages, Material, Uploader};
+use alloc::rc::Rc;
+use core::mem;
+use core::ops::Range;
 use glam::{Mat4, Quat, Vec3, Vec4};
 use memmap2::{Mmap, MmapOptions};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::ops::Range;
 use std::path::Path;
-use std::rc::Rc;
 
 pub(crate) mod gltf_json;
 pub(crate) mod mesh_iter;
@@ -40,7 +41,7 @@ pub enum GltfLoadingError {
     #[error("too many glb binary chunks")]
     TooManyGlbBinaryChunks,
     #[error("glb json is not valid utf-8")]
-    InvalidGlbJson(#[source] std::str::Utf8Error),
+    InvalidGlbJson(#[source] core::str::Utf8Error),
     #[error("glb json chunk missing")]
     MissingGlbJson,
     #[error("failed to deserialize gltf json")]
@@ -286,7 +287,7 @@ pub(crate) fn read_glb_json_and_buffer(glb: &[u8]) -> Result<(&str, &[u8]), Gltf
                 if json.is_some() {
                     return Err(GltfLoadingError::TooManyGlbJsonChunks);
                 }
-                json = Some(std::str::from_utf8(chunk_bytes).map_err(GltfLoadingError::InvalidGlbJson)?);
+                json = Some(core::str::from_utf8(chunk_bytes).map_err(GltfLoadingError::InvalidGlbJson)?);
             }
             MAGIC_BIN => {
                 if buffer.is_some() {
@@ -495,7 +496,7 @@ fn create_gltf(
         let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex)));
         let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
 
-        let factors_size = std::mem::size_of::<GltfFactors>() as u64;
+        let factors_size = mem::size_of::<GltfFactors>() as u64;
         let factors = (factors_buffer.clone(), factors_size * i as u64, factors_size);
 
         let pipeline_specific_data = PipelineSpecificData::Gltf {
@@ -636,7 +637,7 @@ fn create_gltf(
                 GLTF_FLOAT,
                 "MAT4",
             )?;
-            if skin.joints.len() * std::mem::size_of::<Mat4>() != inverse_bind_matrices.len() {
+            if skin.joints.len() * mem::size_of::<Mat4>() != inverse_bind_matrices.len() {
                 return Err(GltfLoadingError::Spec(
                     "skin has a different amount of joints and inverse bind matrices",
                 ));

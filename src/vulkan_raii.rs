@@ -5,11 +5,12 @@
 //! Take care to get rid of these asap! Leaving Rc's lying around is a
 //! recipe for memory leaks.
 
+use alloc::rc::Rc;
 use ash::extensions::khr;
 use ash::vk;
+use core::hash::{Hash, Hasher};
+use core::sync::atomic::Ordering;
 use smallvec::SmallVec;
-use std::hash::{Hash, Hasher};
-use std::rc::Rc;
 
 /// The Vulkan device, which is used to make pretty much all Vulkan calls after
 /// its creation.
@@ -34,7 +35,7 @@ impl Device {
         unsafe { self.inner.destroy_device(None) };
     }
 }
-impl std::ops::Deref for Device {
+impl core::ops::Deref for Device {
     type Target = ash::Device;
     fn deref(&self) -> &Self::Target {
         self.inner
@@ -135,8 +136,8 @@ pub struct DeviceMemory {
 }
 impl DeviceMemory {
     pub fn new(inner: vk::DeviceMemory, device: Device, size: u64) -> DeviceMemory {
-        crate::allocation::ALLOCATED.fetch_add(size, std::sync::atomic::Ordering::Relaxed);
-        crate::allocation::IN_USE.fetch_add(size, std::sync::atomic::Ordering::Relaxed);
+        crate::allocation::ALLOCATED.fetch_add(size, Ordering::Relaxed);
+        crate::allocation::IN_USE.fetch_add(size, Ordering::Relaxed);
         DeviceMemory { inner, device, size }
     }
 }
@@ -144,8 +145,8 @@ impl Drop for DeviceMemory {
     fn drop(&mut self) {
         profiling::scope!("vk::free_memory");
         log::trace!("vk::free_memory({:?}) [{} bytes]", self.inner, self.size);
-        crate::allocation::IN_USE.fetch_sub(self.size, std::sync::atomic::Ordering::Relaxed);
-        crate::allocation::ALLOCATED.fetch_sub(self.size, std::sync::atomic::Ordering::Relaxed);
+        crate::allocation::IN_USE.fetch_sub(self.size, Ordering::Relaxed);
+        crate::allocation::ALLOCATED.fetch_sub(self.size, Ordering::Relaxed);
         unsafe { self.device.free_memory(self.inner, None) };
     }
 }

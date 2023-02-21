@@ -3,8 +3,8 @@ use crate::vulkan_raii::Device;
 use crate::{debug_utils, physical_device_features, Error, PhysicalDevice};
 use ash::extensions::khr;
 use ash::{vk, Instance};
+use core::ffi::c_char;
 use smallvec::{smallvec, SmallVec};
-use std::ffi::c_char;
 
 /// Creates a new VkDevice. It only needs to be destroyed if creating a new one.
 pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> Result<Device, Error> {

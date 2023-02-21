@@ -10,7 +10,7 @@ pub(crate) const unsafe fn include_bytes_as_u32s(bytes: &[u8]) -> &[u32] {
     // There are 4x as many elements in the u8 slice as the u32 slice.
     let u32_slice_len = bytes.len() / 4;
     // Safety: ptr and len are based on the safe slice above, len is modified ot match the u8 -> u32 transmute.
-    std::slice::from_raw_parts(u32_ptr, u32_slice_len)
+    core::slice::from_raw_parts(u32_ptr, u32_slice_len)
 }
 
 /// Like `include_bytes`, but it transmutes the u8s to a slice of one-fourth as

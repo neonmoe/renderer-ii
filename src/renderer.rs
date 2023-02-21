@@ -6,11 +6,11 @@ use crate::pipeline_parameters::{MaterialPushConstants, PipelineMap, RenderSetti
 use crate::scene::{SkinnedModel, StaticMeshMap};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use crate::{ForBuffers, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
+use alloc::rc::Rc;
 use ash::{vk, Instance};
+use core::fmt::Arguments;
 use glam::Mat4;
 use smallvec::SmallVec;
-use std::fmt::Arguments;
-use std::rc::Rc;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RendererError {

@@ -6,7 +6,7 @@ use crate::{Descriptors, PhysicalDevice};
 use ash::vk;
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use std::rc::Rc;
+use alloc::rc::Rc;
 
 pub(crate) enum AttachmentLayout {
     /// Attachments:

@@ -2,7 +2,7 @@ use crate::arena::{align_up, ArenaType, ForBuffers, ForImages};
 use crate::debug_utils;
 use crate::vulkan_raii::Device;
 use ash::vk;
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 #[derive(thiserror::Error, Debug)]
 pub enum VulkanArenaMeasurementError {
