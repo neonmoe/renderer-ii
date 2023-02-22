@@ -5,8 +5,8 @@ use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
 use core::ffi::CStr;
-use core::fmt::{Display, Formatter, self};
-use std::error::Error;
+use core::fmt::{self, Display, Formatter};
+use core::error::Error;
 
 #[derive(thiserror::Error, Debug)]
 pub enum PhysicalDeviceRejectionReason {

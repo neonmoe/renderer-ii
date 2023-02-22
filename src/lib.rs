@@ -3,10 +3,6 @@
 
 // TODO: #![warn(clippy::pedantic)] (maybe on the main branch though)
 // TODO: #![no_std]
-
-#![warn(clippy::std_instead_of_core)]
-#![warn(clippy::std_instead_of_alloc)]
-#![warn(clippy::alloc_instead_of_core)]
 #![feature(error_in_core)]
 
 extern crate alloc;

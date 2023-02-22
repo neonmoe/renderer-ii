@@ -5,7 +5,7 @@ use crate::pipeline_parameters::PipelineMap;
 use crate::{Animation, Gltf, Material, PhysicalDevice, PipelineIndex};
 use ash::vk;
 use glam::Mat4;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 pub(crate) mod camera;
 pub use camera::Camera;

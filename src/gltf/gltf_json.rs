@@ -1,6 +1,7 @@
+use arrayvec::ArrayString;
 use glam::{Quat, Vec3};
-use serde_derive::Deserialize;
-use std::collections::HashMap;
+use hashbrown::HashMap;
+use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,8 +33,8 @@ pub(crate) struct GltfJson {
 
 #[derive(Deserialize)]
 pub(crate) struct Asset {
-    pub version: String,
-    pub min_version: Option<String>,
+    pub version: ArrayString<32>,
+    pub min_version: Option<ArrayString<32>>,
 }
 
 #[derive(Deserialize)]
@@ -43,7 +44,7 @@ pub(crate) struct Scene {
 
 #[derive(Deserialize)]
 pub(crate) struct Node {
-    pub name: Option<String>,
+    pub name: Option<ArrayString<64>>,
     pub mesh: Option<usize>,
     pub skin: Option<usize>,
     pub children: Option<Vec<usize>>,
@@ -60,7 +61,7 @@ pub(crate) struct Mesh {
 
 #[derive(Deserialize)]
 pub(crate) struct Primitive {
-    pub attributes: HashMap<String, usize>,
+    pub attributes: HashMap<ArrayString<32>, usize>,
     pub indices: Option<usize>,
     pub material: Option<usize>,
 }
@@ -116,7 +117,7 @@ pub(crate) struct Image {
 
 #[derive(Deserialize)]
 pub(crate) struct Material {
-    pub name: Option<String>,
+    pub name: Option<ArrayString<64>>,
     #[serde(rename = "pbrMetallicRoughness")]
     pub pbr_metallic_roughness: Option<PbrMetallicRoughness>,
     #[serde(rename = "normalTexture")]

@@ -7,12 +7,12 @@ use crate::vk;
 use crate::vulkan_raii::{Buffer, Device, ImageView};
 use crate::{Descriptors, ForBuffers, ForImages, Material, Uploader};
 use alloc::rc::Rc;
-use arrayvec::ArrayVec;
+use arrayvec::{ArrayString, ArrayVec};
 use core::mem;
 use core::ops::Range;
 use glam::{Mat4, Quat, Vec3, Vec4};
+use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
-use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::Path;
 
@@ -45,9 +45,9 @@ pub enum GltfLoadingError {
     #[error("glb json chunk missing")]
     MissingGlbJson,
     #[error("failed to deserialize gltf json")]
-    JsonDeserialization(#[source] serde_json::Error),
+    JsonDeserialization(serde_json::Error),
     #[error("unsupported gltf minimum version ({0}), 2.0 is supported")]
-    UnsupportedGltfVersion(String),
+    UnsupportedGltfVersion(ArrayString<32>),
     #[error("gltf has buffer without an uri but no glb BIN buffer")]
     GlbBinMissing,
     #[error("given gltf/glb file cannot be read")]
@@ -109,7 +109,7 @@ pub enum Keyframes {
 
 #[derive(Clone)]
 pub struct Node {
-    pub name: Option<String>,
+    pub name: Option<ArrayString<64>>,
     pub transform: Mat4,
     pub children: Vec<usize>,
     /// The tuple consists of (min coord, max coord).
@@ -319,7 +319,7 @@ fn create_gltf(
     if let Some(min_version) = &gltf.asset.min_version {
         let min_version_f32 = str::parse::<f32>(min_version);
         if min_version_f32 != Ok(2.0) {
-            return Err(GltfLoadingError::UnsupportedGltfVersion(min_version.clone()));
+            return Err(GltfLoadingError::UnsupportedGltfVersion(*min_version));
         }
     } else if let Ok(version) = str::parse::<f32>(&gltf.asset.version) {
         if !(2.0..3.0).contains(&version) {
@@ -421,7 +421,7 @@ fn create_gltf(
         }
 
         nodes.push(Node {
-            name: node.name.clone(),
+            name: node.name,
             mesh: node.mesh,
             skin: node.skin,
             children: node.children.clone().unwrap_or_default(),
@@ -508,7 +508,7 @@ fn create_gltf(
             factors,
             alpha_mode: mat.alpha_mode,
         };
-        let name = mat.name.clone().unwrap_or_else(|| String::from("unnamed material"));
+        let name = mat.name.unwrap_or_else(|| ArrayString::from("unnamed material").unwrap());
         materials.push(Material::new(descriptors, pipeline_specific_data, name).map_err(GltfLoadingError::MaterialCreation)?);
     }
 

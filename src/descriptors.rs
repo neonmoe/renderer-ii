@@ -12,12 +12,11 @@ use crate::vulkan_raii::{
 };
 use crate::{debug_utils, Instance, PhysicalDevice};
 use alloc::rc::{Rc, Weak};
-use arrayvec::ArrayVec;
+use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use core::hash::{Hash, Hasher};
 use core::mem;
-use core::time::Duration;
 use glam::Vec4;
 
 pub use gltf_json::AlphaMode;
@@ -91,13 +90,13 @@ pub enum PipelineSpecificData {
 
 /// A unique index into one pipeline's textures and other material data.
 pub struct Material {
-    pub name: String,
+    pub name: ArrayString<64>,
     array_indices: ArrayVec<(PipelineIndex, u32), MAX_PIPELINES_PER_MATERIAL>,
     data: PipelineSpecificData,
 }
 
 impl Material {
-    pub fn new(descriptors: &mut Descriptors, data: PipelineSpecificData, name: String) -> Result<Rc<Material>, DescriptorError> {
+    pub fn new(descriptors: &mut Descriptors, data: PipelineSpecificData, name: ArrayString<64>) -> Result<Rc<Material>, DescriptorError> {
         profiling::scope!("material slot reservation");
         let array_indices = get_pipelines(&data)
             .iter()
@@ -345,8 +344,7 @@ impl Descriptors {
         let pbr_defaults =
             PbrDefaults::new(device, &mut uploader, &mut pbr_defaults_arena).map_err(DescriptorError::CreateMaterialDefaultTextures)?;
         while !uploader.wait(None).map_err(DescriptorError::WaitForMaterialDefaultTexturesUpload)? {
-            log::warn!("Waiting for u64::MAX ns timed out?");
-            std::thread::sleep(Duration::from_millis(10));
+            panic!("Waiting for u64::MAX ns timed out?");
         }
 
         Ok(Descriptors {

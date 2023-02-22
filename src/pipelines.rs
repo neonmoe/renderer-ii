@@ -6,7 +6,7 @@ use crate::{Descriptors, PhysicalDevice};
 use alloc::rc::Rc;
 use arrayvec::ArrayVec;
 use ash::vk;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 pub(crate) enum AttachmentLayout {
     /// Attachments:

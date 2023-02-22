@@ -4,16 +4,13 @@ use ash::extensions::ext::DebugUtils;
 use ash::{vk, Device, Entry, Instance};
 use core::ffi::CStr;
 use core::fmt::Arguments;
-use once_cell::sync::Lazy;
-use std::os::raw::{c_char, c_void};
-use std::sync::Mutex;
+use core::ffi::{c_char, c_void};
 
-static DEBUG_UTILS: Lazy<Mutex<Option<ext::DebugUtils>>> = Lazy::new(|| Mutex::new(None));
+static mut DEBUG_UTILS: Option<ext::DebugUtils> = None;
 
 #[profiling::function]
 pub(crate) fn init_debug_utils(entry: &Entry, instance: &Instance) {
-    let mut debug_utils = DEBUG_UTILS.lock().unwrap();
-    *debug_utils = Some(ext::DebugUtils::new(entry, instance));
+    unsafe { DEBUG_UTILS = Some(ext::DebugUtils::new(entry, instance)) };
 }
 
 #[profiling::function]
@@ -22,8 +19,7 @@ pub(crate) fn name_vulkan_object<H: vk::Handle>(device: &Device, object: H, name
 }
 
 fn name_vulkan_object_impl(device: &Device, object_type: vk::ObjectType, object_handle: u64, name: Arguments) {
-    let debug_utils = DEBUG_UTILS.lock().unwrap();
-    if let Some(debug_utils) = debug_utils.as_ref() {
+    if let Some(debug_utils) = unsafe { DEBUG_UTILS.as_ref() } {
         let object_name = format_object_name(format!("{:?}", object_type));
         let name = CString::from_vec_with_nul(format!("{}: {}\0", object_name, name).into_bytes()).unwrap();
         let name_info = vk::DebugUtilsObjectNameInfoEXT {
