@@ -1,10 +1,11 @@
 use crate::physical_device::QueueFamily;
 use crate::vulkan_raii::Device;
 use crate::{debug_utils, physical_device_features, Error, PhysicalDevice};
+use alloc::boxed::Box;
+use arrayvec::ArrayVec;
 use ash::extensions::khr;
 use ash::{vk, Instance};
 use core::ffi::c_char;
-use smallvec::{smallvec, SmallVec};
 
 /// Creates a new VkDevice. It only needs to be destroyed if creating a new one.
 pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> Result<Device, Error> {
@@ -19,7 +20,8 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
     ];
     let queue_create_infos = create_device_queue_create_infos(&queue_families, &ones);
 
-    let mut extensions: SmallVec<[*const c_char; 2]> = smallvec![khr::Swapchain::name().as_ptr()];
+    let mut extensions: ArrayVec<*const c_char, 2> = ArrayVec::new();
+    extensions.push(khr::Swapchain::name().as_ptr());
     log::debug!("Device extension: {}", khr::Swapchain::name().to_str().unwrap());
     if physical_device.extension_supported("VK_EXT_memory_budget") {
         extensions.push(cstr!("VK_EXT_memory_budget").as_ptr());
@@ -63,8 +65,8 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
 fn create_device_queue_create_infos<const N: usize>(
     queue_families: &[QueueFamily; N],
     ones: &[f32],
-) -> SmallVec<[vk::DeviceQueueCreateInfo; N]> {
-    let mut results = SmallVec::<[vk::DeviceQueueCreateInfo; N]>::new();
+) -> ArrayVec<vk::DeviceQueueCreateInfo, N> {
+    let mut results = ArrayVec::<vk::DeviceQueueCreateInfo, N>::new();
     'queue_families: for &queue_family in queue_families {
         for create_info in &results {
             if create_info.queue_family_index == queue_family.index {
@@ -83,7 +85,7 @@ fn create_device_queue_create_infos<const N: usize>(
 }
 
 fn get_device_queues<const N: usize>(device: &ash::Device, queue_families: &[QueueFamily; N], queues: &mut [vk::Queue; N]) {
-    let mut picks = SmallVec::<[u32; N]>::new();
+    let mut picks = ArrayVec::<u32, N>::new();
     for (&queue_family, queue) in queue_families.iter().zip(queues.iter_mut()) {
         let queue_index = picks.iter().filter(|index| **index == queue_family.index).count() as u32;
         let queue_index = queue_index.min((queue_family.max_count - 1) as u32);

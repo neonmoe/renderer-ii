@@ -4,22 +4,22 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-log = { version = "0.4" }
-profiling = { version = "1.0" }
-tracy-client = { version = "0.14.2", optional = true }
-thiserror-core = { version = "1.0" }
+arrayvec = { version = "0.7", default-features = false, features = ["serde"] }
 ash = { version = "0.37", default-features = false, features = ["linked", "debug"] }
 ash-window = { version = "0.11" }
-raw-window-handle = { version = "0.4" }
+bytemuck = { version = "1.9" }
 glam = { version = "0.22", features = ["bytemuck"] }
+log = { version = "0.4" }
+memmap2 = { version = "0.5" }
+once_cell = { version = "1.10" }
+profiling = { version = "1.0" }
+raw-window-handle = { version = "0.4" }
 serde = { version = "1.0" }
 serde_derive = { version = "1.0" }
 serde_json = { version = "1.0" }
-bytemuck = { version = "1.9" }
+tracy-client = { version = "0.14.2", optional = true }
+thiserror-core = { version = "1.0" }
 typed-arena = { version = "2.0" }
-once_cell = { version = "1.10" }
-memmap2 = { version = "0.5" }
-smallvec = { version = "1.10", features = ["union", "const_generics", "const_new"] }
 
 # TODO(cleanup): Move anyhow, sdl2 to dev deps
 # Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.

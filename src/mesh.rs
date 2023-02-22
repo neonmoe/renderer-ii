@@ -1,14 +1,14 @@
 use crate::vulkan_raii::Buffer;
 use alloc::rc::Rc;
+use arrayvec::ArrayVec;
 use ash::vk;
-use smallvec::SmallVec;
 
 pub(crate) const VERTEX_BUFFERS: usize = 6;
 
 #[derive(PartialEq, Eq, Hash)]
 pub struct Mesh {
-    pub(crate) vertex_buffers: SmallVec<[Rc<Buffer>; VERTEX_BUFFERS]>,
-    pub(crate) vertices_offsets: SmallVec<[vk::DeviceSize; VERTEX_BUFFERS]>,
+    pub(crate) vertex_buffers: ArrayVec<Rc<Buffer>, VERTEX_BUFFERS>,
+    pub(crate) vertices_offsets: ArrayVec<vk::DeviceSize, VERTEX_BUFFERS>,
     pub(crate) index_buffer: Rc<Buffer>,
     pub(crate) index_buffer_offset: vk::DeviceSize,
     pub(crate) index_count: u32,
@@ -19,15 +19,13 @@ impl Mesh {
     /// Creates a new mesh. Ensure that the vertices match the
     /// pipeline.
     pub fn new<I: IndexType>(
-        vertex_buffers: SmallVec<[Rc<Buffer>; VERTEX_BUFFERS]>,
-        vertices_offsets: SmallVec<[vk::DeviceSize; VERTEX_BUFFERS]>,
+        vertex_buffers: ArrayVec<Rc<Buffer>, VERTEX_BUFFERS>,
+        vertices_offsets: ArrayVec<vk::DeviceSize, VERTEX_BUFFERS>,
         index_buffer: Rc<Buffer>,
         index_buffer_offset: vk::DeviceSize,
         index_buffer_size: vk::DeviceSize,
     ) -> Mesh {
         profiling::scope!("new_mesh");
-        debug_assert!(!vertex_buffers.spilled());
-        debug_assert_eq!(vertex_buffers.len(), vertices_offsets.len());
         Mesh {
             vertex_buffers,
             vertices_offsets,

@@ -6,7 +6,7 @@ pub(crate) struct U32AlignedBytes<const SIZE: usize>(pub [u8; SIZE]);
 /// aligned to 4 bytes.
 pub(crate) const unsafe fn include_bytes_as_u32s(bytes: &[u8]) -> &[u32] {
     // Safety: U32AlignedBytes has align(4) and the ptr is at offset 0.
-    let u32_ptr: *const u32 = std::mem::transmute(bytes.as_ptr());
+    let u32_ptr: *const u32 = core::mem::transmute(bytes.as_ptr());
     // There are 4x as many elements in the u8 slice as the u32 slice.
     let u32_slice_len = bytes.len() / 4;
     // Safety: ptr and len are based on the safe slice above, len is modified ot match the u8 -> u32 transmute.

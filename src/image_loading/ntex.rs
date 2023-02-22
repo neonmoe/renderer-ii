@@ -1,8 +1,8 @@
 use crate::display_utils::Bytes;
+use arrayvec::ArrayVec;
 use ash::vk;
 use core::convert::TryInto;
 use core::ops::Range;
-use smallvec::SmallVec;
 
 #[derive(thiserror::Error, Debug)]
 pub enum NtexDecodeError {
@@ -23,7 +23,7 @@ pub struct NtexData<'a> {
     /// Note: not necessarily actual pixels, just the pixel data.
     pub pixels: &'a [u8],
     /// The ranges from `pixels` that represent different mip levels.
-    pub mip_ranges: SmallVec<[Range<usize>; 14]>,
+    pub mip_ranges: ArrayVec<Range<usize>, 16>,
 }
 
 #[profiling::function]
@@ -43,7 +43,7 @@ pub fn decode(bytes: &[u8]) -> Result<NtexData, NtexDecodeError> {
     let block_height = u32::from_le_bytes(bytes[1016..1020].try_into().unwrap());
     let block_size = u32::from_le_bytes(bytes[1020..1024].try_into().unwrap());
 
-    let mut mip_ranges = SmallVec::with_capacity(mip_levels as usize);
+    let mut mip_ranges = ArrayVec::new();
     let mut prev_mip_end = 0;
     for mip in 0..mip_levels {
         let mip_width = width / (1 << mip);

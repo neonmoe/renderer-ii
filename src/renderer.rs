@@ -7,10 +7,10 @@ use crate::scene::{SkinnedModel, StaticMeshMap};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use crate::{ForBuffers, Framebuffers, PhysicalDevice, PipelineIndex, Pipelines, Scene, Swapchain, VulkanArena};
 use alloc::rc::Rc;
+use arrayvec::ArrayVec;
 use ash::{vk, Instance};
 use core::fmt::Arguments;
 use glam::Mat4;
-use smallvec::SmallVec;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RendererError {
@@ -468,14 +468,14 @@ impl Renderer {
                     .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
             }
 
-            let mut vertex_buffers = SmallVec::<[vk::Buffer; VERTEX_BUFFERS + 1]>::new();
+            let mut vertex_buffers = ArrayVec::<vk::Buffer, { VERTEX_BUFFERS + 1 }>::new();
             vertex_buffers.push(transform_buffer.inner);
             for vertex_buffer in &mesh.vertex_buffers {
                 vertex_buffers.push(vertex_buffer.inner);
             }
-            let mut vertex_offsets = SmallVec::<[vk::DeviceSize; VERTEX_BUFFERS + 1]>::new();
+            let mut vertex_offsets = ArrayVec::<vk::DeviceSize, { VERTEX_BUFFERS + 1 }>::new();
             vertex_offsets.push(0);
-            vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
+            vertex_offsets.try_extend_from_slice(&mesh.vertices_offsets).unwrap();
 
             unsafe {
                 profiling::scope!("draw");
@@ -541,14 +541,14 @@ impl Renderer {
                         .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
                 }
 
-                let mut vertex_buffers = SmallVec::<[vk::Buffer; VERTEX_BUFFERS + 1]>::new();
+                let mut vertex_buffers = ArrayVec::<vk::Buffer, { VERTEX_BUFFERS + 1 }>::new();
                 vertex_buffers.push(transform_buffer.inner);
                 for vertex_buffer in &mesh.vertex_buffers {
                     vertex_buffers.push(vertex_buffer.inner);
                 }
-                let mut vertex_offsets = SmallVec::<[vk::DeviceSize; VERTEX_BUFFERS + 1]>::new();
+                let mut vertex_offsets = ArrayVec::<vk::DeviceSize, { VERTEX_BUFFERS + 1 }>::new();
                 vertex_offsets.push(0);
-                vertex_offsets.extend_from_slice(&mesh.vertices_offsets);
+                vertex_offsets.try_extend_from_slice(&mesh.vertices_offsets).unwrap();
 
                 unsafe {
                     profiling::scope!("draw");

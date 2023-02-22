@@ -1,10 +1,10 @@
 use crate::debug_utils;
 use ash::extensions::ext;
 use ash::{vk, Entry};
+use core::ffi::c_char;
 use core::ffi::CStr;
 use raw_window_handle::HasRawWindowHandle;
-use smallvec::SmallVec;
-use std::os::raw::c_char;
+use arrayvec::ArrayVec;
 
 pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_2;
 
@@ -32,7 +32,7 @@ impl Instance {
             // FIXME: This makes renderdoc work, change out later.
             .api_version(vk::API_VERSION_1_3);
 
-        let mut layers: SmallVec<[*const c_char; 1]> = SmallVec::new();
+        let mut layers: ArrayVec<*const c_char, 1> = ArrayVec::new();
         let mut validation_layer_enabled = false;
         if cfg!(feature = "vulkan-validation") {
             if is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
@@ -52,7 +52,7 @@ impl Instance {
                 }
                 cs
             })
-            .collect::<SmallVec<[*const c_char; 4]>>();
+            .collect::<ArrayVec<*const c_char, 4>>();
         let debug_utils_name = ext::DebugUtils::name().to_str().unwrap();
         let debug_utils_available = is_extension_supported(&entry, debug_utils_name);
         if debug_utils_available {

@@ -3,10 +3,10 @@ use crate::pipeline_parameters::{PipelineMap, Shader, ALL_PIPELINES, PIPELINE_PA
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout, RenderPass};
 use crate::{debug_utils, PipelineIndex};
 use crate::{Descriptors, PhysicalDevice};
-use ash::vk;
-use smallvec::SmallVec;
-use std::collections::HashMap;
 use alloc::rc::Rc;
+use arrayvec::ArrayVec;
+use ash::vk;
+use std::collections::HashMap;
 
 pub(crate) enum AttachmentLayout {
     /// Attachments:
@@ -369,7 +369,7 @@ fn create_pipelines(
             device: device.clone(),
         })
     });
-    let mut pipeline_create_infos = SmallVec::<[_; PipelineIndex::Count as usize]>::new();
+    let mut pipeline_create_infos = ArrayVec::<_, { PipelineIndex::Count as usize }>::new();
     for i in ALL_PIPELINES {
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
             .stages(&shader_stages_per_pipeline[i][..])
@@ -386,7 +386,6 @@ fn create_pipelines(
             .build();
         pipeline_create_infos.push(pipeline_create_info);
     }
-    debug_assert!(!pipeline_create_infos.spilled());
 
     let pipelines = unsafe {
         device

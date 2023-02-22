@@ -7,11 +7,11 @@ use crate::vk;
 use crate::vulkan_raii::{Buffer, Device, ImageView};
 use crate::{Descriptors, ForBuffers, ForImages, Material, Uploader};
 use alloc::rc::Rc;
+use arrayvec::ArrayVec;
 use core::mem;
 use core::ops::Range;
 use glam::{Mat4, Quat, Vec3, Vec4};
 use memmap2::{Mmap, MmapOptions};
-use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::Path;
@@ -772,8 +772,8 @@ fn create_primitive(
     let (index_buffer, index_buffer_offset, index_buffer_size, index_ctype) =
         get_buffer_from_accessor(buffers, gltf, index_accessor, None, "SCALAR")?;
 
-    let mut vertex_buffers = SmallVec::new();
-    let mut buffer_offsets = SmallVec::new();
+    let mut vertex_buffers = ArrayVec::new();
+    let mut buffer_offsets = ArrayVec::new();
 
     let pos_accessor = *primitive
         .attributes

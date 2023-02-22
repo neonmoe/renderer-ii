@@ -6,11 +6,11 @@
 //! recipe for memory leaks.
 
 use alloc::rc::Rc;
+use arrayvec::ArrayVec;
 use ash::extensions::khr;
 use ash::vk;
 use core::hash::{Hash, Hasher};
 use core::sync::atomic::Ordering;
-use smallvec::SmallVec;
 
 /// The Vulkan device, which is used to make pretty much all Vulkan calls after
 /// its creation.
@@ -189,7 +189,7 @@ pub struct Framebuffer {
     pub inner: vk::Framebuffer,
     pub device: Device,
     pub render_pass: Rc<RenderPass>,
-    pub attachments: SmallVec<[Rc<ImageView>; 4]>,
+    pub attachments: ArrayVec<Rc<ImageView>, 4>,
 }
 trivial_drop_impl!(Framebuffer, destroy_framebuffer);
 
@@ -207,9 +207,9 @@ pub struct Sampler {
 trivial_drop_impl!(Sampler, destroy_sampler);
 
 pub struct DescriptorSetLayouts {
-    pub inner: SmallVec<[vk::DescriptorSetLayout; 8]>,
+    pub inner: ArrayVec<vk::DescriptorSetLayout, 8>,
     pub device: Device,
-    pub immutable_samplers: SmallVec<[Rc<Sampler>; 1]>,
+    pub immutable_samplers: ArrayVec<Rc<Sampler>, 1>,
 }
 impl Drop for DescriptorSetLayouts {
     fn drop(&mut self) {
@@ -237,7 +237,7 @@ trivial_drop_impl!(DescriptorPool, destroy_descriptor_pool);
 /// Does not implement drop, as the resources are freed when the pool
 /// is destroyed.
 pub struct DescriptorSets {
-    pub inner: SmallVec<[vk::DescriptorSet; 8]>,
+    pub inner: ArrayVec<vk::DescriptorSet, 8>,
     pub device: Device,
     pub descriptor_pool: Rc<DescriptorPool>,
 }
