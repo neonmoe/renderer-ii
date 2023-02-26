@@ -432,16 +432,14 @@ fn main_() -> anyhow::Result<()> {
 /// resources-directory.
 fn find_resources_path() -> PathBuf {
     let current_path = Path::new(".").canonicalize().unwrap();
-    let path = if current_path.ends_with("src") {
-        "bin"
-    } else if current_path.ends_with("bin") {
+    let path = if current_path.ends_with("examples") {
         "."
     } else if current_path.ends_with("sponza") {
         ".."
     } else if current_path.ends_with("glTF") {
         "../.."
     } else {
-        "src/bin"
+        "examples"
     };
     PathBuf::from(path)
 }

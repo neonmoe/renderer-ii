@@ -19,6 +19,9 @@ macro_rules! cstr {
 mod debug_utils;
 mod physical_device_features;
 
+// TODO: Remove memmap2
+// TODO: Add a file loading module to replace std::fs in the gltf loading code.
+
 // public-facing modules:
 
 mod allocation {

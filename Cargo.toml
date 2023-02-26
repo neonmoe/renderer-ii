@@ -20,10 +20,12 @@ tracy-client = { version = "0.14.2", optional = true }
 thiserror-core = { version = "1.0" }
 typed-arena = { version = "2.0", default-features = false }
 
-# TODO(cleanup): Move anyhow, sdl2 to dev deps
-# Currently it's just more ergonomic to have the sandbox in src/bin rather than examples.
+[dev-dependencies]
 sdl2 = { version = "0.35", features = ["raw-window-handle"] }
 anyhow = { version = "1.0" }
+
+[[example]]
+name = "sandbox"
 
 [features]
 profile-with-tracy = ["profiling/profile-with-tracy", "tracy-client"]
