@@ -1,8 +1,3 @@
-#![feature(error_in_core)]
-
-extern crate alloc;
-extern crate thiserror_core as thiserror;
-
 use glam::{Mat4, Quat, Vec3};
 use log::LevelFilter;
 use sdl2::controller::{Axis, GameController};
@@ -26,14 +21,17 @@ enum SandboxError {
 
 fn main() -> anyhow::Result<()> {
     #[cfg(feature = "profile-with-tracy")]
-    let _client = tracy_client::Client::start();
+    let client = tracy_client::Client::start();
 
     if let Err(err) = main_() {
         let message = format!("{:?}", err);
         let _ = show_simple_message_box(MessageBoxFlag::ERROR, "Fatal Error", &message, None);
         Err(err)
     } else {
-        Ok(())
+        #[cfg(feature = "profile-with-tracy")]
+        drop(client);
+        // Let the OS clean up the rest.
+        std::process::exit(0);
     }
 }
 

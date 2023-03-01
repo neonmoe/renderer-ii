@@ -23,6 +23,7 @@ typed-arena = { version = "2.0", default-features = false }
 [dev-dependencies]
 sdl2 = { version = "0.35", features = ["raw-window-handle"] }
 anyhow = { version = "1.0" }
+thiserror = { version = "1.0" }
 
 [[example]]
 name = "sandbox"
