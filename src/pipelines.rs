@@ -109,6 +109,10 @@ fn create_render_pass(
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
         .build()];
+    let tonemapping_pass_input_attachment_references = [vk::AttachmentReference::builder()
+        .attachment(0)
+        .layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        .build()];
 
     let depth_attachment = vk::AttachmentDescription::builder()
         .format(depth_format)
@@ -153,15 +157,10 @@ fn create_render_pass(
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .build()];
 
-        let hdr_pass_input_attachment_references = [vk::AttachmentReference::builder()
-            .attachment(0)
-            .layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .build()];
-
         let tonemapping_subpass = vk::SubpassDescription::builder()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(&tonemapping_pass_color_attachment_references)
-            .input_attachments(&hdr_pass_input_attachment_references);
+            .input_attachments(&tonemapping_pass_input_attachment_references);
 
         let attachments = [
             hdr_attachment.build(),
@@ -206,16 +205,11 @@ fn create_render_pass(
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .build()];
 
-        let hdr_pass_input_attachment_references = [vk::AttachmentReference::builder()
-            .attachment(0)
-            .layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .build()];
-
         let tonemapping_subpass = vk::SubpassDescription::builder()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(&tonemapping_pass_color_attachment_references)
             .resolve_attachments(&resolve_attachment_references)
-            .input_attachments(&hdr_pass_input_attachment_references);
+            .input_attachments(&tonemapping_pass_input_attachment_references);
 
         let attachments = [
             hdr_attachment.build(),

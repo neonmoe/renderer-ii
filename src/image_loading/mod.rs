@@ -433,6 +433,17 @@ pub fn load_ntex(
                         .image_subresource(subresource_layers_dst)
                         .image_extent(current_mip_level_extent)
                         .build();
+                    // TODO: Fix write after write hazard in image loading
+                    // Unsure why this is happening, here's the validation layer warning:
+                    // vkCmdCopyBufferToImage: Hazard WRITE_AFTER_WRITE for
+                    // dstImage VkImage 0xc32cbd00000001eb[Image: 13196865903111448057.ntex], region 0.
+                    // Access info (
+                    //     usage: SYNC_COPY_TRANSFER_WRITE,
+                    //     prior_usage: SYNC_IMAGE_LAYOUT_TRANSITION,
+                    //     write_barriers: 0,
+                    //     command: vkCmdPipelineBarrier,
+                    //     seq_no: 1,
+                    //     reset_no: 1).
                     unsafe {
                         device.cmd_copy_buffer_to_image(
                             command_buffer,
