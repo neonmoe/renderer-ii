@@ -4,9 +4,9 @@ use crate::pipeline_parameters::limits::{self, PhysicalDeviceLimitBreak};
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
+use core::error::Error;
 use core::ffi::CStr;
 use core::fmt::{self, Display, Formatter};
-use core::error::Error;
 
 #[derive(thiserror::Error, Debug)]
 pub enum PhysicalDeviceRejectionReason {
@@ -162,10 +162,13 @@ fn filter_capable_device(
     };
 
     let extensions = get_extensions(instance, physical_device);
-    let swapchain_ext_name = khr::Swapchain::name().to_str().unwrap();
-    if extensions.iter().all(|s| s != swapchain_ext_name) {
-        reject(PhysicalDeviceRejectionReason::Extension(swapchain_ext_name));
-    }
+    let mut assert_ext_supported = |ext_name: &'static str| {
+        if extensions.iter().all(|s| s != ext_name) {
+            reject(PhysicalDeviceRejectionReason::Extension(ext_name));
+        }
+    };
+    assert_ext_supported(khr::Swapchain::name().to_str().unwrap());
+    assert_ext_supported(khr::Synchronization2::name().to_str().unwrap());
 
     if let Err(reqs) = physical_device_features::has_required_features(instance, physical_device) {
         reject(PhysicalDeviceRejectionReason::DeviceRequirements(reqs));

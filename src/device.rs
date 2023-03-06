@@ -20,9 +20,11 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
     ];
     let queue_create_infos = create_device_queue_create_infos(&queue_families, &ones);
 
-    let mut extensions: ArrayVec<*const c_char, 2> = ArrayVec::new();
+    let mut extensions: ArrayVec<*const c_char, 3> = ArrayVec::new();
     extensions.push(khr::Swapchain::name().as_ptr());
     log::debug!("Device extension: {}", khr::Swapchain::name().to_str().unwrap());
+    extensions.push(khr::Synchronization2::name().as_ptr());
+    log::debug!("Device extension: {}", khr::Synchronization2::name().to_str().unwrap());
     if physical_device.extension_supported("VK_EXT_memory_budget") {
         extensions.push(cstr!("VK_EXT_memory_budget").as_ptr());
         log::debug!("Device extension (optional): VK_EXT_memory_budget");

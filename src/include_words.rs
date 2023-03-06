@@ -5,6 +5,10 @@ pub(crate) struct U32AlignedBytes<const SIZE: usize>(pub [u8; SIZE]);
 /// Transmutes the slice to be u32s and divides the length by 4. `bytes` must be
 /// aligned to 4 bytes.
 pub(crate) const unsafe fn include_bytes_as_u32s(bytes: &[u8]) -> &[u32] {
+    #[cfg(target_endian = "big")]
+    compile_error!(
+        "include_words just assumes that the input is the correct endianness, which is definitely not the case on big-endian systems"
+    );
     // Safety: U32AlignedBytes has align(4) and the ptr is at offset 0.
     let u32_ptr: *const u32 = core::mem::transmute(bytes.as_ptr());
     // There are 4x as many elements in the u8 slice as the u32 slice.

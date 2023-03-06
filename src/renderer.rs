@@ -238,6 +238,7 @@ impl Renderer {
             &scene.skinned_meshes,
         )?;
 
+        // TODO: Use queue_submit2
         let signal_semaphores = [self.ready_for_present.inner];
         let command_buffers = [command_buffer];
         let submit_infos = [vk::SubmitInfo::builder()
@@ -320,16 +321,6 @@ impl Renderer {
                 .map_err(RendererError::CommandBufferBegin)?;
         }
 
-        // TODO: Add image layout transitions before and after render pass, to avoid WRITE_AFTER_WRITE hazards?
-        // Validation layer points out issues where the load op conflicts with an implicit layout transition:
-        // - vkCmdBeginRenderPass: Hazard WRITE_AFTER_WRITE vs. layout transition in subpass 0 for attachment 0 aspect color during load with loadOp VK_ATTACHMENT_LOAD_OP_CLEAR.
-        // - vkCmdBeginRenderPass: Hazard WRITE_AFTER_WRITE vs. layout transition in subpass 0 for attachment 1 aspect depth during load with loadOp VK_ATTACHMENT_LOAD_OP_CLEAR.
-        // - vkCmdNextSubpass: Hazard WRITE_AFTER_WRITE vs. layout transition in subpass 1 for attachment 2 aspect color during load with loadOp VK_ATTACHMENT_LOAD_OP_DONT_CARE.
-        // - vkCmdNextSubpass: Hazard WRITE_AFTER_WRITE vs. layout transition in subpass 1 for attachment 3 aspect color during load with loadOp VK_ATTACHMENT_LOAD_OP_DONT_CARE.
-        // And the same, but it's the final layout transition conflicting with writing (the finalLayouts could be set up to match the ones in VkAttachmentReferences, then manually transition after the render pass):
-        // - vkCmdEndRenderPass: Hazard WRITE_AFTER_WRITE vs. store/resolve operations in subpass 1 for attachment 0 final image layout transition (old_layout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, new_layout: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL).
-        // - vkCmdEndRenderPass: Hazard WRITE_AFTER_WRITE vs. store/resolve operations in subpass 1 for attachment 3 final image layout transition (old_layout: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, new_layout: VK_IMAGE_LAYOUT_PRESENT_SRC_KHR).
-
         let render_area = vk::Rect2D::builder().extent(framebuffers.extent).build();
         let mut depth_clear_value = vk::ClearValue::default();
         depth_clear_value.depth_stencil.depth = 0.0;
@@ -339,10 +330,11 @@ impl Renderer {
             .framebuffer(framebuffer.inner)
             .render_area(render_area)
             .clear_values(&clear_colors);
+        let subpass_begin_info = vk::SubpassBeginInfo::builder().contents(vk::SubpassContents::INLINE);
         unsafe {
             profiling::scope!("begin render pass");
             self.device
-                .cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
+                .cmd_begin_render_pass2(command_buffer, &render_pass_begin_info, &subpass_begin_info);
         }
 
         // Bind the shared descriptor set
@@ -419,7 +411,7 @@ impl Renderer {
 
         unsafe {
             profiling::scope!("end render pass");
-            self.device.cmd_end_render_pass(command_buffer);
+            self.device.cmd_end_render_pass2(command_buffer, &vk::SubpassEndInfo::default());
         }
 
         unsafe {

@@ -228,27 +228,20 @@ fn create_pixel(
             format_args!("{}", debug_identifier),
             |device, staging_buffer, command_buffer| {
                 profiling::scope!("vk::cmd_copy_buffer_to_image");
-                let barrier_from_undefined_to_transfer_dst = vk::ImageMemoryBarrier::builder()
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                let barrier_from_undefined_to_transfer_dst = [vk::ImageMemoryBarrier2::builder()
                     .image(image_allocation.inner)
                     .subresource_range(subresource_range)
-                    .src_access_mask(vk::AccessFlags::empty())
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    .build();
-                unsafe {
-                    device.cmd_pipeline_barrier(
-                        command_buffer,
-                        vk::PipelineStageFlags::TOP_OF_PIPE,
-                        vk::PipelineStageFlags::TRANSFER,
-                        vk::DependencyFlags::empty(),
-                        &[],
-                        &[],
-                        &[barrier_from_undefined_to_transfer_dst],
-                    );
-                }
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .src_access_mask(vk::AccessFlags2::NONE)
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .build()];
+                let dep_info = vk::DependencyInfo::builder().image_memory_barriers(&barrier_from_undefined_to_transfer_dst);
+                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
                 let subresource_layers_dst = vk::ImageSubresourceLayers::builder()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .mip_level(0)
@@ -274,27 +267,20 @@ fn create_pixel(
             },
             |device, command_buffer| {
                 profiling::scope!("record transfer->shader barrier");
-                let barrier_from_transfer_dst_to_shader = vk::ImageMemoryBarrier::builder()
-                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .src_queue_family_index(transfer_queue_family)
-                    .dst_queue_family_index(graphics_queue_family)
+                let barrier_from_transfer_dst_to_shader = [vk::ImageMemoryBarrier2::builder()
                     .image(image_allocation.inner)
                     .subresource_range(subresource_range)
-                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                    .build();
-                unsafe {
-                    device.cmd_pipeline_barrier(
-                        command_buffer,
-                        vk::PipelineStageFlags::TRANSFER,
-                        vk::PipelineStageFlags::FRAGMENT_SHADER,
-                        vk::DependencyFlags::empty(),
-                        &[],
-                        &[],
-                        &[barrier_from_transfer_dst_to_shader],
-                    );
-                }
+                    .src_queue_family_index(transfer_queue_family)
+                    .dst_queue_family_index(graphics_queue_family)
+                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                    .build()];
+                let dep_info = vk::DependencyInfo::builder().image_memory_barriers(&barrier_from_transfer_dst_to_shader);
+                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
             },
         )
         .map_err(ImageLoadingError::StartTextureUpload)?;
@@ -397,27 +383,20 @@ pub fn load_ntex(
                         .base_array_layer(0)
                         .layer_count(1)
                         .build();
-                    let barrier_from_undefined_to_transfer_dst = vk::ImageMemoryBarrier::builder()
-                        .old_layout(vk::ImageLayout::UNDEFINED)
-                        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    let barrier_from_undefined_to_transfer_dst = [vk::ImageMemoryBarrier2::builder()
                         .image(image_allocation.inner)
                         .subresource_range(subresource_range)
-                        .src_access_mask(vk::AccessFlags::empty())
-                        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                        .build();
-                    unsafe {
-                        device.cmd_pipeline_barrier(
-                            command_buffer,
-                            vk::PipelineStageFlags::TOP_OF_PIPE,
-                            vk::PipelineStageFlags::TRANSFER,
-                            vk::DependencyFlags::empty(),
-                            &[],
-                            &[],
-                            &[barrier_from_undefined_to_transfer_dst],
-                        );
-                    }
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .old_layout(vk::ImageLayout::UNDEFINED)
+                        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                        .src_access_mask(vk::AccessFlags2::NONE)
+                        .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                        .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                        .build()];
+                    let dep_info = vk::DependencyInfo::builder().image_memory_barriers(&barrier_from_undefined_to_transfer_dst);
+                    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
                     let subresource_layers_dst = vk::ImageSubresourceLayers::builder()
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .mip_level(mip_level as u32)
@@ -433,17 +412,6 @@ pub fn load_ntex(
                         .image_subresource(subresource_layers_dst)
                         .image_extent(current_mip_level_extent)
                         .build();
-                    // TODO: Fix write after write hazard in image loading
-                    // Unsure why this is happening, here's the validation layer warning:
-                    // vkCmdCopyBufferToImage: Hazard WRITE_AFTER_WRITE for
-                    // dstImage VkImage 0xc32cbd00000001eb[Image: 13196865903111448057.ntex], region 0.
-                    // Access info (
-                    //     usage: SYNC_COPY_TRANSFER_WRITE,
-                    //     prior_usage: SYNC_IMAGE_LAYOUT_TRANSITION,
-                    //     write_barriers: 0,
-                    //     command: vkCmdPipelineBarrier,
-                    //     seq_no: 1,
-                    //     reset_no: 1).
                     unsafe {
                         device.cmd_copy_buffer_to_image(
                             command_buffer,
@@ -468,27 +436,20 @@ pub fn load_ntex(
                         .base_array_layer(0)
                         .layer_count(1)
                         .build();
-                    let barrier_from_transfer_dst_to_shader = vk::ImageMemoryBarrier::builder()
-                        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .src_queue_family_index(transfer_queue_family)
-                        .dst_queue_family_index(graphics_queue_family)
+                    let barrier_from_transfer_dst_to_shader = [vk::ImageMemoryBarrier2::builder()
                         .image(image_allocation.inner)
                         .subresource_range(subresource_range)
-                        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                        .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                        .build();
-                    unsafe {
-                        device.cmd_pipeline_barrier(
-                            command_buffer,
-                            vk::PipelineStageFlags::TRANSFER,
-                            vk::PipelineStageFlags::FRAGMENT_SHADER,
-                            vk::DependencyFlags::empty(),
-                            &[],
-                            &[],
-                            &[barrier_from_transfer_dst_to_shader],
-                        );
-                    }
+                        .src_queue_family_index(transfer_queue_family)
+                        .dst_queue_family_index(graphics_queue_family)
+                        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                        .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                        .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                        .build()];
+                    let dep_info = vk::DependencyInfo::builder().image_memory_barriers(&barrier_from_transfer_dst_to_shader);
+                    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
                 }
             },
         )

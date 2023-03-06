@@ -3,8 +3,8 @@ use ash::extensions::ext;
 use ash::extensions::ext::DebugUtils;
 use ash::{vk, Device, Entry, Instance};
 use core::ffi::CStr;
-use core::fmt::Arguments;
 use core::ffi::{c_char, c_void};
+use core::fmt::Arguments;
 
 static mut DEBUG_UTILS: Option<ext::DebugUtils> = None;
 
@@ -138,7 +138,11 @@ fn vulkan_debug(
     use vk::DebugUtilsMessageSeverityFlagsEXT as Severity;
     use vk::DebugUtilsMessageTypeFlagsEXT as Type;
     match (message_severity, message_types) {
-        (Severity::ERROR, _) => log::error!("{}", formatted_message),
+        (Severity::ERROR, _) => {
+            log::error!("{}", formatted_message);
+            #[cfg(feature = "vulkan-validation")]
+            core::hint::black_box(0); // Place a breakpoint here to debug validation errors
+        }
         (Severity::WARNING, _) | (Severity::INFO, _) | (_, Type::VALIDATION) | (_, Type::PERFORMANCE) => {
             log::debug!("{}", formatted_message)
         }
