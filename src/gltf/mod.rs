@@ -1,3 +1,7 @@
+// TODO: Refactor out the gltf handling into its own crate
+// This means that we need a new representation for models, but I think that's
+// probably better in any case.
+
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::descriptors::{DescriptorError, GltfFactors, PipelineSpecificData};
 use crate::gltf::gltf_json::AnimationInterpolation;
