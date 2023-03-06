@@ -4,7 +4,7 @@ use crate::pipeline_parameters::limits::{self, PhysicalDeviceLimitBreak};
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
-use core::error::Error;
+use std::error::Error;
 use core::ffi::CStr;
 use core::fmt::{self, Display, Formatter};
 

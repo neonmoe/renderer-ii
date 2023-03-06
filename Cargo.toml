@@ -17,13 +17,12 @@ raw-window-handle = { version = "0.4" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 tracy-client = { version = "0.14.2", optional = true }
-thiserror-core = { version = "1.0" }
+thiserror = { version = "1.0" }
 typed-arena = { version = "2.0", default-features = false }
 
 [dev-dependencies]
 sdl2 = { version = "0.35", features = ["raw-window-handle"] }
 anyhow = { version = "1.0" }
-thiserror = { version = "1.0" }
 
 [[example]]
 name = "sandbox"
