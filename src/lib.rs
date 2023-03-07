@@ -109,17 +109,18 @@ mod pipeline_parameters;
 pub use pipeline_parameters::PipelineIndex;
 
 mod renderer;
-pub use renderer::{FrameIndex, Renderer};
+pub use renderer::{FrameIndex, Renderer, RendererError};
 
 mod scene;
 pub use scene::Scene;
 
 mod surface {
-    use crate::vulkan_raii::Surface;
     use crate::Error;
     use ash::extensions::khr;
     use ash::{Entry, Instance};
     use raw_window_handle::HasRawWindowHandle;
+
+    pub use crate::vulkan_raii::Surface;
 
     pub fn create_surface(entry: &Entry, instance: &Instance, window: &dyn HasRawWindowHandle) -> Result<Surface, Error> {
         profiling::scope!("window surface creation");
@@ -131,7 +132,7 @@ mod surface {
         })
     }
 }
-pub use surface::create_surface;
+pub use surface::{create_surface, Surface};
 
 mod swapchain;
 pub use swapchain::{Swapchain, SwapchainBase, SwapchainSettings};

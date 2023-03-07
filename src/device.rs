@@ -58,8 +58,11 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
         surface_queue,
         transfer_queue,
     };
+
     debug_utils::name_vulkan_object(&device, device.inner.handle(), format_args!("{}", physical_device.name));
-    debug_utils::name_vulkan_object(&device, physical_device.inner, format_args!("{}", physical_device.name));
+    // These two do not seem to interact with validation layers / RenderDoc very well.x
+    //debug_utils::name_vulkan_object(&device, physical_device.inner, format_args!("{}", physical_device.name));
+    //debug_utils::name_vulkan_object(&device, instance.handle(), format_args!("{}", env!("CARGO_PKG_NAME")));
 
     Ok(device)
 }
