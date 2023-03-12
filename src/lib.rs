@@ -22,23 +22,26 @@ mod physical_device_features;
 
 // public-facing modules:
 
-mod allocation {
+mod vram_usage {
     use core::sync::atomic::{AtomicU64, Ordering};
     pub(crate) static ALLOCATED: AtomicU64 = AtomicU64::new(0);
     pub(crate) static IN_USE: AtomicU64 = AtomicU64::new(0);
+    pub(crate) static ALLOCATED_PEAK: AtomicU64 = AtomicU64::new(0);
 
     pub fn get_allocated_vram() -> u64 {
         ALLOCATED.load(Ordering::Relaxed)
     }
-
     pub fn get_allocated_vram_in_use() -> u64 {
         IN_USE.load(Ordering::Relaxed)
     }
+    pub fn get_peak_allocated_vram() -> u64 {
+        ALLOCATED_PEAK.load(Ordering::Relaxed)
+    }
 }
-pub use allocation::{get_allocated_vram, get_allocated_vram_in_use};
+pub use vram_usage::{get_allocated_vram, get_allocated_vram_in_use, get_peak_allocated_vram};
 
 mod arena;
-pub use arena::{ForBuffers, ForImages, VulkanArena};
+pub use arena::{ForBuffers, ForImages, MemoryProps, VulkanArena};
 
 pub use ash::vk;
 

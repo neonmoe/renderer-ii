@@ -65,6 +65,7 @@ pub struct VulkanArena<T: ArenaType> {
     total_size: vk::DeviceSize,
     offset: vk::DeviceSize,
     pinned_buffers: Vec<Buffer>,
+    device_local: bool,
     debug_identifier: String,
     _arena_type_marker: PhantomData<T>,
 }
@@ -74,9 +75,10 @@ impl<T: ArenaType> Drop for VulkanArena<T> {
         if !self.mapped_memory_ptr.is_null() {
             unsafe { self.device.unmap_memory(self.memory.inner) };
         }
-        // The memory may still be in use, and after this, usage can't be
-        // tracked. So assume the entire memory block is in use.
-        crate::allocation::IN_USE.fetch_add(self.total_size - self.offset, Ordering::Relaxed);
+        if self.device_local {
+            // IN_USE will be subtracted by the total size by DeviceMemory.
+            crate::vram_usage::IN_USE.fetch_add(self.total_size - self.offset, Ordering::Relaxed);
+        }
     }
 }
 
@@ -86,14 +88,13 @@ impl<T: ArenaType> VulkanArena<T> {
         device: &Device,
         physical_device: &PhysicalDevice,
         size: vk::DeviceSize,
-        optimal_flags: vk::MemoryPropertyFlags,
-        fallback_flags: vk::MemoryPropertyFlags,
+        memory_properties: MemoryProps,
         debug_identifier_args: Arguments,
     ) -> Result<VulkanArena<T>, VulkanArenaError> {
         profiling::scope!("gpu memory arena creation");
         let debug_identifier = format!("{}", debug_identifier_args);
         let (memory_type_index, memory_flags) =
-            get_memory_type_index(instance, physical_device, optimal_flags, fallback_flags, size, &debug_identifier)?;
+            get_memory_type_index(instance, physical_device, memory_properties, size, &debug_identifier)?;
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
             .memory_type_index(memory_type_index);
@@ -114,9 +115,11 @@ impl<T: ArenaType> VulkanArena<T> {
             ptr::null_mut()
         };
 
-        let memory = Rc::new(DeviceMemory::new(memory, device.clone(), size));
+        let device_local = memory_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL);
+        let device_local_size = if device_local { size } else { 0 };
+        let memory = Rc::new(DeviceMemory::new(memory, device.clone(), device_local_size));
         // IN_USE gets bumped by DeviceMemory::new, subtract it back down because none of it is actually in use.
-        crate::allocation::IN_USE.fetch_sub(size, core::sync::atomic::Ordering::Relaxed);
+        crate::vram_usage::IN_USE.fetch_sub(device_local_size, core::sync::atomic::Ordering::Relaxed);
 
         Ok(VulkanArena {
             device: device.clone(),
@@ -125,6 +128,7 @@ impl<T: ArenaType> VulkanArena<T> {
             total_size: size,
             offset: 0,
             pinned_buffers: Vec::new(),
+            device_local,
             debug_identifier,
             _arena_type_marker: PhantomData {},
         })
@@ -144,8 +148,10 @@ impl<T: ArenaType> VulkanArena<T> {
             Err(VulkanArenaError::NotResettable(total_refs - internal_refs))
         } else {
             self.pinned_buffers.clear();
-            // Everything created from this arena no longer exists, so none of the memory is in use anymore.
-            crate::allocation::IN_USE.fetch_sub(self.offset, Ordering::Relaxed);
+            if self.device_local {
+                // Everything created from this arena no longer exists, so none of the memory is in use anymore.
+                crate::vram_usage::IN_USE.fetch_sub(self.offset, Ordering::Relaxed);
+            }
             self.offset = 0;
             Ok(())
         }
@@ -263,7 +269,9 @@ impl VulkanArena<ForBuffers> {
         }
 
         let new_offset = offset + required_size;
-        crate::allocation::IN_USE.fetch_add(new_offset - self.offset, Ordering::Relaxed);
+        if self.device_local {
+            crate::vram_usage::IN_USE.fetch_add(new_offset - self.offset, Ordering::Relaxed);
+        }
         self.offset = new_offset;
 
         Ok(Buffer {
@@ -306,7 +314,9 @@ impl VulkanArena<ForImages> {
         debug_utils::name_vulkan_object(&self.device, image, name);
 
         let new_offset = offset + size;
-        crate::allocation::IN_USE.fetch_add(new_offset - self.offset, Ordering::Relaxed);
+        if self.device_local {
+            crate::vram_usage::IN_USE.fetch_add(new_offset - self.offset, Ordering::Relaxed);
+        }
         self.offset = new_offset;
 
         Ok(Image {
@@ -320,8 +330,7 @@ impl VulkanArena<ForImages> {
 fn get_memory_type_index(
     instance: &Instance,
     physical_device: &PhysicalDevice,
-    optimal_flags: vk::MemoryPropertyFlags,
-    fallback_flags: vk::MemoryPropertyFlags,
+    flags: MemoryProps,
     size: vk::DeviceSize,
     debug_identifier: &str,
 ) -> Result<(u32, vk::MemoryPropertyFlags), VulkanArenaError> {
@@ -340,15 +349,16 @@ fn get_memory_type_index(
     let mut valid_type_found = false;
     for (i, memory_type) in types.iter().enumerate() {
         let heap_index = memory_type.heap_index as usize;
+        let prop_flags = memory_type.property_flags;
         let budget = if budget_supported {
             budget_props.heap_budget[heap_index]
         } else {
             heaps[heap_index].size
         };
-        if memory_type.property_flags.contains(optimal_flags) {
+        if prop_flags.contains(flags.optimal) && !prop_flags.intersects(flags.unwanted) {
             valid_type_found = true;
             if budget >= size {
-                return Ok((i as u32, memory_type.property_flags));
+                return Ok((i as u32, prop_flags));
             }
         }
     }
@@ -359,7 +369,7 @@ fn get_memory_type_index(
         } else {
             heaps[heap_index].size
         };
-        if memory_type.property_flags.contains(fallback_flags) {
+        if memory_type.property_flags.contains(flags.fallback) {
             valid_type_found = true;
             if budget >= size {
                 return Ok((i as u32, memory_type.property_flags));
@@ -370,11 +380,52 @@ fn get_memory_type_index(
     if valid_type_found {
         Err(VulkanArenaError::HeapsOutOfMemory(
             debug_identifier.to_string(),
-            fallback_flags,
+            flags.fallback,
             display_utils::Bytes(size),
         ))
     } else {
-        Err(VulkanArenaError::MissingMemoryType(debug_identifier.to_string(), fallback_flags))
+        Err(VulkanArenaError::MissingMemoryType(debug_identifier.to_string(), flags.fallback))
+    }
+}
+
+/// A heap with the `optimal` and without the `unwanted` flags is used if found,
+/// otherwise the first one that has the `fallback` flags is used.
+pub struct MemoryProps {
+    pub optimal: vk::MemoryPropertyFlags,
+    pub unwanted: vk::MemoryPropertyFlags,
+    pub fallback: vk::MemoryPropertyFlags,
+}
+impl MemoryProps {
+    pub fn for_framebuffers() -> MemoryProps {
+        MemoryProps {
+            optimal: vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
+            unwanted: vk::MemoryPropertyFlags::empty(),
+            fallback: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        }
+    }
+
+    pub fn for_textures() -> MemoryProps {
+        MemoryProps {
+            optimal: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            unwanted: vk::MemoryPropertyFlags::empty(),
+            fallback: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        }
+    }
+
+    pub fn for_buffers() -> MemoryProps {
+        MemoryProps {
+            optimal: vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            unwanted: vk::MemoryPropertyFlags::empty(),
+            fallback: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        }
+    }
+
+    pub fn for_staging() -> MemoryProps {
+        MemoryProps {
+            optimal: vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            unwanted: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            fallback: vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        }
     }
 }
 

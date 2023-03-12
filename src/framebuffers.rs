@@ -1,4 +1,4 @@
-use crate::arena::{VulkanArena, VulkanArenaError};
+use crate::arena::{VulkanArena, VulkanArenaError, MemoryProps};
 use crate::debug_utils;
 use crate::pipelines::AttachmentLayout;
 use crate::vulkan_raii::{AnyImage, Device, Framebuffer, ImageView};
@@ -97,8 +97,7 @@ impl Framebuffers {
             device,
             physical_device,
             framebuffer_size,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::LAZILY_ALLOCATED,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            MemoryProps::for_framebuffers(),
             format_args!("framebuffer arena ({width}x{height})"),
         )
         .map_err(FramebufferCreationError::Arena)?;

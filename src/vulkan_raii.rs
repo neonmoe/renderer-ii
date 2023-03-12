@@ -132,21 +132,26 @@ trivial_drop_impl!(Swapchain, destroy_swapchain);
 pub struct DeviceMemory {
     pub inner: vk::DeviceMemory,
     pub device: Device,
-    size: u64,
+    pub device_local_size: u64,
 }
 impl DeviceMemory {
-    pub fn new(inner: vk::DeviceMemory, device: Device, size: u64) -> DeviceMemory {
-        crate::allocation::ALLOCATED.fetch_add(size, Ordering::Relaxed);
-        crate::allocation::IN_USE.fetch_add(size, Ordering::Relaxed);
-        DeviceMemory { inner, device, size }
+    pub fn new(inner: vk::DeviceMemory, device: Device, device_local_size: u64) -> DeviceMemory {
+        let new_allocated = crate::vram_usage::ALLOCATED.fetch_add(device_local_size, Ordering::Relaxed) + device_local_size;
+        crate::vram_usage::IN_USE.fetch_add(device_local_size, Ordering::Relaxed);
+        crate::vram_usage::ALLOCATED_PEAK.fetch_max(new_allocated, Ordering::Relaxed);
+        DeviceMemory {
+            inner,
+            device,
+            device_local_size,
+        }
     }
 }
 impl Drop for DeviceMemory {
     fn drop(&mut self) {
         profiling::scope!("vk::free_memory");
-        log::trace!("vk::free_memory({:?}) [{} bytes]", self.inner, self.size);
-        crate::allocation::IN_USE.fetch_sub(self.size, Ordering::Relaxed);
-        crate::allocation::ALLOCATED.fetch_sub(self.size, Ordering::Relaxed);
+        log::trace!("vk::free_memory({:?}) [{} bytes]", self.inner, self.device_local_size);
+        crate::vram_usage::IN_USE.fetch_sub(self.device_local_size, Ordering::Relaxed);
+        crate::vram_usage::ALLOCATED.fetch_sub(self.device_local_size, Ordering::Relaxed);
         unsafe { self.device.free_memory(self.inner, None) };
     }
 }

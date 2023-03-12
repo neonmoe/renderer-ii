@@ -367,6 +367,16 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         return Err(SandboxError::MsaaSampleCountNotSupported(msaa_samples).into());
     }
 
+    fn print_memory_usage(when: &str) {
+        use neonvk::display_utils::Bytes;
+        let in_use = Bytes(neonvk::get_allocated_vram_in_use());
+        let allocated = Bytes(neonvk::get_allocated_vram());
+        let peak = Bytes(neonvk::get_peak_allocated_vram());
+        log::info!("VRAM usage {when:40} {in_use}/{allocated}, peaked at {peak}");
+    }
+
+    print_memory_usage("before measurements");
+
     let resources_path = {
         let current_path = Path::new(".").canonicalize().unwrap();
         let path = if current_path.ends_with("examples") {
@@ -394,6 +404,8 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         &resources_path.join("smol-ame-by-seafoam"),
     )?;
 
+    print_memory_usage("after measurements");
+
     // Allocate in order of importance: if budget runs out, the arenas allocated
     // later may be allocated from a slower heap.
     let mut texture_arena = neonvk::VulkanArena::new(
@@ -401,8 +413,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         &device,
         &physical_device,
         assets_textures_measurer.measured_size,
-        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        neonvk::MemoryProps::for_textures(),
         format_args!("sandbox assets (textures)"),
     )?;
     let mut buffer_arena = neonvk::VulkanArena::new(
@@ -410,10 +421,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         &device,
         &physical_device,
         assets_buffers_measurer.measured_size,
-        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL
-            | neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE
-            | neonvk::vk::MemoryPropertyFlags::HOST_COHERENT,
-        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        neonvk::MemoryProps::for_buffers(),
         format_args!("sandbox assets (buffers)"),
     )?;
     let mut staging_arena = neonvk::VulkanArena::new(
@@ -421,8 +429,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         &device,
         &physical_device,
         assets_buffers_measurer.measured_size + assets_textures_measurer.measured_size,
-        neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE | neonvk::vk::MemoryPropertyFlags::HOST_COHERENT,
-        neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE | neonvk::vk::MemoryPropertyFlags::HOST_COHERENT,
+        neonvk::MemoryProps::for_staging(),
         format_args!("sandbox assets (staging)"),
     )?;
     let mut uploader = neonvk::Uploader::new(
@@ -432,6 +439,8 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         &physical_device,
         "sandbox assets",
     )?;
+
+    print_memory_usage("after arena creation");
 
     let mut descriptors = neonvk::Descriptors::new(&device, &physical_device, &mut staging_arena, &mut uploader, &mut texture_arena)?;
 
@@ -465,6 +474,10 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         now - upload_start,
         now - upload_wait_start
     );
+    drop(uploader);
+    drop(staging_arena);
+
+    print_memory_usage("after uploads");
 
     assert_eq!(buffer_arena.memory_in_use(), assets_buffers_measurer.measured_size);
     assert_eq!(texture_arena.memory_in_use(), assets_textures_measurer.measured_size);
@@ -489,9 +502,13 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         neonvk::SwapchainBase::Surface(surface),
         &swapchain_settings,
     )?;
+    print_memory_usage("after swapchain creation");
     let mut pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, msaa_samples, None)?;
+    print_memory_usage("after pipelines creation");
     let mut framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
+    print_memory_usage("after framebuffers creation");
     let mut renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device)?;
+    print_memory_usage("after renderer creation");
 
     'running: loop {
         // Rendering preparation, which needs the SharedState:
@@ -609,6 +626,8 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         profiling::scope!("wait for gpu to be idle before exit");
         device.wait_idle()?;
     }
+
+    print_memory_usage("after ending the rendering loop");
 
     Ok(())
 }

@@ -1,4 +1,4 @@
-use crate::arena::VulkanArenaError;
+use crate::arena::{VulkanArenaError, MemoryProps};
 use crate::debug_utils;
 use crate::descriptors::Descriptors;
 use crate::mesh::VERTEX_BUFFERS;
@@ -117,8 +117,7 @@ impl Renderer {
             device,
             physical_device,
             10_000_000,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            MemoryProps::for_buffers(),
             format_args!("frame local arena"),
         )
         .map_err(RendererError::FrameLocalArenaCreation)?;
