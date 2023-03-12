@@ -71,7 +71,7 @@ fn modified_time(path: &Path) -> Option<SystemTime> {
 
 fn glsl_to_spirv(glsl: &Path, spirv: &Path) {
     let command = Command::new("glslc")
-        .args(["-O", "-g", "-std=450core", "--target-env=vulkan1.2"])
+        .args(["-O", "-g", "-std=450core", "--target-env=vulkan1.2", "-Werror"])
         .arg(glsl)
         .arg("-o")
         .arg(spirv)

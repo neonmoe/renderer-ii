@@ -1,4 +1,4 @@
-#version 450
+#version 450 core
 
 void main() {
     // Outputs triangles that cover the entire viewport for rendering post-processing effects.

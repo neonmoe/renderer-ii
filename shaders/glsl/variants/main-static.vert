@@ -1,2 +1,2 @@
-#version 450
+#version 450 core
 #include "../main.vert"
