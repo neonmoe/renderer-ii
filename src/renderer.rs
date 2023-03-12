@@ -90,7 +90,7 @@ impl Renderer {
         };
 
         let frame_end_fence = {
-            let fence_create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+            let fence_create_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
             let fence = unsafe { device.create_fence(&fence_create_info, None) }.map_err(RendererError::FrameEndFenceCreation)?;
             debug_utils::name_vulkan_object(device, fence, format_args!("frame end fence"));
             Fence {
@@ -100,7 +100,7 @@ impl Renderer {
         };
 
         let command_pool = {
-            let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+            let command_pool_create_info = vk::CommandPoolCreateInfo::default()
                 .queue_family_index(physical_device.graphics_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool =
@@ -193,11 +193,11 @@ impl Renderer {
             name: &str,
         ) -> Result<Buffer, VulkanArenaError> {
             let buffer_bytes: &[u8] = bytemuck::cast_slice(buffer);
-            let buffer_create_info = vk::BufferCreateInfo::builder()
+            let buffer_create_info = vk::BufferCreateInfo::default()
                 .size(buffer_bytes.len() as u64)
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            temp_arena.create_buffer(*buffer_create_info, buffer_bytes, None, None, format_args!("uniform ({name})"))
+            temp_arena.create_buffer(buffer_create_info, buffer_bytes, None, None, format_args!("uniform ({name})"))
         }
 
         let global_transforms = &[scene.camera.create_global_transforms(width as f32, height as f32)];
@@ -237,15 +237,15 @@ impl Renderer {
             &scene.skinned_meshes,
         )?;
 
-        let signal_semaphores = [vk::SemaphoreSubmitInfo::builder()
-            .semaphore(self.ready_for_present.inner)
-            .stage_mask(vk::PipelineStageFlags2::NONE) // this signals vkQueuePresent, which does not need synchronization nor have a stage
-            .build()];
-        let command_buffers = [vk::CommandBufferSubmitInfo::builder().command_buffer(command_buffer).build()];
-        let submit_infos = [vk::SubmitInfo2::builder()
+        let signal_semaphores = [
+            vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.ready_for_present.inner)
+                .stage_mask(vk::PipelineStageFlags2::NONE), // this signals vkQueuePresent, which does not need synchronization nor have a stage
+        ];
+        let command_buffers = [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
+        let submit_infos = [vk::SubmitInfo2::default()
             .signal_semaphore_infos(&signal_semaphores)
-            .command_buffer_infos(&command_buffers)
-            .build()];
+            .command_buffer_infos(&command_buffers)];
         unsafe {
             profiling::scope!("queue render");
             self.device
@@ -259,7 +259,7 @@ impl Renderer {
         let wait_semaphores = [self.ready_for_present.inner];
         let swapchains = [swapchain.inner()];
         let image_indices = [frame_index.index as u32];
-        let present_info = vk::PresentInfoKHR::builder()
+        let present_info = vk::PresentInfoKHR::default()
             .wait_semaphores(&wait_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
@@ -299,7 +299,7 @@ impl Renderer {
             command_buffer.inner
         } else {
             profiling::scope!("allocate command buffer");
-            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
                 .command_pool(command_pool)
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
@@ -322,16 +322,16 @@ impl Renderer {
                 .map_err(RendererError::CommandBufferBegin)?;
         }
 
-        let render_area = vk::Rect2D::builder().extent(framebuffers.extent).build();
+        let render_area = vk::Rect2D::default().extent(framebuffers.extent);
         let mut depth_clear_value = vk::ClearValue::default();
         depth_clear_value.depth_stencil.depth = 0.0;
         let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];
-        let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
+        let render_pass_begin_info = vk::RenderPassBeginInfo::default()
             .render_pass(pipelines.render_pass.inner)
             .framebuffer(framebuffer.inner)
             .render_area(render_area)
             .clear_values(&clear_colors);
-        let subpass_begin_info = vk::SubpassBeginInfo::builder().contents(vk::SubpassContents::INLINE);
+        let subpass_begin_info = vk::SubpassBeginInfo::default().contents(vk::SubpassContents::INLINE);
         unsafe {
             profiling::scope!("begin render pass");
             self.device
@@ -446,13 +446,13 @@ impl Renderer {
             let transform_buffer = {
                 profiling::scope!("create transform buffer");
                 let transforms_bytes = bytemuck::cast_slice(transforms);
-                let buffer_create_info = vk::BufferCreateInfo::builder()
+                let buffer_create_info = vk::BufferCreateInfo::default()
                     .size(transforms_bytes.len() as vk::DeviceSize)
                     .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                     .sharing_mode(vk::SharingMode::EXCLUSIVE);
                 self.temp_arena
                     .create_buffer(
-                        *buffer_create_info,
+                        buffer_create_info,
                         transforms_bytes,
                         None,
                         None,
@@ -517,13 +517,13 @@ impl Renderer {
                 profiling::scope!("create transform buffer for skinned model");
                 let transforms = &[model.transform];
                 let transforms_bytes = bytemuck::cast_slice(transforms);
-                let buffer_create_info = vk::BufferCreateInfo::builder()
+                let buffer_create_info = vk::BufferCreateInfo::default()
                     .size(transforms_bytes.len() as vk::DeviceSize)
                     .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                     .sharing_mode(vk::SharingMode::EXCLUSIVE);
                 self.temp_arena
                     .create_buffer(
-                        *buffer_create_info,
+                        buffer_create_info,
                         transforms_bytes,
                         None,
                         None,

@@ -955,8 +955,8 @@ fn stride_for(component_type: i32, attribute_type: &str) -> usize {
     bytes_per_component * components
 }
 
-pub(crate) fn get_mesh_buffer_create_info(size: vk::DeviceSize) -> vk::BufferCreateInfo {
-    vk::BufferCreateInfo::builder()
+pub(crate) fn get_mesh_buffer_create_info(size: vk::DeviceSize) -> vk::BufferCreateInfo<'static> {
+    vk::BufferCreateInfo::default()
         .size(size)
         .usage(
             vk::BufferUsageFlags::TRANSFER_DST
@@ -965,15 +965,13 @@ pub(crate) fn get_mesh_buffer_create_info(size: vk::DeviceSize) -> vk::BufferCre
                 | vk::BufferUsageFlags::UNIFORM_BUFFER,
         )
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .build()
 }
 
-pub(crate) fn get_material_factors_buffer_create_info(size: vk::DeviceSize) -> vk::BufferCreateInfo {
-    vk::BufferCreateInfo::builder()
+pub(crate) fn get_material_factors_buffer_create_info(size: vk::DeviceSize) -> vk::BufferCreateInfo<'static> {
+    vk::BufferCreateInfo::default()
         .size(size)
         .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .build()
 }
 
 pub(crate) fn get_gltf_texture_kinds(gltf: &gltf_json::GltfJson) -> Result<HashMap<usize, TextureKind>, GltfLoadingError> {

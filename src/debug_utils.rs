@@ -61,7 +61,7 @@ fn format_object_name(mut object_name: String) -> String {
 }
 
 #[profiling::function]
-pub(crate) fn create_debug_utils_messenger_info() -> vk::DebugUtilsMessengerCreateInfoEXT {
+pub(crate) fn create_debug_utils_messenger_info() -> vk::DebugUtilsMessengerCreateInfoEXT<'static> {
     let message_severity = vk::DebugUtilsMessageSeverityFlagsEXT::INFO
         | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
         | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
@@ -69,7 +69,7 @@ pub(crate) fn create_debug_utils_messenger_info() -> vk::DebugUtilsMessengerCrea
     let message_type = vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
         | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
         | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION;
-    *vk::DebugUtilsMessengerCreateInfoEXT::builder()
+    vk::DebugUtilsMessengerCreateInfoEXT::default()
         .message_severity(message_severity)
         .message_type(message_type)
         .pfn_user_callback(Some(debug_utils_messenger_callback))

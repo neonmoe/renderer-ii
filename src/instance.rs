@@ -4,7 +4,7 @@ use ash::extensions::ext;
 use ash::{vk, Entry};
 use core::ffi::c_char;
 use core::ffi::CStr;
-use raw_window_handle::HasRawWindowHandle;
+use raw_window_handle::HasRawDisplayHandle;
 
 pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_3;
 
@@ -23,7 +23,7 @@ pub struct Instance {
 
 impl Instance {
     pub fn new(
-        window: &dyn HasRawWindowHandle,
+        display: &dyn HasRawDisplayHandle,
         app_name: &CStr,
         major_version: u32,
         minor_version: u32,
@@ -32,7 +32,7 @@ impl Instance {
         profiling::scope!("vulkan instance creation");
         let version = make_api_version(0, major_version, minor_version, patch_version);
         let entry = Entry::linked();
-        let app_info = vk::ApplicationInfo::builder()
+        let app_info = vk::ApplicationInfo::default()
             .application_name(app_name)
             .application_version(version)
             .api_version(REQUIRED_VULKAN_VERSION);
@@ -50,7 +50,7 @@ impl Instance {
             }
         }
 
-        let mut extensions = ash_window::enumerate_required_extensions(window)
+        let mut extensions = ash_window::enumerate_required_extensions(display.raw_display_handle())
             .map_err(InstanceCreationError::WindowExtensionEnumeration)?
             .iter()
             .map(|&cs| {
@@ -60,14 +60,14 @@ impl Instance {
                 cs
             })
             .collect::<ArrayVec<*const c_char, 4>>();
-        let debug_utils_name = ext::DebugUtils::name().to_str().unwrap();
+        let debug_utils_name = ext::DebugUtils::NAME.to_str().unwrap();
         let debug_utils_available = is_extension_supported(&entry, debug_utils_name);
         if debug_utils_available {
-            extensions.push(ext::DebugUtils::name().as_ptr());
+            extensions.push(ext::DebugUtils::NAME.as_ptr());
             log::debug!("Instance extension (optional): {debug_utils_name}");
         }
 
-        let mut create_info = vk::InstanceCreateInfo::builder()
+        let mut create_info = vk::InstanceCreateInfo::default()
             .application_info(&app_info)
             .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions);
@@ -78,7 +78,7 @@ impl Instance {
             vk::ValidationFeatureEnableEXT::GPU_ASSISTED_RESERVE_BINDING_SLOT,
             vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION,
         ];
-        let mut validation_features = vk::ValidationFeaturesEXT::builder().enabled_validation_features(&enabled_validation_features);
+        let mut validation_features = vk::ValidationFeaturesEXT::default().enabled_validation_features(&enabled_validation_features);
         if validation_layer_enabled {
             create_info = create_info.push_next(&mut validation_features);
         }

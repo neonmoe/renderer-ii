@@ -121,13 +121,20 @@ mod surface {
     use crate::Error;
     use ash::extensions::khr;
     use ash::{Entry, Instance};
-    use raw_window_handle::HasRawWindowHandle;
+    use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
     pub use crate::vulkan_raii::Surface;
 
-    pub fn create_surface(entry: &Entry, instance: &Instance, window: &dyn HasRawWindowHandle) -> Result<Surface, Error> {
+    pub fn create_surface(
+        entry: &Entry,
+        instance: &Instance,
+        display: &dyn HasRawDisplayHandle,
+        window: &dyn HasRawWindowHandle,
+    ) -> Result<Surface, Error> {
         profiling::scope!("window surface creation");
-        let surface = unsafe { ash_window::create_surface(entry, instance, window, None) }.map_err(Error::SurfaceCreation)?;
+        let surface =
+            unsafe { ash_window::create_surface(entry, instance, display.raw_display_handle(), window.raw_window_handle(), None) }
+                .map_err(Error::SurfaceCreation)?;
         let surface_ext = khr::Surface::new(entry, instance);
         Ok(Surface {
             inner: surface,

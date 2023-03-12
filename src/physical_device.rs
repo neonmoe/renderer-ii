@@ -94,9 +94,7 @@ impl PhysicalDevice {
         profiling::scope!("query used vram");
         if self.extension_supported("VK_EXT_memory_budget") {
             let mut memory_budget_properties = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
-            let mut memory_properties = vk::PhysicalDeviceMemoryProperties2::builder()
-                .push_next(&mut memory_budget_properties)
-                .build();
+            let mut memory_properties = vk::PhysicalDeviceMemoryProperties2::default().push_next(&mut memory_budget_properties);
             unsafe { instance.get_physical_device_memory_properties2(self.inner, &mut memory_properties) };
             Some(memory_budget_properties.heap_usage.iter().sum())
         } else {
@@ -177,7 +175,7 @@ fn filter_capable_device(
             reject(PhysicalDeviceRejectionReason::Extension(ext_name));
         }
     };
-    assert_ext_supported(khr::Swapchain::name().to_str().unwrap());
+    assert_ext_supported(khr::Swapchain::NAME.to_str().unwrap());
 
     if let Err(reqs) = physical_device_features::has_required_features(instance, physical_device) {
         reject(PhysicalDeviceRejectionReason::DeviceRequirements(reqs));

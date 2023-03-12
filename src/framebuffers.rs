@@ -1,4 +1,4 @@
-use crate::arena::{VulkanArena, VulkanArenaError, MemoryProps};
+use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::debug_utils;
 use crate::pipelines::AttachmentLayout;
 use crate::vulkan_raii::{AnyImage, Device, Framebuffer, ImageView};
@@ -42,7 +42,7 @@ impl Framebuffers {
         let vk::Extent2D { width, height } = swapchain.extent;
 
         let create_image_info = |format: vk::Format, usage: vk::ImageUsageFlags| {
-            vk::ImageCreateInfo::builder()
+            vk::ImageCreateInfo::default()
                 .image_type(vk::ImageType::TYPE_2D)
                 .format(format)
                 .extent(vk::Extent3D { width, height, depth: 1 })
@@ -51,7 +51,6 @@ impl Framebuffers {
                 .samples(pipelines.attachment_sample_count)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(usage)
-                .build()
         };
 
         let hdr_image_info = create_image_info(
@@ -190,7 +189,7 @@ impl Framebuffers {
                 attachments.push(swapchain_image_view);
                 let raw_attachments: ArrayVec<vk::ImageView, 4> =
                     attachments.iter().map(|image_view: &Rc<ImageView>| image_view.inner).collect();
-                let framebuffer_create_info = vk::FramebufferCreateInfo::builder()
+                let framebuffer_create_info = vk::FramebufferCreateInfo::default()
                     .render_pass(pipelines.render_pass.inner)
                     .attachments(&raw_attachments)
                     .width(width)

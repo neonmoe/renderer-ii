@@ -144,8 +144,8 @@ impl Hash for Material {
 type MaterialSlot = Option<Weak<Material>>;
 
 #[derive(Default)]
-struct PendingWrite {
-    write_descriptor_set: Option<vk::WriteDescriptorSet>,
+struct PendingWrite<'a> {
+    write_descriptor_set: Option<vk::WriteDescriptorSet<'a>>,
     _buffer_info: Option<Box<vk::DescriptorBufferInfo>>,
     _image_info: Option<Box<vk::DescriptorImageInfo>>,
 }
@@ -158,7 +158,7 @@ const MATERIAL_UPDATES: usize = PipelineIndex::Count as usize * MAX_TEXTURE_COUN
 /// - Joints (one for each of the skinned pipelines)
 /// - Material textures and buffers (two for each slot of each pipeline)
 const MAX_DESCRIPTOR_WRITES: usize = 3 + SKINNED_PIPELINES.len() + 2 * MATERIAL_UPDATES;
-type PendingWritesVec = ArrayVec<PendingWrite, MAX_DESCRIPTOR_WRITES>;
+type PendingWritesVec<'a> = ArrayVec<PendingWrite<'a>, MAX_DESCRIPTOR_WRITES>;
 
 pub struct Descriptors {
     pub(crate) pipeline_layouts: PipelineMap<PipelineLayout>,
@@ -179,7 +179,7 @@ impl Descriptors {
         pbr_defaults_arena: &mut VulkanArena<ForImages>,
     ) -> Result<Descriptors, DescriptorError> {
         profiling::scope!("creating descriptor sets");
-        let sampler_create_info = vk::SamplerCreateInfo::builder()
+        let sampler_create_info = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::LINEAR)
             .min_filter(vk::Filter::LINEAR)
             .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
@@ -214,19 +214,19 @@ impl Descriptors {
                         let bindings = bindings
                             .iter()
                             .map(|params| {
-                                let mut builder = vk::DescriptorSetLayoutBinding::builder()
+                                let mut binding = vk::DescriptorSetLayoutBinding::default()
                                     .descriptor_type(params.descriptor_type)
                                     .descriptor_count(params.descriptor_count)
                                     .stage_flags(params.stage_flags)
                                     .binding(params.binding);
                                 if params.descriptor_type == vk::DescriptorType::SAMPLER {
-                                    builder = builder.immutable_samplers(&samplers_vk);
+                                    binding = binding.immutable_samplers(&samplers_vk);
                                 }
-                                builder.build()
+                                binding
                             })
                             .collect::<ArrayVec<vk::DescriptorSetLayoutBinding, 8>>();
-                        let mut binding_flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&binding_flags);
-                        let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
+                        let mut binding_flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
+                        let create_info = vk::DescriptorSetLayoutCreateInfo::default()
                             .push_next(&mut binding_flags)
                             .bindings(&bindings);
                         let dsl = unsafe { device.create_descriptor_set_layout(&create_info, None) }
@@ -246,12 +246,11 @@ impl Descriptors {
         let pipeline_layouts = PipelineMap::new::<DescriptorError, _>(|pipeline| {
             let PipelineParameters { descriptor_sets, .. } = &PIPELINE_PARAMETERS[pipeline];
             let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline, descriptor_sets)?);
-            let push_constant_ranges = [vk::PushConstantRange::builder()
+            let push_constant_ranges = [vk::PushConstantRange::default()
                 .offset(0)
                 .size(mem::size_of::<MaterialPushConstants>() as u32)
-                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                .build()];
-            let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder()
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+            let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default()
                 .set_layouts(&descriptor_set_layouts.inner)
                 .push_constant_ranges(&push_constant_ranges);
             let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
@@ -270,14 +269,13 @@ impl Descriptors {
             .flat_map(|params| params.descriptor_sets.iter())
             .flat_map(|set| set.iter())
             .map(|descriptor_layout| {
-                vk::DescriptorPoolSize::builder()
+                vk::DescriptorPoolSize::default()
                     .ty(descriptor_layout.descriptor_type)
                     .descriptor_count(descriptor_layout.descriptor_count)
-                    .build()
             })
             .collect::<ArrayVec<vk::DescriptorPoolSize, { PipelineIndex::Count as usize * 16 }>>();
         let descriptor_sets_per_frame = pipeline_layouts.iter().flat_map(|pl| &pl.descriptor_set_layouts.inner).count() as u32;
-        let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
+        let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::default()
             .max_sets(descriptor_sets_per_frame)
             .pool_sizes(&pool_sizes);
         let descriptor_pool = unsafe {
@@ -294,7 +292,7 @@ impl Descriptors {
         let mut descriptor_set_layouts_per_pipeline = pipeline_layouts.iter().map(|pl| &pl.descriptor_set_layouts);
         let descriptor_sets = PipelineMap::new::<DescriptorError, _>(|pl| {
             let descriptor_set_layouts = descriptor_set_layouts_per_pipeline.next().unwrap();
-            let create_info = vk::DescriptorSetAllocateInfo::builder()
+            let create_info = vk::DescriptorSetAllocateInfo::default()
                 .descriptor_pool(descriptor_pool.inner)
                 .set_layouts(&descriptor_set_layouts.inner);
             let descriptor_sets =
@@ -435,11 +433,10 @@ impl Descriptors {
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[pipeline].inner[set_idx];
         let descriptor_buffer_info = Box::new(
-            vk::DescriptorBufferInfo::builder()
+            vk::DescriptorBufferInfo::default()
                 .buffer(buffer)
                 .offset(offset)
-                .range(size)
-                .build(),
+                .range(size),
         );
         let params = &PIPELINE_PARAMETERS[pipeline].descriptor_sets[set_idx][binding as usize];
         let write_descriptor_set = vk::WriteDescriptorSet {
@@ -485,10 +482,9 @@ impl Descriptors {
         let descriptor_set = self.descriptor_sets[pipeline].inner[set_idx];
         for (i, image_view) in image_views.iter().enumerate() {
             let descriptor_image_info = Box::new(
-                vk::DescriptorImageInfo::builder()
+                vk::DescriptorImageInfo::default()
                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image_view(*image_view)
-                    .build(),
+                    .image_view(*image_view),
             );
             let binding = first_binding + i as u32;
             let params = &PIPELINE_PARAMETERS[pipeline].descriptor_sets[set_idx][binding as usize];

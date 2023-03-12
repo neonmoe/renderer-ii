@@ -1,6 +1,6 @@
 use crate::debug_utils;
-use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
 use crate::physical_device::PhysicalDevice;
+use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
 use ash::vk;
 use core::fmt::Arguments;
 use core::time::Duration;
@@ -78,7 +78,7 @@ impl Uploader {
 
         let transfer_command_pool = {
             profiling::scope!("transfer command pool creation");
-            let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+            let command_pool_create_info = vk::CommandPoolCreateInfo::default()
                 .queue_family_index(physical_device.transfer_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
@@ -92,7 +92,7 @@ impl Uploader {
 
         let graphics_command_pool = {
             profiling::scope!("graphics command pool creation");
-            let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+            let command_pool_create_info = vk::CommandPoolCreateInfo::default()
                 .queue_family_index(physical_device.graphics_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
@@ -179,13 +179,13 @@ impl Uploader {
         profiling::scope!("start upload");
         let [transfer_cmdbuf, graphics_cmdbuf] = {
             profiling::scope!("allocate command buffers");
-            let transfer = vk::CommandBufferAllocateInfo::builder()
+            let transfer = vk::CommandBufferAllocateInfo::default()
                 .command_pool(self.transfer_command_pool.inner)
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
             let transfer_buffers =
                 unsafe { self.device.allocate_command_buffers(&transfer) }.map_err(UploadError::TransferCommandBufferCreation)?;
-            let graphics = vk::CommandBufferAllocateInfo::builder()
+            let graphics = vk::CommandBufferAllocateInfo::default()
                 .command_pool(self.graphics_command_pool.inner)
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
@@ -244,7 +244,7 @@ impl Uploader {
 
         {
             profiling::scope!("record commands for transfer queue");
-            let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { self.device.begin_command_buffer(transfer_cmdbuf, &command_buffer_begin_info) }
                 .map_err(UploadError::TransferCommandBufferBegin)?;
             queue_transfer_commands(&self.device, &staging_buffer, transfer_cmdbuf);
@@ -253,7 +253,7 @@ impl Uploader {
 
         {
             profiling::scope!("record commands for graphics queue");
-            let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { self.device.begin_command_buffer(graphics_cmdbuf, &command_buffer_begin_info) }
                 .map_err(UploadError::GraphicsCommandBufferBegin)?;
             queue_graphics_commands(&self.device, graphics_cmdbuf);
@@ -264,10 +264,9 @@ impl Uploader {
             profiling::scope!("submit transfer command buffer");
             let command_buffers = [transfer_cmdbuf];
             let signal_semaphores = [transfer_signal_semaphore.inner];
-            let submit_infos = [vk::SubmitInfo::builder()
+            let submit_infos = [vk::SubmitInfo::default()
                 .command_buffers(&command_buffers)
-                .signal_semaphores(&signal_semaphores)
-                .build()];
+                .signal_semaphores(&signal_semaphores)];
             unsafe {
                 self.device
                     .queue_submit(self.transfer_queue, &submit_infos, vk::Fence::null())
@@ -280,11 +279,10 @@ impl Uploader {
             let command_buffers = [graphics_cmdbuf];
             let dst_stage_mask = [vk::PipelineStageFlags::TRANSFER];
             let wait_semaphores = [transfer_signal_semaphore.inner];
-            let submit_infos = [vk::SubmitInfo::builder()
+            let submit_infos = [vk::SubmitInfo::default()
                 .command_buffers(&command_buffers)
                 .wait_dst_stage_mask(&dst_stage_mask)
-                .wait_semaphores(&wait_semaphores)
-                .build()];
+                .wait_semaphores(&wait_semaphores)];
             unsafe {
                 self.device
                     .queue_submit(self.graphics_queue, &submit_infos, upload_fence.inner)

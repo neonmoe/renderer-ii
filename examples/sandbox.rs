@@ -131,7 +131,7 @@ fn main_() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
         env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
     )?;
-    let surface = neonvk::create_surface(&instance.entry, &instance.inner, &window)?;
+    let surface = neonvk::create_surface(&instance.entry, &instance.inner, &window, &window)?;
     let rendering_thread = std::thread::Builder::new()
         .name(format!("{}-render", env!("CARGO_CRATE_NAME")))
         .spawn({
@@ -572,11 +572,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
             profiling::scope!("handle resize");
             device.wait_idle()?;
             drop(framebuffers);
-            swapchain.recreate(
-                &device,
-                &physical_device,
-                &swapchain_settings,
-            )?;
+            swapchain.recreate(&device, &physical_device, &swapchain_settings)?;
             pipelines = neonvk::Pipelines::new(
                 &device,
                 &physical_device,

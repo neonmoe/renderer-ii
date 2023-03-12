@@ -21,14 +21,14 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
     let queue_create_infos = create_device_queue_create_infos(&queue_families, &ones);
 
     let mut extensions: ArrayVec<*const c_char, 3> = ArrayVec::new();
-    extensions.push(khr::Swapchain::name().as_ptr());
-    log::debug!("Device extension: {}", khr::Swapchain::name().to_str().unwrap());
+    extensions.push(khr::Swapchain::NAME.as_ptr());
+    log::debug!("Device extension: {}", khr::Swapchain::NAME.to_str().unwrap());
     if physical_device.extension_supported("VK_EXT_memory_budget") {
         extensions.push(cstr!("VK_EXT_memory_budget").as_ptr());
         log::debug!("Device extension (optional): VK_EXT_memory_budget");
     }
 
-    let device_create_info = vk::DeviceCreateInfo::builder()
+    let device_create_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_create_infos)
         .enabled_extension_names(&extensions);
     let device = physical_device_features::create_device_with_feature_requirements(instance, physical_device.inner, device_create_info)?;
@@ -65,10 +65,10 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
     Ok(device)
 }
 
-fn create_device_queue_create_infos<const N: usize>(
+fn create_device_queue_create_infos<'a, const N: usize>(
     queue_families: &[QueueFamily; N],
-    ones: &[f32],
-) -> ArrayVec<vk::DeviceQueueCreateInfo, N> {
+    ones: &'a [f32],
+) -> ArrayVec<vk::DeviceQueueCreateInfo<'a>, N> {
     let mut results = ArrayVec::<vk::DeviceQueueCreateInfo, N>::new();
     'queue_families: for &queue_family in queue_families {
         for create_info in &results {
@@ -78,10 +78,9 @@ fn create_device_queue_create_infos<const N: usize>(
         }
         let count = queue_families.iter().filter(|qf| qf.index == queue_family.index).count();
         let count = count.min(queue_family.max_count);
-        let create_info = vk::DeviceQueueCreateInfo::builder()
+        let create_info = vk::DeviceQueueCreateInfo::default()
             .queue_family_index(queue_family.index)
-            .queue_priorities(&ones[..count])
-            .build();
+            .queue_priorities(&ones[..count]);
         results.push(create_info);
     }
     results

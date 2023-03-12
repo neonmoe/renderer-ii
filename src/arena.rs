@@ -95,7 +95,7 @@ impl<T: ArenaType> VulkanArena<T> {
         let debug_identifier = format!("{}", debug_identifier_args);
         let (memory_type_index, memory_flags) =
             get_memory_type_index(instance, physical_device, memory_properties, size, &debug_identifier)?;
-        let alloc_info = vk::MemoryAllocateInfo::builder()
+        let alloc_info = vk::MemoryAllocateInfo::default()
             .allocation_size(size)
             .memory_type_index(memory_type_index);
         let memory = {
@@ -205,11 +205,10 @@ impl VulkanArena<ForBuffers> {
         if self.mapped_memory_ptr.is_null() {
             if let (Some(uploader), Some(staging_arena)) = (uploader, staging_arena) {
                 profiling::scope!("staging buffer creation");
-                let staging_info = vk::BufferCreateInfo::builder()
+                let staging_info = vk::BufferCreateInfo::default()
                     .size(buffer_create_info.size)
                     .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .build();
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE);
                 let staging_buffer =
                     staging_arena.create_buffer(staging_info, src, None, None, format_args!("staging buffer for {}", name))?;
                 let &mut Uploader {
@@ -224,7 +223,7 @@ impl VulkanArena<ForBuffers> {
                         name,
                         |device, staging_buffer, command_buffer| {
                             profiling::scope!("record buffer copy cmd from staging");
-                            let barrier_from_graphics_to_transfer = [vk::BufferMemoryBarrier2::builder()
+                            let barrier_from_graphics_to_transfer = [vk::BufferMemoryBarrier2::default()
                                 .buffer(buffer)
                                 .offset(0)
                                 .size(vk::WHOLE_SIZE)
@@ -233,17 +232,16 @@ impl VulkanArena<ForBuffers> {
                                 .src_access_mask(vk::AccessFlags2::NONE)
                                 .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                                 .src_stage_mask(vk::PipelineStageFlags2::NONE)
-                                .dst_stage_mask(vk::PipelineStageFlags2::COPY)
-                                .build()];
-                            let dep_info = vk::DependencyInfo::builder().buffer_memory_barriers(&barrier_from_graphics_to_transfer);
+                                .dst_stage_mask(vk::PipelineStageFlags2::COPY)];
+                            let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&barrier_from_graphics_to_transfer);
                             unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
                             let (src, dst) = (staging_buffer.inner, buffer);
-                            let copy_regions = [vk::BufferCopy::builder().size(buffer_create_info.size).build()];
+                            let copy_regions = [vk::BufferCopy::default().size(buffer_create_info.size)];
                             unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
                         },
                         |device, command_buffer| {
                             profiling::scope!("vk::cmd_pipeline_barrier");
-                            let barrier_from_transfer_to_graphics = [vk::BufferMemoryBarrier2::builder()
+                            let barrier_from_transfer_to_graphics = [vk::BufferMemoryBarrier2::default()
                                 .buffer(buffer)
                                 .offset(0)
                                 .size(vk::WHOLE_SIZE)
@@ -252,9 +250,8 @@ impl VulkanArena<ForBuffers> {
                                 .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                                 .dst_access_mask(vk::AccessFlags2::VERTEX_ATTRIBUTE_READ)
                                 .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                                .dst_stage_mask(vk::PipelineStageFlags2::VERTEX_INPUT)
-                                .build()];
-                            let dep_info = vk::DependencyInfo::builder().buffer_memory_barriers(&barrier_from_transfer_to_graphics);
+                                .dst_stage_mask(vk::PipelineStageFlags2::VERTEX_INPUT)];
+                            let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&barrier_from_transfer_to_graphics);
                             unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
                         },
                     )
@@ -335,12 +332,11 @@ fn get_memory_type_index(
     debug_identifier: &str,
 ) -> Result<(u32, vk::MemoryPropertyFlags), VulkanArenaError> {
     let budget_supported = physical_device.extension_supported("VK_EXT_memory_budget");
-    let mut memory_properties = vk::PhysicalDeviceMemoryProperties2::builder();
+    let mut memory_properties = vk::PhysicalDeviceMemoryProperties2::default();
     let mut budget_props = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
     if budget_supported {
         memory_properties = memory_properties.push_next(&mut budget_props);
     }
-    let mut memory_properties = memory_properties.build();
     unsafe { instance.get_physical_device_memory_properties2(physical_device.inner, &mut memory_properties) };
 
     let props = memory_properties.memory_properties;

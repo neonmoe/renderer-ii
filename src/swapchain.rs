@@ -208,7 +208,7 @@ fn create_swapchain(
         min_image_count = min_image_count.min(surface_capabilities.max_image_count)
     }
 
-    let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+    let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
         .surface(surface)
         .min_image_count(min_image_count)
         .image_format(physical_device.swapchain_format)

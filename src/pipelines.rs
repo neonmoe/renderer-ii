@@ -101,7 +101,7 @@ fn create_render_pass(
     let tonemapped_index = 2;
     let resolve_index = 3;
 
-    let hdr_attachment = vk::AttachmentDescription2::builder()
+    let hdr_attachment = vk::AttachmentDescription2::default()
         .format(HDR_COLOR_ATTACHMENT_FORMAT)
         .samples(attachment_sample_count)
         .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -110,18 +110,16 @@ fn create_render_pass(
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-    let hdr_pass_color_attachment_references = [vk::AttachmentReference2::builder()
+    let hdr_pass_color_attachment_references = [vk::AttachmentReference2::default()
         .attachment(hdr_index)
         .layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .build()];
-    let tonemapping_pass_input_attachment_references = [vk::AttachmentReference2::builder()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)];
+    let tonemapping_pass_input_attachment_references = [vk::AttachmentReference2::default()
         .attachment(hdr_index)
         .layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .build()];
+        .aspect_mask(vk::ImageAspectFlags::COLOR)];
 
-    let depth_attachment = vk::AttachmentDescription2::builder()
+    let depth_attachment = vk::AttachmentDescription2::default()
         .format(depth_format)
         .samples(attachment_sample_count)
         .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -130,31 +128,30 @@ fn create_render_pass(
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL);
-    let depth_attachment_reference = vk::AttachmentReference2::builder()
+    let depth_attachment_reference = vk::AttachmentReference2::default()
         .attachment(depth_index)
         .layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
-        .aspect_mask(vk::ImageAspectFlags::DEPTH)
-        .build();
+        .aspect_mask(vk::ImageAspectFlags::DEPTH);
 
-    let hdr_subpass = vk::SubpassDescription2::builder()
+    let hdr_subpass = vk::SubpassDescription2::default()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(&hdr_pass_color_attachment_references)
         .depth_stencil_attachment(&depth_attachment_reference);
 
-    let mut hdr_to_tonemapped_attachment_barrier = vk::MemoryBarrier2::builder()
+    let mut hdr_to_tonemapped_attachment_barrier = vk::MemoryBarrier2::default()
         .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
         .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
         .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
         .dst_access_mask(vk::AccessFlags2::INPUT_ATTACHMENT_READ);
-    let  hdr_to_tonemapped_attachment_dependency = vk::SubpassDependency2::builder()
+    let hdr_to_tonemapped_attachment_dependency = vk::SubpassDependency2::default()
         .push_next(&mut hdr_to_tonemapped_attachment_barrier)
         .src_subpass(0)
         .dst_subpass(1)
         .dependency_flags(vk::DependencyFlags::BY_REGION);
-    let dependencies = [hdr_to_tonemapped_attachment_dependency.build()];
+    let dependencies = [hdr_to_tonemapped_attachment_dependency];
 
     if attachment_sample_count == vk::SampleCountFlags::TYPE_1 {
-        let tonemapped_color_attachment = vk::AttachmentDescription2::builder()
+        let tonemapped_color_attachment = vk::AttachmentDescription2::default()
             .format(swapchain_format)
             .samples(attachment_sample_count)
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -163,24 +160,19 @@ fn create_render_pass(
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-        let tonemapping_pass_color_attachment_references = [vk::AttachmentReference2::builder()
+        let tonemapping_pass_color_attachment_references = [vk::AttachmentReference2::default()
             .attachment(tonemapped_index)
             .layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .build()];
+            .aspect_mask(vk::ImageAspectFlags::COLOR)];
 
-        let tonemapping_subpass = vk::SubpassDescription2::builder()
+        let tonemapping_subpass = vk::SubpassDescription2::default()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(&tonemapping_pass_color_attachment_references)
             .input_attachments(&tonemapping_pass_input_attachment_references);
 
-        let attachments = [
-            hdr_attachment.build(),
-            depth_attachment.build(),
-            tonemapped_color_attachment.build(),
-        ];
-        let subpasses = [hdr_subpass.build(), tonemapping_subpass.build()];
-        let render_pass_create_info = vk::RenderPassCreateInfo2::builder()
+        let attachments = [hdr_attachment, depth_attachment, tonemapped_color_attachment];
+        let subpasses = [hdr_subpass, tonemapping_subpass];
+        let render_pass_create_info = vk::RenderPassCreateInfo2::default()
             .attachments(&attachments)
             .subpasses(&subpasses)
             .dependencies(&dependencies);
@@ -188,7 +180,7 @@ fn create_render_pass(
             unsafe { device.create_render_pass2(&render_pass_create_info, None) }.map_err(PipelineCreationError::RenderPass)?;
         Ok((render_pass, AttachmentLayout::SingleSampled))
     } else {
-        let tonemapped_color_attachment = vk::AttachmentDescription2::builder()
+        let tonemapped_color_attachment = vk::AttachmentDescription2::default()
             .format(swapchain_format)
             .samples(attachment_sample_count)
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -197,13 +189,12 @@ fn create_render_pass(
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL);
-        let tonemapping_pass_color_attachment_references = [vk::AttachmentReference2::builder()
+        let tonemapping_pass_color_attachment_references = [vk::AttachmentReference2::default()
             .attachment(tonemapped_index)
             .layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .build()];
+            .aspect_mask(vk::ImageAspectFlags::COLOR)];
 
-        let resolve_attachment = vk::AttachmentDescription2::builder()
+        let resolve_attachment = vk::AttachmentDescription2::default()
             .format(swapchain_format)
             .samples(vk::SampleCountFlags::TYPE_1)
             .load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -212,26 +203,20 @@ fn create_render_pass(
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-        let resolve_attachment_references = [vk::AttachmentReference2::builder()
+        let resolve_attachment_references = [vk::AttachmentReference2::default()
             .attachment(resolve_index)
             .layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .build()];
+            .aspect_mask(vk::ImageAspectFlags::COLOR)];
 
-        let tonemapping_subpass = vk::SubpassDescription2::builder()
+        let tonemapping_subpass = vk::SubpassDescription2::default()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(&tonemapping_pass_color_attachment_references)
             .resolve_attachments(&resolve_attachment_references)
             .input_attachments(&tonemapping_pass_input_attachment_references);
 
-        let attachments = [
-            hdr_attachment.build(),
-            depth_attachment.build(),
-            tonemapped_color_attachment.build(),
-            resolve_attachment.build(),
-        ];
-        let subpasses = [hdr_subpass.build(), tonemapping_subpass.build()];
-        let render_pass_create_info = vk::RenderPassCreateInfo2::builder()
+        let attachments = [hdr_attachment, depth_attachment, tonemapped_color_attachment, resolve_attachment];
+        let subpasses = [hdr_subpass, tonemapping_subpass];
+        let render_pass_create_info = vk::RenderPassCreateInfo2::default()
             .attachments(&attachments)
             .subpasses(&subpasses)
             .dependencies(&dependencies);
@@ -254,7 +239,7 @@ fn create_pipelines(
     let mut create_shader_module = |(filename, spirv): (&'static str, &'static [u32])| -> Result<vk::ShaderModule, PipelineCreationError> {
         *all_shader_modules.entry((filename, spirv)).or_insert_with(|| {
             // TODO: What to do with big-endian systems? Re: spirv consists of u32s.
-            let create_info = vk::ShaderModuleCreateInfo::builder().code(spirv);
+            let create_info = vk::ShaderModuleCreateInfo::default().code(spirv);
             let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(PipelineCreationError::ShaderModule)?;
             debug_utils::name_vulkan_object(device, shader_module, format_args!("{}", filename));
             Ok(shader_module)
@@ -271,39 +256,37 @@ fn create_pipelines(
         };
         let vertex_module = create_from_shader_variant(params.vertex_shader)?;
         let fragment_module = create_from_shader_variant(params.fragment_shader)?;
-        let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
+        let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vertex_module)
             .name(cstr!("main"));
-        let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::builder()
+        let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(fragment_module)
             .name(cstr!("main"));
-        Ok([vert_shader_stage_create_info.build(), frag_shader_stage_create_info.build()])
+        Ok([vert_shader_stage_create_info, frag_shader_stage_create_info])
     })?;
 
     let vertex_input_per_pipeline = PipelineMap::new(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
-        Ok(vk::PipelineVertexInputStateCreateInfo::builder()
+        Ok(vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(params.bindings)
-            .vertex_attribute_descriptions(params.attributes)
-            .build())
+            .vertex_attribute_descriptions(params.attributes))
     })?;
 
     let multisample_create_infos = PipelineMap::new(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
-        Ok(vk::PipelineMultisampleStateCreateInfo::builder()
+        Ok(vk::PipelineMultisampleStateCreateInfo::default()
             .rasterization_samples(attachment_sample_count)
             .alpha_to_coverage_enable(params.alpha_to_coverage)
             .sample_shading_enable(params.sample_shading)
-            .min_sample_shading(params.min_sample_shading_factor)
-            .build())
+            .min_sample_shading(params.min_sample_shading_factor))
     })?;
 
     let color_blend_attachment_states_per_pipeline = PipelineMap::new(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         let rgba_mask = vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A;
-        let mut blend_attachment_state_builder = vk::PipelineColorBlendAttachmentState::builder()
+        let mut blend_attachment_state_builder = vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(rgba_mask)
             .blend_enable(params.blended);
         if params.blended {
@@ -315,22 +298,21 @@ fn create_pipelines(
                 .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
                 .alpha_blend_op(vk::BlendOp::ADD);
         }
-        Ok([blend_attachment_state_builder.build()])
+        Ok([blend_attachment_state_builder])
     })?;
 
     let color_blend_create_infos = PipelineMap::new(|pipeline| {
         let color_blend_attachment_states = &color_blend_attachment_states_per_pipeline[pipeline];
-        Ok(vk::PipelineColorBlendStateCreateInfo::builder()
+        Ok(vk::PipelineColorBlendStateCreateInfo::default()
             .logic_op_enable(false)
-            .attachments(color_blend_attachment_states)
-            .build())
+            .attachments(color_blend_attachment_states))
     })?;
 
-    let input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+    let input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
 
-    let rasterization_create_info = vk::PipelineRasterizationStateCreateInfo::builder()
+    let rasterization_create_info = vk::PipelineRasterizationStateCreateInfo::default()
         .polygon_mode(vk::PolygonMode::FILL)
         .cull_mode(vk::CullModeFlags::BACK)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
@@ -338,21 +320,19 @@ fn create_pipelines(
 
     let pipeline_depth_stencil_create_infos = PipelineMap::new(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
-        Ok(vk::PipelineDepthStencilStateCreateInfo::builder()
+        Ok(vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(params.depth_test)
             .depth_write_enable(params.depth_write)
-            .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL)
-            .build())
+            .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL))
     })?;
 
-    let viewports = [vk::Viewport::builder()
+    let viewports = [vk::Viewport::default()
         .width(extent.width as f32)
         .height(extent.height as f32)
         .min_depth(0.0)
-        .max_depth(1.0)
-        .build()];
-    let scissors = [vk::Rect2D::builder().extent(extent).build()];
-    let viewport_create_info = vk::PipelineViewportStateCreateInfo::builder()
+        .max_depth(1.0)];
+    let scissors = [vk::Rect2D::default().extent(extent)];
+    let viewport_create_info = vk::PipelineViewportStateCreateInfo::default()
         .viewports(&viewports)
         .scissors(&scissors);
 
@@ -367,7 +347,7 @@ fn create_pipelines(
         // per-Pipelines. Old Pipelines can't be inherited by multiple
         // Pipelines because they get moved, and Rust's ownership semantics
         // take care of the rest.
-        let create_info = vk::PipelineCacheCreateInfo::builder().flags(vk::PipelineCacheCreateFlags::EXTERNALLY_SYNCHRONIZED);
+        let create_info = vk::PipelineCacheCreateInfo::default().flags(vk::PipelineCacheCreateFlags::EXTERNALLY_SYNCHRONIZED);
         let pipeline_cache = unsafe { device.create_pipeline_cache(&create_info, None) }.ok()?;
         debug_utils::name_vulkan_object(device, pipeline_cache, format_args!("all pipelines"));
         Some(PipelineCache {
@@ -377,7 +357,7 @@ fn create_pipelines(
     });
     let mut pipeline_create_infos = ArrayVec::<_, { PipelineIndex::Count as usize }>::new();
     for i in ALL_PIPELINES {
-        let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
+        let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
             .stages(&shader_stages_per_pipeline[i][..])
             .vertex_input_state(&vertex_input_per_pipeline[i])
             .input_assembly_state(&input_assembly_create_info)
@@ -388,8 +368,7 @@ fn create_pipelines(
             .color_blend_state(&color_blend_create_infos[i])
             .layout(pipeline_layouts[i].inner)
             .render_pass(render_pass)
-            .subpass(subpasses[i])
-            .build();
+            .subpass(subpasses[i]);
         pipeline_create_infos.push(pipeline_create_info);
     }
 
