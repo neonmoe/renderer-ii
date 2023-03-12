@@ -30,7 +30,7 @@ pub enum VulkanArenaError {
         total: vk::DeviceSize,
         required: vk::DeviceSize,
     },
-    #[error("tried to write to arena without HOST_VISIBLE | HOST_COHERENT without providing an uploader for staging memory")]
+    #[error("tried to write to arena without HOST_VISIBLE | HOST_COHERENT without providing an uploader and/or staging memory")]
     NotWritable,
     #[error("failed to start upload for transferring the staging memory to device local memory")]
     Upload(#[source] UploadError),
@@ -165,6 +165,7 @@ impl VulkanArena<ForBuffers> {
         &mut self,
         buffer_create_info: vk::BufferCreateInfo,
         src: &[u8],
+        staging_arena: Option<&mut VulkanArena<ForBuffers>>,
         uploader: Option<&mut Uploader>,
         name: Arguments,
     ) -> Result<Buffer, VulkanArenaError> {
@@ -196,7 +197,7 @@ impl VulkanArena<ForBuffers> {
         debug_utils::name_vulkan_object(&self.device, buffer, name);
 
         if self.mapped_memory_ptr.is_null() {
-            if let Some(uploader) = uploader {
+            if let (Some(uploader), Some(staging_arena)) = (uploader, staging_arena) {
                 profiling::scope!("staging buffer creation");
                 let staging_info = vk::BufferCreateInfo::builder()
                     .size(buffer_create_info.size)
@@ -204,9 +205,7 @@ impl VulkanArena<ForBuffers> {
                     .sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .build();
                 let staging_buffer =
-                    uploader
-                        .staging_arena
-                        .create_buffer(staging_info, src, None, format_args!("staging buffer for {}", name))?;
+                    staging_arena.create_buffer(staging_info, src, None, None, format_args!("staging buffer for {}", name))?;
                 let &mut Uploader {
                     graphics_queue_family,
                     transfer_queue_family,

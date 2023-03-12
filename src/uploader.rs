@@ -1,7 +1,6 @@
-use crate::arena::VulkanArenaError;
 use crate::debug_utils;
 use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
-use crate::{ForBuffers, PhysicalDevice, VulkanArena};
+use crate::physical_device::PhysicalDevice;
 use ash::vk;
 use core::fmt::Arguments;
 use core::time::Duration;
@@ -18,8 +17,6 @@ pub enum UploaderError {
     TransferCommandPoolCreation(#[source] vk::Result),
     #[error("failed to create uploader graphics command pool (out of memory?)")]
     GraphicsCommandPoolCreation(#[source] vk::Result),
-    #[error("failed to reset staging arena")]
-    StagingArenaReset(#[source] VulkanArenaError),
     #[error("failed to reset uploader transfer command pool")]
     TransferCommandPoolReset(#[source] vk::Result),
     #[error("failed to reset uploader graphics command pool")]
@@ -53,8 +50,7 @@ pub enum UploadError {
     GraphicsQueueSubmit(#[source] vk::Result),
 }
 
-pub struct Uploader<'a> {
-    pub staging_arena: &'a mut VulkanArena<ForBuffers>,
+pub struct Uploader {
     pub graphics_queue_family: u32,
     pub transfer_queue_family: u32,
     device: Device,
@@ -70,15 +66,14 @@ pub struct Uploader<'a> {
     debug_identifier: &'static str,
 }
 
-impl Uploader<'_> {
-    pub fn new<'a>(
+impl Uploader {
+    pub fn new(
         device: &Device,
         graphics_queue: vk::Queue,
         transfer_queue: vk::Queue,
         physical_device: &PhysicalDevice,
-        staging_arena: &'a mut VulkanArena<ForBuffers>,
         debug_identifier: &'static str,
-    ) -> Result<Uploader<'a>, UploaderError> {
+    ) -> Result<Uploader, UploaderError> {
         profiling::scope!("uploader creation");
 
         let transfer_command_pool = {
@@ -110,7 +105,6 @@ impl Uploader<'_> {
         };
 
         Ok(Uploader {
-            staging_arena,
             graphics_queue_family: physical_device.graphics_queue_family.index,
             transfer_queue_family: physical_device.transfer_queue_family.index,
             device: device.clone(),
@@ -142,8 +136,8 @@ impl Uploader<'_> {
     /// uploads as a whole, as opposed to the status of every individual upload
     /// operation with [Uploader::get_upload_statuses], which may be more
     /// inefficient.
-    pub fn wait<D: Into<Option<Duration>>>(&self, timeout: D) -> Result<bool, UploaderError> {
-        let timeout = if let Some(timeout) = timeout.into() {
+    pub fn wait(&self, timeout: Option<Duration>) -> Result<bool, UploaderError> {
+        let timeout = if let Some(timeout) = timeout {
             timeout.as_nanos() as u64
         } else {
             u64::MAX
@@ -310,7 +304,6 @@ impl Uploader<'_> {
             return Err(UploaderError::NotResettable);
         }
         self.staging_buffers.clear();
-        self.staging_arena.reset().map_err(UploaderError::StagingArenaReset)?;
         self.free_fences.append(&mut self.upload_fences);
         self.free_semaphores.append(&mut self.transfer_semaphores);
         unsafe {

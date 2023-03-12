@@ -430,15 +430,15 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         device.graphics_queue,
         device.transfer_queue,
         &physical_device,
-        &mut staging_arena,
         "sandbox assets",
     )?;
 
-    let mut descriptors = neonvk::Descriptors::new(&device, &physical_device, &mut uploader, &mut texture_arena)?;
+    let mut descriptors = neonvk::Descriptors::new(&device, &physical_device, &mut staging_arena, &mut uploader, &mut texture_arena)?;
 
     let upload_start = Instant::now();
     let sponza_model = neonvk::Gltf::from_gltf(
         &device,
+        &mut staging_arena,
         &mut uploader,
         &mut descriptors,
         (&mut buffer_arena, &mut texture_arena),
@@ -447,6 +447,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
     )?;
     let smol_ame_model = neonvk::Gltf::from_gltf(
         &device,
+        &mut staging_arena,
         &mut uploader,
         &mut descriptors,
         (&mut buffer_arena, &mut texture_arena),
@@ -456,7 +457,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
     let upload_wait_start = Instant::now();
     {
         profiling::scope!("wait for uploads to finish");
-        assert!(uploader.wait(Duration::from_secs(5))?);
+        assert!(uploader.wait(Some(Duration::from_secs(5)))?);
     }
     let now = Instant::now();
     log::info!(

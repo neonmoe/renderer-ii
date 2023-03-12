@@ -1,4 +1,4 @@
-use crate::arena::VulkanArena;
+use crate::arena::{ForBuffers, ForImages, VulkanArena};
 use crate::gltf::gltf_json;
 use crate::image_loading::{ImageLoadingError, PbrDefaults};
 use crate::pipeline_parameters::{
@@ -9,7 +9,7 @@ use crate::uploader::Uploader;
 use crate::vulkan_raii::{
     Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, Framebuffer, ImageView, PipelineLayout, Sampler,
 };
-use crate::{debug_utils, ForImages, PhysicalDevice};
+use crate::{debug_utils, PhysicalDevice};
 use alloc::rc::{Rc, Weak};
 use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
@@ -174,6 +174,7 @@ impl Descriptors {
     pub fn new(
         device: &Device,
         physical_device: &PhysicalDevice,
+        pbr_defaults_staging_arena: &mut VulkanArena<ForBuffers>,
         pbr_defaults_uploader: &mut Uploader,
         pbr_defaults_arena: &mut VulkanArena<ForImages>,
     ) -> Result<Descriptors, DescriptorError> {
@@ -314,8 +315,8 @@ impl Descriptors {
         })?;
         let material_updated_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| Ok([true; MAX_TEXTURE_COUNT as usize].into()))?;
 
-        let pbr_defaults =
-            PbrDefaults::new(device, pbr_defaults_uploader, pbr_defaults_arena).map_err(DescriptorError::CreateMaterialDefaultTextures)?;
+        let pbr_defaults = PbrDefaults::new(device, pbr_defaults_staging_arena, pbr_defaults_uploader, pbr_defaults_arena)
+            .map_err(DescriptorError::CreateMaterialDefaultTextures)?;
 
         Ok(Descriptors {
             pipeline_layouts,

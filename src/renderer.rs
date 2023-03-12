@@ -198,7 +198,7 @@ impl Renderer {
                 .size(buffer_bytes.len() as u64)
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            temp_arena.create_buffer(*buffer_create_info, buffer_bytes, None, format_args!("uniform ({name})"))
+            temp_arena.create_buffer(*buffer_create_info, buffer_bytes, None, None, format_args!("uniform ({name})"))
         }
 
         let global_transforms = &[scene.camera.create_global_transforms(width as f32, height as f32)];
@@ -454,6 +454,7 @@ impl Renderer {
                         *buffer_create_info,
                         transforms_bytes,
                         None,
+                        None,
                         format_args!("{}. transform buffer ({pl_name})", i + 1),
                     )
                     .map_err(RendererError::TransformBufferCreation)?
@@ -523,6 +524,7 @@ impl Renderer {
                     .create_buffer(
                         *buffer_create_info,
                         transforms_bytes,
+                        None,
                         None,
                         format_args!("transform buffer for skinned model ({pl_name})"),
                     )

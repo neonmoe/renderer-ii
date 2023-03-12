@@ -1,4 +1,4 @@
-use crate::arena::VulkanArenaError;
+use crate::arena::{ForBuffers, VulkanArenaError};
 use crate::uploader::UploadError;
 use crate::vulkan_raii::{Device, ImageView};
 use crate::{debug_utils, ForImages, Uploader, VulkanArena};
@@ -121,10 +121,15 @@ pub struct PbrDefaults {
 }
 
 impl PbrDefaults {
-    pub fn new(device: &Device, uploader: &mut Uploader, arena: &mut VulkanArena<ForImages>) -> Result<PbrDefaults, ImageLoadingError> {
+    pub fn new(
+        device: &Device,
+        staging_arena: &mut VulkanArena<ForBuffers>,
+        uploader: &mut Uploader,
+        arena: &mut VulkanArena<ForImages>,
+    ) -> Result<PbrDefaults, ImageLoadingError> {
         profiling::scope!("pbr default textures creation");
 
-        let mut create_pixel = |color, kind, name| create_pixel(device, uploader, arena, color, kind, name);
+        let mut create_pixel = |color, kind, name| create_pixel(device, staging_arena, uploader, arena, color, kind, name);
         let base_color = create_pixel(WHITE, TextureKind::SrgbColor, "default pbr base color")?;
         let metallic_roughness = create_pixel(M_AND_R, TextureKind::LinearColor, "default pbr metallic/roughness")?;
         let normal = create_pixel(NORMAL_Z, TextureKind::NormalMap, "default pbr normals")?;
@@ -174,6 +179,7 @@ fn get_image_create_info(extent: vk::Extent3D, mip_levels: u32, format: vk::Form
 
 fn create_pixel(
     device: &Device,
+    staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
     pixels: [u8; 4],
@@ -195,11 +201,11 @@ fn create_pixel(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        uploader
-            .staging_arena
+        staging_arena
             .create_buffer(
                 *buffer_create_info,
                 &pixels,
+                None,
                 None,
                 format_args!("staging buffer for {}", debug_identifier),
             )
@@ -321,6 +327,7 @@ pub fn get_ntex_create_info(bytes: &[u8], kind: TextureKind) -> Result<vk::Image
 #[profiling::function]
 pub fn load_ntex(
     device: &Device,
+    staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
     bytes: &[u8],
@@ -349,11 +356,11 @@ pub fn load_ntex(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        uploader
-            .staging_arena
+        staging_arena
             .create_buffer(
                 *buffer_create_info,
                 pixels,
+                None,
                 None,
                 format_args!("staging buffer for {}", debug_identifier),
             )

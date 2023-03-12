@@ -150,6 +150,7 @@ impl Gltf {
     /// `resource_path`.
     pub fn from_glb(
         device: &Device,
+        staging_arena: &mut VulkanArena<ForBuffers>,
         uploader: &mut Uploader,
         descriptors: &mut Descriptors,
         arenas: (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
@@ -160,7 +161,15 @@ impl Gltf {
         let glb = fs::read(glb_path).map_err(GltfLoadingError::MissingFile)?;
         let (json, buffer) = read_glb_json_and_buffer(&glb)?;
         let gltf: gltf_json::GltfJson = serde_json::from_str(json).map_err(GltfLoadingError::JsonDeserialization)?;
-        create_gltf(device, uploader, descriptors, arenas, gltf, (glb_path, resource_path), Some(buffer))
+        create_gltf(
+            device,
+            staging_arena,
+            uploader,
+            descriptors,
+            arenas,
+            gltf,
+            (glb_path, resource_path, Some(buffer)),
+        )
     }
 
     /// Loads the glTF scene from a .gltf file.
@@ -169,6 +178,7 @@ impl Gltf {
     /// `resource_path`.
     pub fn from_gltf(
         device: &Device,
+        staging_arena: &mut VulkanArena<ForBuffers>,
         uploader: &mut Uploader,
         descriptors: &mut Descriptors,
         arenas: (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
@@ -178,7 +188,15 @@ impl Gltf {
         profiling::scope!("loading gltf from disk", &format!("file: {}", gltf_path.display()));
         let gltf = fs::read_to_string(gltf_path).map_err(GltfLoadingError::MissingFile)?;
         let gltf: gltf_json::GltfJson = serde_json::from_str(&gltf).map_err(GltfLoadingError::JsonDeserialization)?;
-        create_gltf(device, uploader, descriptors, arenas, gltf, (gltf_path, resource_path), None)
+        create_gltf(
+            device,
+            staging_arena,
+            uploader,
+            descriptors,
+            arenas,
+            gltf,
+            (gltf_path, resource_path, None),
+        )
     }
 
     pub fn get_animation(&self, name: &str) -> Option<&Animation> {
@@ -313,12 +331,12 @@ pub(crate) fn read_glb_json_and_buffer(glb: &[u8]) -> Result<(&str, &[u8]), Gltf
 #[profiling::function]
 fn create_gltf(
     device: &Device,
+    staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
     descriptors: &mut Descriptors,
     (buffer_arena, image_arena): (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
     gltf: gltf_json::GltfJson,
-    (gltf_path, resource_path): (&Path, &Path),
-    bin_buffer: Option<&[u8]>,
+    (gltf_path, resource_path, bin_buffer): (&Path, &Path, Option<&[u8]>),
 ) -> Result<Gltf, GltfLoadingError> {
     if let Some(min_version) = &gltf.asset.min_version {
         let min_version_f32 = str::parse::<f32>(min_version);
@@ -352,6 +370,7 @@ fn create_gltf(
                 .create_buffer(
                     buffer_create_info,
                     data,
+                    Some(staging_arena),
                     Some(uploader),
                     format_args!("{} ({})", uri, gltf_path.display()),
                 )
@@ -366,6 +385,7 @@ fn create_gltf(
                         .create_buffer(
                             buffer_create_info,
                             data,
+                            Some(staging_arena),
                             Some(uploader),
                             format_args!("glb buffer ({})", gltf_path.display()),
                         )
@@ -443,7 +463,7 @@ fn create_gltf(
         let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
         let name = image.uri.as_deref().unwrap_or("glb binary buffer");
         images.push(Rc::new(
-            image_loading::load_ntex(device, uploader, image_arena, bytes, kind, name)
+            image_loading::load_ntex(device, staging_arena, uploader, image_arena, bytes, kind, name)
                 .map_err(|err| GltfLoadingError::ImageLoading(err, name.to_string()))?,
         ));
     }
@@ -457,6 +477,7 @@ fn create_gltf(
             .create_buffer(
                 buffer_create_info,
                 factors_slice,
+                Some(staging_arena),
                 Some(uploader),
                 format_args!("material parameters ({})", gltf_path.display()),
             )
