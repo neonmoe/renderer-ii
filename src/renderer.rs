@@ -1,4 +1,4 @@
-use crate::arena::{VulkanArenaError, MemoryProps};
+use crate::arena::{MemoryProps, VulkanArenaError};
 use crate::debug_utils;
 use crate::descriptors::Descriptors;
 use crate::mesh::VERTEX_BUFFERS;
@@ -237,17 +237,19 @@ impl Renderer {
             &scene.skinned_meshes,
         )?;
 
-        // TODO: Use queue_submit2
-        let signal_semaphores = [self.ready_for_present.inner];
-        let command_buffers = [command_buffer];
-        let submit_infos = [vk::SubmitInfo::builder()
-            .signal_semaphores(&signal_semaphores)
-            .command_buffers(&command_buffers)
+        let signal_semaphores = [vk::SemaphoreSubmitInfo::builder()
+            .semaphore(self.ready_for_present.inner)
+            .stage_mask(vk::PipelineStageFlags2::NONE) // this signals vkQueuePresent, which does not need synchronization nor have a stage
+            .build()];
+        let command_buffers = [vk::CommandBufferSubmitInfo::builder().command_buffer(command_buffer).build()];
+        let submit_infos = [vk::SubmitInfo2::builder()
+            .signal_semaphore_infos(&signal_semaphores)
+            .command_buffer_infos(&command_buffers)
             .build()];
         unsafe {
             profiling::scope!("queue render");
             self.device
-                .queue_submit(self.device.graphics_queue, &submit_infos, self.frame_end_fence.inner)
+                .queue_submit2(self.device.graphics_queue, &submit_infos, self.frame_end_fence.inner)
                 .map_err(RendererError::RenderQueueSubmit)
         }
     }
