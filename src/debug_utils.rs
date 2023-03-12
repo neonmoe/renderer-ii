@@ -140,7 +140,6 @@ fn vulkan_debug(
     match (message_severity, message_types) {
         (Severity::ERROR, _) => {
             log::error!("{}", formatted_message);
-            #[cfg(feature = "vulkan-validation")]
             core::hint::black_box(0); // Place a breakpoint here to debug validation errors
         }
         (Severity::WARNING, _) | (Severity::INFO, _) | (_, Type::VALIDATION) | (_, Type::PERFORMANCE) => {

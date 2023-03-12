@@ -7,7 +7,7 @@
 extern crate alloc;
 
 macro_rules! cstr {
-    ($string:literal) => {
+    ($string:expr) => {
         unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(concat!($string, "\0").as_bytes()) }
     };
 }

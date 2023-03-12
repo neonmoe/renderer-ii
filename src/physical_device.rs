@@ -1,12 +1,13 @@
 use crate::framebuffers::HDR_COLOR_ATTACHMENT_FORMAT;
 use crate::physical_device_features::{self, SupportedFeatures};
 use crate::pipeline_parameters::limits::{self, PhysicalDeviceLimitBreak};
+use arrayvec::ArrayVec;
 use ash::extensions::khr;
 use ash::vk;
 use ash::{Entry, Instance};
-use std::error::Error;
 use core::ffi::CStr;
 use core::fmt::{self, Display, Formatter};
+use std::error::Error;
 
 #[derive(thiserror::Error, Debug)]
 pub enum PhysicalDeviceRejectionReason {
@@ -26,12 +27,17 @@ pub enum PhysicalDeviceRejectionReason {
     TextureFormatSupport(vk::Format, vk::FormatFeatureFlags),
     #[error("graphics, surface, or transfer queue family not found")]
     QueueFamilyMissing,
-    #[error("graphics driver or hardware does not support the required features")]
-    MultipleReasons(#[from] RejectionReasonList),
 }
 
 #[derive(Debug)]
-pub struct RejectionReasonList(Vec<PhysicalDeviceRejectionReason>);
+pub struct RejectionReasonList(ArrayVec<PhysicalDeviceRejectionReason, 128>);
+impl From<PhysicalDeviceRejectionReason> for RejectionReasonList {
+    fn from(reason: PhysicalDeviceRejectionReason) -> Self {
+        let mut reasons = ArrayVec::new();
+        reasons.push(reason);
+        RejectionReasonList(reasons)
+    }
+}
 impl Error for RejectionReasonList {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         None
@@ -39,8 +45,9 @@ impl Error for RejectionReasonList {
 }
 impl Display for RejectionReasonList {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        writeln!(f, "graphics driver or hardware does not support the required features:")?;
         for reason in &self.0 {
-            write!(f, "• ")?;
+            write!(f, "- ")?;
             let mut next_reason: Option<&(dyn Error + 'static)> = Some(reason);
             let mut indents = 0;
             while let Some(reason) = next_reason {
@@ -105,20 +112,20 @@ pub fn get_physical_devices(
     entry: &Entry,
     instance: &Instance,
     surface: vk::SurfaceKHR,
-) -> Vec<Result<PhysicalDevice, PhysicalDeviceRejectionReason>> {
+) -> Vec<Result<PhysicalDevice, RejectionReasonList>> {
     profiling::scope!("physical device enumeration");
     let surface_ext = khr::Surface::new(entry, instance);
     let physical_devices = {
         profiling::scope!("vk::enumerate_physical_devices");
         match unsafe { instance.enumerate_physical_devices() } {
             Ok(pds) => pds,
-            Err(err) => return vec![Err(PhysicalDeviceRejectionReason::Enumeration(err))],
+            Err(err) => return vec![Err(PhysicalDeviceRejectionReason::Enumeration(err).into())],
         }
     };
     let mut enumerated_physical_devices = physical_devices
         .into_iter()
         .map(|physical_device| filter_capable_device(instance, &surface_ext, surface, physical_device))
-        .collect::<Vec<Result<_, PhysicalDeviceRejectionReason>>>();
+        .collect::<Vec<Result<_, RejectionReasonList>>>();
     enumerated_physical_devices.sort_by(|a, b| {
         let a_score;
         let b_score;
@@ -142,23 +149,26 @@ pub fn get_physical_devices(
     enumerated_physical_devices
 }
 
+#[allow(clippy::result_large_err)]
 fn filter_capable_device(
     instance: &Instance,
     surface_ext: &khr::Surface,
     surface: vk::SurfaceKHR,
     physical_device: vk::PhysicalDevice,
-) -> Result<PhysicalDevice, PhysicalDeviceRejectionReason> {
+) -> Result<PhysicalDevice, RejectionReasonList> {
     profiling::scope!("physical device capability checks");
 
-    let mut rejection_reasons = Vec::new();
-    let mut reject = |reason: PhysicalDeviceRejectionReason| rejection_reasons.push(reason);
+    let mut rejection_reasons = ArrayVec::new();
+    let mut reject = |reason: PhysicalDeviceRejectionReason| {
+        let _ = rejection_reasons.try_push(reason);
+    };
 
     let props = unsafe {
         profiling::scope!("vk::get_physical_device_properties");
         instance.get_physical_device_properties(physical_device)
     };
     if props.api_version < crate::instance::REQUIRED_VULKAN_VERSION {
-        reject(PhysicalDeviceRejectionReason::VulkanVersion(1, 2));
+        reject(PhysicalDeviceRejectionReason::VulkanVersion(1, 3));
     };
 
     let extensions = get_extensions(instance, physical_device);
@@ -168,7 +178,6 @@ fn filter_capable_device(
         }
     };
     assert_ext_supported(khr::Swapchain::name().to_str().unwrap());
-    assert_ext_supported(khr::Synchronization2::name().to_str().unwrap());
 
     if let Err(reqs) = physical_device_features::has_required_features(instance, physical_device) {
         reject(PhysicalDeviceRejectionReason::DeviceRequirements(reqs));
@@ -346,11 +355,7 @@ fn filter_capable_device(
         reject(PhysicalDeviceRejectionReason::QueueFamilyMissing);
     }
 
-    if rejection_reasons.len() == 1 {
-        Err(rejection_reasons.remove(0))
-    } else {
-        Err(RejectionReasonList(rejection_reasons).into())
-    }
+    Err(RejectionReasonList(rejection_reasons))
 }
 
 #[profiling::function]

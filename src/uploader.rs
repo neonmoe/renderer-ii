@@ -3,7 +3,6 @@ use crate::debug_utils;
 use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
 use crate::{ForBuffers, PhysicalDevice, VulkanArena};
 use ash::vk;
-use ash::Instance;
 use core::fmt::Arguments;
 use core::time::Duration;
 
@@ -15,8 +14,6 @@ pub enum UploaderError {
     FenceWait(#[source] vk::Result),
     #[error("tried to reset uploader while some uploads are still in progress (or the device has been lost)")]
     NotResettable,
-    #[error("failed to create staging arena")]
-    StagingArenaCreation(#[source] VulkanArenaError),
     #[error("failed to create uploader transfer command pool (out of memory?)")]
     TransferCommandPoolCreation(#[source] vk::Result),
     #[error("failed to create uploader graphics command pool (out of memory?)")]
@@ -56,8 +53,8 @@ pub enum UploadError {
     GraphicsQueueSubmit(#[source] vk::Result),
 }
 
-pub struct Uploader {
-    pub staging_arena: VulkanArena<ForBuffers>,
+pub struct Uploader<'a> {
+    pub staging_arena: &'a mut VulkanArena<ForBuffers>,
     pub graphics_queue_family: u32,
     pub transfer_queue_family: u32,
     device: Device,
@@ -73,16 +70,15 @@ pub struct Uploader {
     debug_identifier: &'static str,
 }
 
-impl Uploader {
-    pub fn new(
-        instance: &Instance,
+impl Uploader<'_> {
+    pub fn new<'a>(
         device: &Device,
         graphics_queue: vk::Queue,
         transfer_queue: vk::Queue,
         physical_device: &PhysicalDevice,
-        staging_buffer_size: vk::DeviceSize,
+        staging_arena: &'a mut VulkanArena<ForBuffers>,
         debug_identifier: &'static str,
-    ) -> Result<Uploader, UploaderError> {
+    ) -> Result<Uploader<'a>, UploaderError> {
         profiling::scope!("uploader creation");
 
         let transfer_command_pool = {
@@ -113,19 +109,8 @@ impl Uploader {
             }
         };
 
-        let staging_memory = VulkanArena::new(
-            instance,
-            device,
-            physical_device,
-            staging_buffer_size,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            format_args!("uploader staging memory"),
-        )
-        .map_err(UploaderError::StagingArenaCreation)?;
-
         Ok(Uploader {
-            staging_arena: staging_memory,
+            staging_arena,
             graphics_queue_family: physical_device.graphics_queue_family.index,
             transfer_queue_family: physical_device.transfer_queue_family.index,
             device: device.clone(),

@@ -1,12 +1,12 @@
 use crate::debug_utils;
+use arrayvec::ArrayVec;
 use ash::extensions::ext;
 use ash::{vk, Entry};
 use core::ffi::c_char;
 use core::ffi::CStr;
 use raw_window_handle::HasRawWindowHandle;
-use arrayvec::ArrayVec;
 
-pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_2;
+pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_3;
 
 #[derive(thiserror::Error, Debug)]
 pub enum InstanceCreationError {
@@ -22,15 +22,22 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new(window: &dyn HasRawWindowHandle) -> Result<Instance, InstanceCreationError> {
+    pub fn new(
+        window: &dyn HasRawWindowHandle,
+        app_name: &CStr,
+        major_version: u32,
+        minor_version: u32,
+        patch_version: u32,
+    ) -> Result<Instance, InstanceCreationError> {
         profiling::scope!("vulkan instance creation");
+        let version = make_api_version(0, major_version, minor_version, patch_version);
         let entry = Entry::linked();
         let app_info = vk::ApplicationInfo::builder()
-            .application_name(cstr!("neonvk-sandbox"))
-            .application_version(make_api_version(0, 0, 1, 0))
-            //.api_version(REQUIRED_VULKAN_VERSION);
-            // FIXME: This makes renderdoc work, change out later.
-            .api_version(vk::API_VERSION_1_3);
+            .application_name(app_name)
+            .application_version(version)
+            .api_version(REQUIRED_VULKAN_VERSION);
+        let app_name = app_name.to_str().unwrap_or("<invalid utf-8>");
+        log::debug!("Creating Vulkan instance with application name: \"{app_name}\", version: {major_version}.{minor_version}.{patch_version} (0x{version:X})");
 
         let mut layers: ArrayVec<*const c_char, 1> = ArrayVec::new();
         let mut validation_layer_enabled = false;

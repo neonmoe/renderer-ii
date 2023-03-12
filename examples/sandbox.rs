@@ -83,9 +83,6 @@ struct SharedState {
 fn main_() -> anyhow::Result<()> {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Trace)).unwrap();
 
-    #[cfg(feature = "profile-with-tracy")]
-    tracy_client::set_thread_name!("SDL thread");
-
     let sdl_context = {
         profiling::scope!("SDL init");
         sdl2::init().map_err(SandboxError::Sdl)?
@@ -119,17 +116,36 @@ fn main_() -> anyhow::Result<()> {
     };
     let state_mutex = Arc::new(Mutex::new(state));
 
-    let game_thread = std::thread::spawn({
-        let state_mutex = state_mutex.clone();
-        move || game_main(state_mutex)
-    });
+    let game_thread = std::thread::Builder::new()
+        .name(format!("{}-update", env!("CARGO_CRATE_NAME")))
+        .spawn({
+            let state_mutex = state_mutex.clone();
+            move || game_main(state_mutex)
+        })
+        .unwrap();
 
-    let instance = neonvk::Instance::new(&window)?;
+    let instance = neonvk::Instance::new(
+        &window,
+        unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(b"sandbox example application\0") },
+        env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
+        env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
+        env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
+    )?;
     let surface = neonvk::create_surface(&instance.entry, &instance.inner, &window)?;
-    let rendering_thread = std::thread::spawn({
-        let state_mutex = state_mutex.clone();
-        move || rendering_main(instance, surface, state_mutex)
-    });
+    let rendering_thread = std::thread::Builder::new()
+        .name(format!("{}-render", env!("CARGO_CRATE_NAME")))
+        .spawn({
+            let state_mutex = state_mutex.clone();
+            move || match rendering_main(instance, surface, state_mutex.clone()) {
+                Ok(()) => Ok(()),
+                Err(err) => {
+                    let mut state = state_mutex.lock().unwrap();
+                    state.running = false;
+                    Err(err)
+                }
+            }
+        })
+        .unwrap();
 
     let controller_subsystem = {
         profiling::scope!("SDL controller subsystem init");
@@ -147,110 +163,117 @@ fn main_() -> anyhow::Result<()> {
 
     profiling::scope!("event loop");
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
-    'main: for event in event_pump.wait_iter() {
+    'main: loop {
         profiling::scope!("handle event");
+        let event = event_pump.wait_event_timeout(2);
         let mut state = state_mutex.lock().unwrap();
-        match event {
-            Event::Quit { .. } => {
-                state.running = false;
-                sdl_context.mouse().set_relative_mouse_mode(false);
-                sdl_context.mouse().show_cursor(true);
-                break 'main;
-            }
+        if !state.running {
+            break 'main;
+        }
 
-            Event::KeyDown { keycode, .. } => {
-                analog_controls = false;
-                match keycode {
-                    Some(Keycode::Num0) => state.debug_value = 0,
-                    Some(Keycode::Num1) => state.debug_value = 1,
-                    Some(Keycode::Num2) => state.debug_value = 2,
-                    Some(Keycode::Num3) => state.debug_value = 3,
-                    Some(Keycode::Num4) => state.debug_value = 4,
-                    Some(Keycode::Num5) => state.debug_value = 5,
-                    Some(Keycode::Num6) => state.debug_value = 6,
-                    Some(Keycode::Num7) => state.debug_value = 7,
-                    Some(Keycode::W) => state.dz = -1.0,
-                    Some(Keycode::A) => state.dx = -1.0,
-                    Some(Keycode::S) => state.dz = 1.0,
-                    Some(Keycode::D) => state.dx = 1.0,
-                    Some(Keycode::Q) => state.dy = 1.0,
-                    Some(Keycode::X) => state.dy = -1.0,
-                    Some(Keycode::LShift) => state.sprinting = true,
-                    Some(Keycode::Escape) if state.mouse_look => {
-                        state.mouse_look = false;
+        if let Some(event) = event {
+            match event {
+                Event::Quit { .. } => {
+                    state.running = false;
+                    sdl_context.mouse().set_relative_mouse_mode(false);
+                    sdl_context.mouse().show_cursor(true);
+                    break 'main;
+                }
+
+                Event::KeyDown { keycode, .. } => {
+                    analog_controls = false;
+                    match keycode {
+                        Some(Keycode::Num0) => state.debug_value = 0,
+                        Some(Keycode::Num1) => state.debug_value = 1,
+                        Some(Keycode::Num2) => state.debug_value = 2,
+                        Some(Keycode::Num3) => state.debug_value = 3,
+                        Some(Keycode::Num4) => state.debug_value = 4,
+                        Some(Keycode::Num5) => state.debug_value = 5,
+                        Some(Keycode::Num6) => state.debug_value = 6,
+                        Some(Keycode::Num7) => state.debug_value = 7,
+                        Some(Keycode::W) => state.dz = -1.0,
+                        Some(Keycode::A) => state.dx = -1.0,
+                        Some(Keycode::S) => state.dz = 1.0,
+                        Some(Keycode::D) => state.dx = 1.0,
+                        Some(Keycode::Q) => state.dy = 1.0,
+                        Some(Keycode::X) => state.dy = -1.0,
+                        Some(Keycode::LShift) => state.sprinting = true,
+                        Some(Keycode::Escape) if state.mouse_look => {
+                            state.mouse_look = false;
+                            sdl_context.mouse().set_relative_mouse_mode(false);
+                            sdl_context.mouse().show_cursor(true);
+                        }
+                        _ => {}
+                    }
+                }
+
+                Event::KeyUp { keycode, .. } => match keycode {
+                    Some(Keycode::I) => {
+                        state.immediate_present = !state.immediate_present;
+                        state.queued_resize = Some(Instant::now());
+                    }
+                    Some(Keycode::S) if state.dz > 0.0 => state.dz = 0.0,
+                    Some(Keycode::W) if state.dz < 0.0 => state.dz = 0.0,
+                    Some(Keycode::D) if state.dx > 0.0 => state.dx = 0.0,
+                    Some(Keycode::A) if state.dx < 0.0 => state.dx = 0.0,
+                    Some(Keycode::Q) if state.dy > 0.0 => state.dy = 0.0,
+                    Some(Keycode::X) if state.dy < 0.0 => state.dy = 0.0,
+                    Some(Keycode::LShift) => state.sprinting = false,
+                    _ => {}
+                },
+
+                Event::ControllerAxisMotion { axis, value, .. } => {
+                    analog_controls = true;
+                    match axis {
+                        Axis::LeftX => state.dx = get_axis_deadzoned(value),
+                        Axis::LeftY => state.dz = get_axis_deadzoned(value),
+                        Axis::TriggerRight if value != 0 => state.dy = value as f32 / i16::MAX as f32,
+                        Axis::TriggerRight if state.dy > 0.0 => state.dy = 0.0,
+                        Axis::TriggerLeft if value != 0 => state.dy = -(value as f32 / i16::MAX as f32),
+                        Axis::TriggerLeft if state.dy < 0.0 => state.dy = 0.0,
+                        _ => {}
+                    }
+                }
+
+                Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    ..
+                } => {
+                    state.mouse_look = !state.mouse_look;
+                    if state.mouse_look {
+                        sdl_context.mouse().set_relative_mouse_mode(true);
+                        sdl_context.mouse().show_cursor(false);
+                    } else {
                         sdl_context.mouse().set_relative_mouse_mode(false);
                         sdl_context.mouse().show_cursor(true);
                     }
-                    _ => {}
                 }
-            }
 
-            Event::KeyUp { keycode, .. } => match keycode {
-                Some(Keycode::I) => {
-                    state.immediate_present = !state.immediate_present;
-                    state.queued_resize = Some(Instant::now());
+                Event::MouseMotion { xrel, yrel, .. } => {
+                    if state.mouse_look {
+                        state.cam_yaw_once_delta += -xrel as f32 / 750.0;
+                        state.cam_pitch_once_delta += -yrel as f32 / 750.0;
+                    }
                 }
-                Some(Keycode::S) if state.dz > 0.0 => state.dz = 0.0,
-                Some(Keycode::W) if state.dz < 0.0 => state.dz = 0.0,
-                Some(Keycode::D) if state.dx > 0.0 => state.dx = 0.0,
-                Some(Keycode::A) if state.dx < 0.0 => state.dx = 0.0,
-                Some(Keycode::Q) if state.dy > 0.0 => state.dy = 0.0,
-                Some(Keycode::X) if state.dy < 0.0 => state.dy = 0.0,
-                Some(Keycode::LShift) => state.sprinting = false,
-                _ => {}
-            },
 
-            Event::ControllerAxisMotion { axis, value, .. } => {
-                analog_controls = true;
-                match axis {
-                    Axis::LeftX => state.dx = get_axis_deadzoned(value),
-                    Axis::LeftY => state.dz = get_axis_deadzoned(value),
-                    Axis::TriggerRight if value != 0 => state.dy = value as f32 / i16::MAX as f32,
-                    Axis::TriggerRight if state.dy > 0.0 => state.dy = 0.0,
-                    Axis::TriggerLeft if value != 0 => state.dy = -(value as f32 / i16::MAX as f32),
-                    Axis::TriggerLeft if state.dy < 0.0 => state.dy = 0.0,
-                    _ => {}
-                }
-            }
-
-            Event::MouseButtonDown {
-                mouse_btn: MouseButton::Left,
-                ..
-            } => {
-                state.mouse_look = !state.mouse_look;
-                if state.mouse_look {
-                    sdl_context.mouse().set_relative_mouse_mode(true);
-                    sdl_context.mouse().show_cursor(false);
-                } else {
+                Event::Window {
+                    win_event: WindowEvent::SizeChanged(width, height),
+                    ..
+                } => {
+                    state.mouse_look = false;
                     sdl_context.mouse().set_relative_mouse_mode(false);
                     sdl_context.mouse().show_cursor(true);
+                    state.width = width as u32;
+                    state.height = height as u32;
+                    state.queued_resize = Some(Instant::now());
                 }
-            }
 
-            Event::MouseMotion { xrel, yrel, .. } => {
-                if state.mouse_look {
-                    state.cam_yaw_once_delta += -xrel as f32 / 750.0;
-                    state.cam_pitch_once_delta += -yrel as f32 / 750.0;
+                Event::ControllerDeviceAdded { which, .. } => {
+                    controller = Some(controller_subsystem.open(which).unwrap());
                 }
-            }
 
-            Event::Window {
-                win_event: WindowEvent::SizeChanged(width, height),
-                ..
-            } => {
-                state.mouse_look = false;
-                sdl_context.mouse().set_relative_mouse_mode(false);
-                sdl_context.mouse().show_cursor(true);
-                state.width = width as u32;
-                state.height = height as u32;
-                state.queued_resize = Some(Instant::now());
+                _ => {}
             }
-
-            Event::ControllerDeviceAdded { which, .. } => {
-                controller = Some(controller_subsystem.open(which).unwrap());
-            }
-
-            _ => {}
         }
 
         state.refresh_rate = window.display_mode().map(|dm| dm.refresh_rate).unwrap_or(60);
@@ -278,9 +301,6 @@ fn main_() -> anyhow::Result<()> {
 }
 
 fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
-    #[cfg(feature = "profile-with-tracy")]
-    tracy_client::set_thread_name!("Update thread");
-
     let mut last_wait_time = Instant::now();
 
     loop {
@@ -333,13 +353,9 @@ fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
 }
 
 fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mutex: Arc<Mutex<SharedState>>) -> anyhow::Result<()> {
-    #[cfg(feature = "profile-with-tracy")]
-    tracy_client::set_thread_name!("Render thread");
-
     let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner);
     let physical_device = physical_devices.remove(0)?;
     let device = neonvk::create_device(&instance.inner, &physical_device)?;
-    let mut descriptors = neonvk::Descriptors::new(&instance, &device, &physical_device)?;
 
     let msaa_samples = neonvk::vk::SampleCountFlags::TYPE_4;
     if !physical_device
@@ -366,6 +382,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
     };
     let mut assets_buffers_measurer = neonvk::VulkanArenaMeasurer::new(&device);
     let mut assets_textures_measurer = neonvk::VulkanArenaMeasurer::new(&device);
+    neonvk::image_loading::PbrDefaults::measure(&mut assets_textures_measurer)?;
     neonvk::measure_gltf_memory_usage(
         (&mut assets_buffers_measurer, &mut assets_textures_measurer),
         &resources_path.join("sponza/glTF/Sponza.gltf"),
@@ -377,16 +394,18 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         &resources_path.join("smol-ame-by-seafoam"),
     )?;
 
-    let mut uploader = neonvk::Uploader::new(
+    // Allocate in order of importance: if budget runs out, the arenas allocated
+    // later may be allocated from a slower heap.
+    let mut texture_arena = neonvk::VulkanArena::new(
         &instance.inner,
         &device,
-        device.graphics_queue,
-        device.transfer_queue,
         &physical_device,
-        assets_buffers_measurer.measured_size + assets_textures_measurer.measured_size,
-        "sandbox assets",
+        assets_textures_measurer.measured_size,
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        format_args!("sandbox assets (textures)"),
     )?;
-    let mut assets_buffers_arena = neonvk::VulkanArena::new(
+    let mut buffer_arena = neonvk::VulkanArena::new(
         &instance.inner,
         &device,
         &physical_device,
@@ -397,61 +416,70 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
         format_args!("sandbox assets (buffers)"),
     )?;
-    let mut assets_textures_arena = neonvk::VulkanArena::new(
+    let mut staging_arena = neonvk::VulkanArena::new(
         &instance.inner,
         &device,
         &physical_device,
-        assets_textures_measurer.measured_size,
-        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        neonvk::vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        format_args!("sandbox assets (textures)"),
+        assets_buffers_measurer.measured_size + assets_textures_measurer.measured_size,
+        neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE | neonvk::vk::MemoryPropertyFlags::HOST_COHERENT,
+        neonvk::vk::MemoryPropertyFlags::HOST_VISIBLE | neonvk::vk::MemoryPropertyFlags::HOST_COHERENT,
+        format_args!("sandbox assets (staging)"),
+    )?;
+    let mut uploader = neonvk::Uploader::new(
+        &device,
+        device.graphics_queue,
+        device.transfer_queue,
+        &physical_device,
+        &mut staging_arena,
+        "sandbox assets",
     )?;
 
-    let sponza_model;
-    let smol_ame_model;
+    let mut descriptors = neonvk::Descriptors::new(&device, &physical_device, &mut uploader, &mut texture_arena)?;
+
+    let upload_start = Instant::now();
+    let sponza_model = neonvk::Gltf::from_gltf(
+        &device,
+        &mut uploader,
+        &mut descriptors,
+        (&mut buffer_arena, &mut texture_arena),
+        &resources_path.join("sponza/glTF/Sponza.gltf"),
+        &resources_path.join("sponza/glTF"),
+    )?;
+    let smol_ame_model = neonvk::Gltf::from_gltf(
+        &device,
+        &mut uploader,
+        &mut descriptors,
+        (&mut buffer_arena, &mut texture_arena),
+        &resources_path.join("smol-ame-by-seafoam/smol-ame.gltf"),
+        &resources_path.join("smol-ame-by-seafoam"),
+    )?;
+    let upload_wait_start = Instant::now();
     {
-        let upload_start = Instant::now();
-        sponza_model = neonvk::Gltf::from_gltf(
-            &device,
-            &mut uploader,
-            &mut descriptors,
-            (&mut assets_buffers_arena, &mut assets_textures_arena),
-            &resources_path.join("sponza/glTF/Sponza.gltf"),
-            &resources_path.join("sponza/glTF"),
-        )?;
-        smol_ame_model = neonvk::Gltf::from_gltf(
-            &device,
-            &mut uploader,
-            &mut descriptors,
-            (&mut assets_buffers_arena, &mut assets_textures_arena),
-            &resources_path.join("smol-ame-by-seafoam/smol-ame.gltf"),
-            &resources_path.join("smol-ame-by-seafoam"),
-        )?;
-        let upload_wait_start = Instant::now();
-        {
-            profiling::scope!("wait for uploads to finish");
-            assert!(uploader.wait(Duration::from_secs(5))?);
-        }
-        let now = Instant::now();
-        log::info!(
-            "Spent {:?} loading resources, of which {:?} was waiting for upload.",
-            now - upload_start,
-            now - upload_wait_start
-        );
-        drop(uploader);
+        profiling::scope!("wait for uploads to finish");
+        assert!(uploader.wait(Duration::from_secs(5))?);
+    }
+    let now = Instant::now();
+    log::info!(
+        "Spent {:?} loading resources, of which {:?} was waiting for upload.",
+        now - upload_start,
+        now - upload_wait_start
+    );
+
+    assert_eq!(buffer_arena.memory_in_use(), assets_buffers_measurer.measured_size);
+    assert_eq!(texture_arena.memory_in_use(), assets_textures_measurer.measured_size);
+
+    let mut swapchain_settings;
+    let mut prev_frame;
+    {
+        let state = state_mutex.lock().unwrap();
+        let (width, height) = (state.width, state.height);
+        swapchain_settings = neonvk::SwapchainSettings {
+            extent: neonvk::vk::Extent2D { width, height },
+            immediate_present: state.immediate_present,
+        };
+        prev_frame = state.frame;
     }
 
-    assert_eq!(assets_buffers_arena.memory_in_use(), assets_buffers_measurer.measured_size);
-    assert_eq!(assets_textures_arena.memory_in_use(), assets_textures_measurer.measured_size);
-
-    let state = state_mutex.lock().unwrap();
-    let (width, height) = (state.width, state.height);
-    let mut swapchain_settings = neonvk::SwapchainSettings {
-        extent: neonvk::vk::Extent2D { width, height },
-        immediate_present: state.immediate_present,
-    };
-    let mut prev_frame = state.frame;
-    drop(state);
     let mut swapchain = neonvk::Swapchain::new(
         &instance.entry,
         &instance.inner,
@@ -597,8 +625,15 @@ mod logger {
         fn log(&self, record: &Record) {
             if self.enabled(record.metadata()) {
                 let message = format!("{}", record.args());
+                let file = record.file().unwrap_or("");
+                let line = record.line().unwrap_or(0);
+                let is_vk_debug_utils_print = file == "src/debug_utils.rs";
+                let mut log_level = record.level();
+                if is_vk_debug_utils_print && message.contains("[Loader Message]") {
+                    log_level = Level::Trace;
+                }
                 let (color_code, color_end) = if cfg!(target_family = "unix") {
-                    let start = match record.level() {
+                    let start = match log_level {
                         Level::Trace => "\u{1B}[34m", /* blue */
                         Level::Debug => "\u{1B}[36m", /* cyan */
                         Level::Info => "\u{1B}[32m",  /* green */
@@ -610,18 +645,23 @@ mod logger {
                     ("", "")
                 };
                 if record.level() < Level::Trace {
-                    eprintln!(
-                        "{}[{}:{}] {}{}",
-                        color_code,
-                        record.file().unwrap_or(""),
-                        record.line().unwrap_or(0),
-                        message,
-                        color_end,
-                    );
+                    if is_vk_debug_utils_print {
+                        if let Some((tag, msg)) = message.split_once("] ") {
+                            eprintln!("{color_code}{tag}]{color_end} {msg}");
+                        } else {
+                            eprintln!("{color_code}[VK_EXT_debug_utils]{color_end} {message}");
+                        }
+                    } else {
+                        eprintln!("{color_code}[{file}:{line}]{color_end} {message}");
+                    }
                 }
             }
         }
 
-        fn flush(&self) {}
+        fn flush(&self) {
+            use std::io::Write;
+            let mut stderr = std::io::stderr().lock();
+            let _ = stderr.flush();
+        }
     }
 }

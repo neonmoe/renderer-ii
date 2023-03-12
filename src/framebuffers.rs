@@ -219,4 +219,8 @@ impl Framebuffers {
             inner: framebuffers,
         })
     }
+
+    // TODO: Add in-place destroy() and reset() to Framebuffers
+    // The current drop-then-new is less ergonomic because it requires a move.
+    // Maybe make destroy unsafe to ensure it's used properly (i.e. resetted after)?
 }

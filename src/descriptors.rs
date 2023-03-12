@@ -1,16 +1,15 @@
-use crate::arena::{VulkanArena, VulkanArenaError};
+use crate::arena::VulkanArena;
 use crate::gltf::gltf_json;
 use crate::image_loading::{ImageLoadingError, PbrDefaults};
-use crate::memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use crate::pipeline_parameters::{
     DescriptorSetLayoutParams, MaterialPushConstants, PipelineIndex, PipelineMap, PipelineParameters, MAX_BONE_COUNT, MAX_TEXTURE_COUNT,
     PIPELINE_PARAMETERS, SKINNED_PIPELINES,
 };
-use crate::uploader::{Uploader, UploaderError};
+use crate::uploader::Uploader;
 use crate::vulkan_raii::{
     Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, Framebuffer, ImageView, PipelineLayout, Sampler,
 };
-use crate::{debug_utils, Instance, PhysicalDevice};
+use crate::{debug_utils, ForImages, PhysicalDevice};
 use alloc::rc::{Rc, Weak};
 use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
@@ -35,16 +34,8 @@ pub enum DescriptorError {
     DescriptorPoolCreation(#[source] vk::Result),
     #[error("failed to allocate descriptor sets")]
     AllocateDescriptorSets(#[source] vk::Result),
-    #[error("failed to measure memory requirements for the fallback textures for materials")]
-    MeasureMaterialDefaultTextures(#[source] VulkanArenaMeasurementError),
-    #[error("failed to create an uploader for the fallback textures for materials")]
-    CreateMaterialDefaultTexturesUploader(#[source] UploaderError),
-    #[error("failed to allocate memory for the fallback textures for materials")]
-    AllocateMaterialDefaultTextures(#[source] VulkanArenaError),
     #[error("failed to create fallback textures for materials")]
     CreateMaterialDefaultTextures(#[source] ImageLoadingError),
-    #[error("an error occurred while waiting for the upload of fallback textures for materials")]
-    WaitForMaterialDefaultTexturesUpload(#[source] UploaderError),
 }
 
 const MAX_PIPELINES_PER_MATERIAL: usize = 2;
@@ -180,7 +171,12 @@ pub struct Descriptors {
 }
 
 impl Descriptors {
-    pub fn new(instance: &Instance, device: &Device, physical_device: &PhysicalDevice) -> Result<Descriptors, DescriptorError> {
+    pub fn new(
+        device: &Device,
+        physical_device: &PhysicalDevice,
+        pbr_defaults_uploader: &mut Uploader,
+        pbr_defaults_arena: &mut VulkanArena<ForImages>,
+    ) -> Result<Descriptors, DescriptorError> {
         profiling::scope!("creating descriptor sets");
         let sampler_create_info = vk::SamplerCreateInfo::builder()
             .mag_filter(vk::Filter::LINEAR)
@@ -318,34 +314,8 @@ impl Descriptors {
         })?;
         let material_updated_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| Ok([true; MAX_TEXTURE_COUNT as usize].into()))?;
 
-        let mut pbr_defaults_measurer = VulkanArenaMeasurer::new(device);
-        PbrDefaults::measure(&mut pbr_defaults_measurer).map_err(DescriptorError::MeasureMaterialDefaultTextures)?;
-        let mut uploader = Uploader::new(
-            &instance.inner,
-            device,
-            device.graphics_queue,
-            device.transfer_queue,
-            physical_device,
-            pbr_defaults_measurer.measured_size,
-            "fallback materials",
-        )
-        .map_err(DescriptorError::CreateMaterialDefaultTexturesUploader)?;
-        // TODO(low): Do something about the pbr defaults arena having its own tiny allocation
-        let mut pbr_defaults_arena = VulkanArena::new(
-            &instance.inner,
-            device,
-            physical_device,
-            pbr_defaults_measurer.measured_size,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            format_args!("fallback materials (textures)"),
-        )
-        .map_err(DescriptorError::AllocateMaterialDefaultTextures)?;
         let pbr_defaults =
-            PbrDefaults::new(device, &mut uploader, &mut pbr_defaults_arena).map_err(DescriptorError::CreateMaterialDefaultTextures)?;
-        while !uploader.wait(None).map_err(DescriptorError::WaitForMaterialDefaultTexturesUpload)? {
-            panic!("Waiting for u64::MAX ns timed out?");
-        }
+            PbrDefaults::new(device, pbr_defaults_uploader, pbr_defaults_arena).map_err(DescriptorError::CreateMaterialDefaultTextures)?;
 
         Ok(Descriptors {
             pipeline_layouts,
@@ -366,7 +336,8 @@ impl Descriptors {
     ) {
         profiling::scope!("updating descriptors");
 
-        let mut materials_needing_update = Vec::new();
+        const UPDATE_COUNT: usize = PipelineIndex::Count as usize * MAX_TEXTURE_COUNT as usize;
+        let mut materials_needing_update = ArrayVec::<_, UPDATE_COUNT>::new();
         for (pipeline, material_slots) in self.material_slots_per_pipeline.iter_with_pipeline() {
             for (i, material_slot) in material_slots.iter().enumerate() {
                 if let Some(material) = material_slot.as_ref().and_then(Weak::upgrade) {
