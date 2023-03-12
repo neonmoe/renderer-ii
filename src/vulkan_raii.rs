@@ -123,9 +123,7 @@ trivial_drop_impl!(Surface, destroy_surface);
 pub struct Swapchain {
     pub inner: vk::SwapchainKHR,
     pub device: khr::Swapchain,
-    /// This is an Option so that `surface` can be recovered from a Swapchain
-    /// before it's dropped, to be reused for another Swapchain.
-    pub surface: Option<Surface>,
+    pub surface: Surface,
 }
 trivial_drop_impl!(Swapchain, destroy_swapchain);
 

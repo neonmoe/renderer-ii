@@ -499,7 +499,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         &instance.inner,
         &device,
         &physical_device,
-        neonvk::SwapchainBase::Surface(surface),
+        surface,
         &swapchain_settings,
     )?;
     print_memory_usage("after swapchain creation");
@@ -572,12 +572,9 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
             profiling::scope!("handle resize");
             device.wait_idle()?;
             drop(framebuffers);
-            swapchain = neonvk::Swapchain::new(
-                &instance.entry,
-                &instance.inner,
+            swapchain.recreate(
                 &device,
                 &physical_device,
-                neonvk::SwapchainBase::OldSwapchain(swapchain),
                 &swapchain_settings,
             )?;
             pipelines = neonvk::Pipelines::new(
