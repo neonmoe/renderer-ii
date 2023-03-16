@@ -23,15 +23,13 @@ enum SandboxError {
 
 fn main() -> anyhow::Result<()> {
     #[cfg(feature = "profile-with-tracy")]
-    let client = tracy_client::Client::start();
+    tracy_client::Client::start();
 
     if let Err(err) = main_() {
         let message = format!("{:?}", err);
         let _ = show_simple_message_box(MessageBoxFlag::ERROR, "Fatal Error", &message, None);
         Err(err)
     } else {
-        #[cfg(feature = "profile-with-tracy")]
-        drop(client);
         // Let the OS clean up the rest.
         std::process::exit(0);
     }
@@ -121,6 +119,28 @@ fn main_() -> anyhow::Result<()> {
         .spawn({
             let state_mutex = state_mutex.clone();
             move || game_main(state_mutex)
+        })
+        .unwrap();
+
+    #[cfg(feature = "profile-with-tracy")]
+    std::thread::Builder::new()
+        .name(format!("{}-vram-monitor", env!("CARGO_CRATE_NAME")))
+        .spawn(|| {
+            let mut prev_allocated = -1.0;
+            let mut prev_in_use = -1.0;
+            loop {
+                let allocated = neonvk::get_allocated_vram() as f64;
+                if allocated != prev_allocated {
+                    tracy_client::plot!("allocated vram (bytes)", prev_allocated);
+                    prev_allocated = allocated;
+                }
+                let in_use = neonvk::get_allocated_vram_in_use() as f64;
+                if in_use != prev_in_use {
+                    tracy_client::plot!("used vram (bytes)", prev_in_use);
+                    prev_in_use = in_use;
+                }
+                std::thread::sleep(Duration::from_micros(100));
+            }
         })
         .unwrap();
 
@@ -371,7 +391,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         use neonvk::display_utils::Bytes;
         let in_use = Bytes(neonvk::get_allocated_vram_in_use());
         let allocated = Bytes(neonvk::get_allocated_vram());
-        let peak = Bytes(neonvk::get_peak_allocated_vram());
+        let peak = Bytes(neonvk::get_allocated_vram_peak());
         log::info!("VRAM usage {when:40} {in_use}/{allocated}, peaked at {peak}");
     }
 
@@ -657,7 +677,7 @@ mod logger {
                 } else {
                     ("", "")
                 };
-                if record.level() < Level::Trace {
+                if log_level < Level::Trace {
                     if is_vk_debug_utils_print {
                         if let Some((tag, msg)) = message.split_once("] ") {
                             eprintln!("{color_code}{tag}]{color_end} {msg}");

@@ -34,11 +34,11 @@ mod vram_usage {
     pub fn get_allocated_vram_in_use() -> u64 {
         IN_USE.load(Ordering::Relaxed)
     }
-    pub fn get_peak_allocated_vram() -> u64 {
+    pub fn get_allocated_vram_peak() -> u64 {
         ALLOCATED_PEAK.load(Ordering::Relaxed)
     }
 }
-pub use vram_usage::{get_allocated_vram, get_allocated_vram_in_use, get_peak_allocated_vram};
+pub use vram_usage::{get_allocated_vram, get_allocated_vram_in_use, get_allocated_vram_peak};
 
 mod arena;
 pub use arena::{ForBuffers, ForImages, MemoryProps, VulkanArena};
