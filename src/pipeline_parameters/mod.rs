@@ -1,5 +1,5 @@
 use crate::scene::camera::GlobalTransforms;
-use crate::GltfFactors;
+use crate::descriptors::GltfFactors;
 use ash::vk;
 use core::mem::{self, MaybeUninit};
 use glam::{Mat4, Vec2, Vec3, Vec4};

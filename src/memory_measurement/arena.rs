@@ -1,4 +1,4 @@
-use crate::arena::{align_up, ArenaType, ForBuffers, ForImages};
+use crate::arena::{self, ArenaType, ForBuffers, ForImages};
 use crate::debug_utils;
 use crate::vulkan_raii::Device;
 use ash::vk;
@@ -37,7 +37,7 @@ impl VulkanArenaMeasurer<ForBuffers> {
         let buffer_memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         unsafe { self.device.destroy_buffer(buffer, None) };
         let alignment = buffer_memory_requirements.alignment;
-        let offset = align_up(self.measured_size, alignment);
+        let offset = arena::align_up(self.measured_size, alignment);
         let size = buffer_memory_requirements.size;
         self.measured_size = offset + size;
         Ok(())
@@ -52,7 +52,7 @@ impl VulkanArenaMeasurer<ForImages> {
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
         unsafe { self.device.destroy_image(image, None) };
         let alignment = image_memory_requirements.alignment;
-        let offset = align_up(self.measured_size, alignment);
+        let offset = arena::align_up(self.measured_size, alignment);
         let size = image_memory_requirements.size;
         self.measured_size = offset + size;
         Ok(())

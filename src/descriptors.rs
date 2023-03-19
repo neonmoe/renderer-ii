@@ -1,6 +1,8 @@
 use crate::arena::{ForBuffers, ForImages, VulkanArena};
+use crate::debug_utils;
 use crate::gltf::gltf_json;
 use crate::image_loading::{ImageLoadingError, PbrDefaults};
+use crate::physical_device::PhysicalDevice;
 use crate::pipeline_parameters::{
     DescriptorSetLayoutParams, MaterialPushConstants, PipelineIndex, PipelineMap, PipelineParameters, MAX_BONE_COUNT, MAX_TEXTURE_COUNT,
     PIPELINE_PARAMETERS, SKINNED_PIPELINES,
@@ -9,7 +11,6 @@ use crate::uploader::Uploader;
 use crate::vulkan_raii::{
     Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, Framebuffer, ImageView, PipelineLayout, Sampler,
 };
-use crate::{debug_utils, PhysicalDevice};
 use alloc::rc::{Rc, Weak};
 use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
@@ -432,12 +433,7 @@ impl Descriptors {
     ) {
         let set_idx = set as usize;
         let descriptor_set = self.descriptor_sets[pipeline].inner[set_idx];
-        let descriptor_buffer_info = Box::new(
-            vk::DescriptorBufferInfo::default()
-                .buffer(buffer)
-                .offset(offset)
-                .range(size),
-        );
+        let descriptor_buffer_info = Box::new(vk::DescriptorBufferInfo::default().buffer(buffer).offset(offset).range(size));
         let params = &PIPELINE_PARAMETERS[pipeline].descriptor_sets[set_idx][binding as usize];
         let write_descriptor_set = vk::WriteDescriptorSet {
             dst_set: descriptor_set,

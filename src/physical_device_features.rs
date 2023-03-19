@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::error::Error;
 use ash::vk;
 use ash::{Device, Instance};
 

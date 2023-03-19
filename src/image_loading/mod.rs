@@ -1,8 +1,8 @@
-use crate::arena::{ForBuffers, VulkanArenaError};
-use crate::uploader::UploadError;
+use crate::arena::{ForBuffers, ForImages, VulkanArena, VulkanArenaError};
+use crate::debug_utils;
+use crate::memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
+use crate::uploader::{UploadError, Uploader};
 use crate::vulkan_raii::{Device, ImageView};
-use crate::{debug_utils, ForImages, Uploader, VulkanArena};
-use crate::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use alloc::rc::Rc;
 use ash::vk;
 

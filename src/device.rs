@@ -1,6 +1,7 @@
-use crate::physical_device::QueueFamily;
+use crate::error::Error;
+use crate::physical_device::{PhysicalDevice, QueueFamily};
 use crate::vulkan_raii::Device;
-use crate::{debug_utils, physical_device_features, Error, PhysicalDevice};
+use crate::{debug_utils, physical_device_features};
 use alloc::boxed::Box;
 use arrayvec::ArrayVec;
 use ash::extensions::khr;

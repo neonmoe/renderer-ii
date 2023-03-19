@@ -1,9 +1,6 @@
 use crate::arena::{ForBuffers, ForImages};
 use crate::descriptors::GltfFactors;
-use crate::gltf::{
-    get_gltf_texture_kinds, get_material_factors, get_material_factors_buffer_create_info, get_mesh_buffer_create_info, gltf_json,
-    load_image_bytes, read_glb_json_and_buffer, GltfLoadingError,
-};
+use crate::gltf::{self, gltf_json, GltfLoadingError};
 use crate::image_loading::{self, ImageLoadingError, TextureKind};
 use crate::memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use ash::vk;
@@ -55,7 +52,7 @@ pub fn measure_glb_memory_usage(
     };
     let (json, buffer) = {
         profiling::scope!("parse glb chunks");
-        read_glb_json_and_buffer(&glb).map_err(GltfMemoryMeasurementError::GltfLoading)?
+        gltf::read_glb_json_and_buffer(&glb).map_err(GltfMemoryMeasurementError::GltfLoading)?
     };
     let gltf: gltf_json::GltfJson = {
         profiling::scope!("parse gltf");
@@ -75,15 +72,15 @@ fn measure(
     for buffer in &gltf.buffers {
         profiling::scope!("measure buffer mem reqs");
         buffer_measurer
-            .add_buffer(get_mesh_buffer_create_info(buffer.byte_length as vk::DeviceSize))
+            .add_buffer(gltf::get_mesh_buffer_create_info(buffer.byte_length as vk::DeviceSize))
             .map_err(GltfMemoryMeasurementError::VulkanArenaMeasurement)?;
     }
 
     let mut memmap_holder = None;
-    let image_texture_kinds = get_gltf_texture_kinds(&gltf).map_err(GltfMemoryMeasurementError::GltfLoading)?;
+    let image_texture_kinds = gltf::get_gltf_texture_kinds(&gltf).map_err(GltfMemoryMeasurementError::GltfLoading)?;
     for (i, image) in gltf.images.iter().enumerate() {
         profiling::scope!("measure image mem reqs");
-        let bytes = load_image_bytes(&mut memmap_holder, resource_path, bin_buffer, image, &gltf)
+        let bytes = gltf::load_image_bytes(&mut memmap_holder, resource_path, bin_buffer, image, &gltf)
             .map_err(GltfMemoryMeasurementError::GltfLoading)?;
         let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
         let image_create_info = image_loading::get_ntex_create_info(bytes, kind).map_err(GltfMemoryMeasurementError::ImageLoading)?;
@@ -94,10 +91,10 @@ fn measure(
 
     {
         profiling::scope!("measure material parameters mem reqs");
-        let material_factors = get_material_factors(&gltf).map_err(GltfMemoryMeasurementError::GltfLoading)?;
+        let material_factors = gltf::get_material_factors(&gltf).map_err(GltfMemoryMeasurementError::GltfLoading)?;
         let factors_size = bytemuck::cast_slice::<GltfFactors, u8>(&material_factors).len() as vk::DeviceSize;
         buffer_measurer
-            .add_buffer(get_material_factors_buffer_create_info(factors_size))
+            .add_buffer(gltf::get_material_factors_buffer_create_info(factors_size))
             .map_err(GltfMemoryMeasurementError::VulkanArenaMeasurement)?;
     }
 

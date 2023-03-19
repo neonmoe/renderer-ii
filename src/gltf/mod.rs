@@ -2,16 +2,16 @@
 // This means that we need a new representation for models, but I think that's
 // probably better in any case.
 
-use crate::arena::{VulkanArena, VulkanArenaError};
-use crate::descriptors::{DescriptorError, GltfFactors, PipelineSpecificData};
+use crate::arena::{ForBuffers, ForImages, VulkanArena, VulkanArenaError};
+use crate::descriptors::{DescriptorError, Descriptors, GltfFactors, Material, PipelineSpecificData};
 use crate::gltf::gltf_json::AnimationInterpolation;
 use crate::image_loading::{self, ImageLoadingError, TextureKind};
 use crate::mesh::Mesh;
-use crate::vk;
+use crate::uploader::Uploader;
 use crate::vulkan_raii::{Buffer, Device, ImageView};
-use crate::{Descriptors, ForBuffers, ForImages, Material, Uploader};
 use alloc::rc::Rc;
 use arrayvec::{ArrayString, ArrayVec};
+use ash::vk;
 use core::mem;
 use core::ops::Range;
 use glam::{Mat4, Quat, Vec3, Vec4};

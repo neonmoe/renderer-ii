@@ -1,5 +1,6 @@
+use crate::gltf::Gltf;
+use crate::descriptors::Material;
 use crate::mesh::Mesh;
-use crate::{Gltf, Material};
 use glam::Mat4;
 
 pub(crate) struct MeshIterItem<'a> {

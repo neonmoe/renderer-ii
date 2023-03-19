@@ -1,8 +1,9 @@
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::debug_utils;
-use crate::pipelines::AttachmentLayout;
+use crate::physical_device::PhysicalDevice;
+use crate::pipelines::{AttachmentLayout, Pipelines};
+use crate::swapchain::Swapchain;
 use crate::vulkan_raii::{AnyImage, Device, Framebuffer, ImageView};
-use crate::{PhysicalDevice, Pipelines, Swapchain};
 use alloc::rc::Rc;
 use arrayvec::ArrayVec;
 use ash::{vk, Instance};

@@ -1,8 +1,8 @@
 //! An arena allocator for managing GPU memory.
-use crate::debug_utils;
-use crate::uploader::UploadError;
+use crate::physical_device::PhysicalDevice;
+use crate::uploader::{UploadError, Uploader};
 use crate::vulkan_raii::{Buffer, Device, DeviceMemory, Image};
-use crate::{display_utils, PhysicalDevice, Uploader};
+use crate::{debug_utils, display_utils};
 use alloc::rc::Rc;
 use ash::vk;
 use ash::Instance;

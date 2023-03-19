@@ -1,8 +1,9 @@
 use crate::arena::align_up;
-use crate::gltf::AnimationError;
+use crate::descriptors::Material;
+use crate::gltf::{Animation, AnimationError, Gltf};
 use crate::mesh::Mesh;
-use crate::pipeline_parameters::PipelineMap;
-use crate::{Animation, Gltf, Material, PhysicalDevice, PipelineIndex};
+use crate::physical_device::PhysicalDevice;
+use crate::pipeline_parameters::{PipelineIndex, PipelineMap};
 use ash::vk;
 use glam::Mat4;
 use hashbrown::HashMap;
