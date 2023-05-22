@@ -1,15 +1,5 @@
-// TODO: Refactor out the gltf handling into its own crate
-// This means that we need a new representation for models, but I think that's
-// probably better in any case.
+extern crate alloc;
 
-use crate::arena::{ForBuffers, ForImages, VulkanArena, VulkanArenaError};
-use crate::descriptors::{DescriptorError, Descriptors, GltfFactors, Material, PipelineSpecificData};
-use crate::gltf::gltf_json::AnimationInterpolation;
-use crate::image_loading::{self, ImageLoadingError, TextureKind};
-use crate::mesh::Mesh;
-use crate::uploader::Uploader;
-use crate::vulkan_raii::{Buffer, Device, ImageView};
-use crate::AlphaMode;
 use alloc::rc::Rc;
 use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
@@ -18,12 +8,21 @@ use core::ops::Range;
 use glam::{Mat4, Quat, Vec3, Vec4};
 use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
+use neonvk::image_loading::{self, ImageLoadingError, TextureKind};
+use neonvk::{
+    AlphaMode, Buffer, DescriptorError, Descriptors, Device, ForBuffers, ForImages, GltfFactors, ImageView, Material, Mesh,
+    PipelineSpecificData, Uploader, VulkanArena, VulkanArenaError,
+};
 use std::fs::{self, File};
 use std::path::Path;
 
-pub(crate) mod gltf_json;
-pub(crate) mod mesh_iter;
+mod gltf_json;
+mod memory_measurement;
+mod mesh_iter;
 mod scene_queueing;
+
+use gltf_json::AnimationInterpolation;
+pub use memory_measurement::*;
 
 const GLTF_BYTE: i32 = 5120;
 const GLTF_UNSIGNED_BYTE: i32 = 5121;

@@ -1,7 +1,6 @@
-use crate::gltf::Gltf;
-use crate::descriptors::Material;
-use crate::mesh::Mesh;
+use crate::Gltf;
 use glam::Mat4;
+use neonvk::{Material, Mesh};
 
 pub(crate) struct MeshIterItem<'a> {
     pub node_index: usize,

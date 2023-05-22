@@ -43,7 +43,7 @@ mod vram_usage {
 pub use vram_usage::{get_allocated_vram, get_allocated_vram_in_use, get_allocated_vram_peak};
 
 mod arena;
-pub use arena::{ForBuffers, ForImages, MemoryProps, VulkanArena};
+pub use arena::{ForBuffers, ForImages, MemoryProps, VulkanArena, VulkanArenaError};
 
 pub use ash::vk;
 
@@ -89,15 +89,9 @@ pub use instance::Instance;
 mod error;
 pub use error::Error;
 
-mod gltf;
-pub use gltf::{Animation, AnimationError, Gltf, Keyframes};
-
 mod memory_measurement {
     mod arena;
     pub use arena::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
-
-    mod gltf;
-    pub use gltf::{measure_glb_memory_usage, measure_gltf_memory_usage};
 }
 pub use memory_measurement::*;
 
@@ -117,7 +111,7 @@ mod renderer;
 pub use renderer::{FrameIndex, Renderer, RendererError};
 
 mod scene;
-pub use scene::Scene;
+pub use scene::{Camera, Scene, SkinnedModel, StaticMeshMap};
 
 mod surface {
     use crate::Error;

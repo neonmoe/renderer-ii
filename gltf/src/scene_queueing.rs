@@ -1,6 +1,8 @@
-use crate::gltf::{Animation, AnimationError, Gltf};
-use crate::scene::{Scene, SkinnedModel};
+use std::mem::size_of;
+
+use crate::{Animation, AnimationError, Gltf};
 use glam::Mat4;
+use neonvk::{Scene, SkinnedModel};
 
 impl Gltf {
     pub fn queue<'a>(&'a self, scene: &mut Scene<'a>, transform: Mat4) {
@@ -30,15 +32,15 @@ impl Gltf {
                     skinned_model.meshes.push((mesh.mesh, mesh.material));
                 } else {
                     let skin = &self.skins[skin_index];
-                    let joints_length = scene.skinned_mesh_joints_buffer.len() as u32;
-                    let joints_offset = joints_length.next_multiple_of(scene.joints_alignment);
-                    scene.skinned_mesh_joints_buffer.resize(joints_offset as usize, 0);
-                    for joint in &skin.joints {
+                    let joint_size = size_of::<Mat4>();
+                    let joints_buffer_size = skin.joints.len() * joint_size;
+                    let (joints_offset, joints_buffer) = scene.allocate_joint_offset(joints_buffer_size);
+                    for (i, joint) in skin.joints.iter().enumerate() {
                         let animated_transform = animated_node_transforms[joint.node_index].unwrap_or(Mat4::IDENTITY);
                         let joint_transform = animated_transform * joint.inverse_bind_matrix;
-                        scene
-                            .skinned_mesh_joints_buffer
-                            .extend_from_slice(bytemuck::cast_slice(&[joint_transform]));
+                        let offset = i * joint_size;
+                        let dst = &mut joints_buffer[offset..offset + joint_size];
+                        dst.copy_from_slice(bytemuck::cast_slice(&[joint_transform]));
                     }
                     skinned_models.push(SkinnedModel {
                         pipeline,

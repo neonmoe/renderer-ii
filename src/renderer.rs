@@ -517,8 +517,14 @@ impl Renderer {
 
         for model in meshes {
             unsafe {
-                self.device
-                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[model.joints_offset]);
+                self.device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    bind_point,
+                    layout,
+                    1,
+                    &descriptor_sets[1..],
+                    &[model.joints_offset.0],
+                );
             }
             let transform_buffer = {
                 profiling::scope!("create transform buffer for skinned model");

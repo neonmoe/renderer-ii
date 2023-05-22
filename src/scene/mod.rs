@@ -8,22 +8,24 @@ use hashbrown::HashMap;
 pub(crate) mod camera;
 pub use camera::Camera;
 
-pub(crate) struct SkinnedModel<'a> {
-    pub(crate) skin: usize,
-    pub(crate) pipeline: PipelineIndex,
-    pub(crate) meshes: Vec<(&'a Mesh, &'a Material)>,
-    pub(crate) transform: Mat4,
-    pub(crate) joints_offset: u32,
+pub struct JointOffset(pub(crate) u32);
+
+pub struct SkinnedModel<'a> {
+    pub skin: usize,
+    pub pipeline: PipelineIndex,
+    pub meshes: Vec<(&'a Mesh, &'a Material)>,
+    pub transform: Mat4,
+    pub joints_offset: JointOffset,
 }
 
-pub(crate) type StaticMeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
+pub type StaticMeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
 
 /// A container for the materials and meshes to render during a particular
 /// frame, and transforms for each instance.
 pub struct Scene<'a> {
     pub camera: Camera,
-    pub(crate) static_meshes: PipelineMap<StaticMeshMap<'a>>,
-    pub(crate) skinned_meshes: PipelineMap<Vec<SkinnedModel<'a>>>,
+    pub static_meshes: PipelineMap<StaticMeshMap<'a>>,
+    pub skinned_meshes: PipelineMap<Vec<SkinnedModel<'a>>>,
     pub(crate) skinned_mesh_joints_buffer: Vec<u8>,
     pub(crate) joints_alignment: u32,
 }
@@ -48,5 +50,16 @@ impl<'a> Scene<'a> {
         let mesh_map = &mut self.static_meshes[material.pipeline(false)];
         let mesh_vec = mesh_map.entry((mesh, material)).or_insert_with(Vec::new);
         mesh_vec.push(transform);
+    }
+
+    pub fn allocate_joint_offset(&mut self, size: usize) -> (JointOffset, &mut [u8]) {
+        let current_allocated = self.skinned_mesh_joints_buffer.len();
+        let aligned_offset = current_allocated.next_multiple_of(self.joints_alignment as usize);
+        let new_allocated = aligned_offset + size;
+        self.skinned_mesh_joints_buffer.resize(new_allocated, 0);
+        (
+            JointOffset(aligned_offset as u32),
+            &mut self.skinned_mesh_joints_buffer[aligned_offset..new_allocated],
+        )
     }
 }

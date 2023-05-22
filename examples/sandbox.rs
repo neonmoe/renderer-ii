@@ -413,12 +413,12 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
     let mut assets_buffers_measurer = neonvk::VulkanArenaMeasurer::new(&device);
     let mut assets_textures_measurer = neonvk::VulkanArenaMeasurer::new(&device);
     neonvk::image_loading::PbrDefaults::measure(&mut assets_textures_measurer)?;
-    neonvk::measure_gltf_memory_usage(
+    gltf::measure_gltf_memory_usage(
         (&mut assets_buffers_measurer, &mut assets_textures_measurer),
         &resources_path.join("sponza/glTF/Sponza.gltf"),
         &resources_path.join("sponza/glTF"),
     )?;
-    neonvk::measure_gltf_memory_usage(
+    gltf::measure_gltf_memory_usage(
         (&mut assets_buffers_measurer, &mut assets_textures_measurer),
         &resources_path.join("smol-ame-by-seafoam/smol-ame.gltf"),
         &resources_path.join("smol-ame-by-seafoam"),
@@ -465,7 +465,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
     let mut descriptors = neonvk::Descriptors::new(&device, &physical_device, &mut staging_arena, &mut uploader, &mut texture_arena)?;
 
     let upload_start = Instant::now();
-    let sponza_model = neonvk::Gltf::from_gltf(
+    let sponza_model = gltf::Gltf::from_gltf(
         &device,
         &mut staging_arena,
         &mut uploader,
@@ -474,7 +474,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         &resources_path.join("sponza/glTF/Sponza.gltf"),
         &resources_path.join("sponza/glTF"),
     )?;
-    let smol_ame_model = neonvk::Gltf::from_gltf(
+    let smol_ame_model = gltf::Gltf::from_gltf(
         &device,
         &mut staging_arena,
         &mut uploader,
@@ -581,7 +581,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
                     .animations
                     .iter()
                     .map(|animation| (state.game_time % animation.end_time, animation))
-                    .collect::<Vec<(f32, &neonvk::Animation)>>();
+                    .collect::<Vec<(f32, &gltf::Animation)>>();
                 let smol_ame_transform =
                     Mat4::from_scale(Vec3::ONE * 0.7) * Mat4::from_quat(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
                 smol_ame_model.queue_animated(&mut scene, smol_ame_transform, &animations)?;

@@ -122,7 +122,7 @@ impl Material {
         None
     }
 
-    pub(crate) fn pipeline(&self, skinned: bool) -> PipelineIndex {
+    pub fn pipeline(&self, skinned: bool) -> PipelineIndex {
         for &(pipeline, _) in &self.array_indices {
             if pipeline.skinned() == skinned {
                 return pipeline;
