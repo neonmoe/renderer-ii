@@ -9,6 +9,7 @@ use crate::image_loading::{self, ImageLoadingError, TextureKind};
 use crate::mesh::Mesh;
 use crate::uploader::Uploader;
 use crate::vulkan_raii::{Buffer, Device, ImageView};
+use crate::AlphaMode;
 use alloc::rc::Rc;
 use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
@@ -22,6 +23,7 @@ use std::path::Path;
 
 pub(crate) mod gltf_json;
 pub(crate) mod mesh_iter;
+mod scene_queueing;
 
 const GLTF_BYTE: i32 = 5120;
 const GLTF_UNSIGNED_BYTE: i32 = 5121;
@@ -205,10 +207,6 @@ impl Gltf {
             .find(|animation| if let Some(name_) = &animation.name { name == name_ } else { false })
     }
 
-    pub(crate) fn mesh_iter(&self) -> mesh_iter::MeshIter<'_> {
-        mesh_iter::MeshIter::new(self, self.root_nodes.clone())
-    }
-
     pub fn get_node_transforms(&self, playing_animations: &[(f32, &Animation)]) -> Result<Vec<Option<Mat4>>, AnimationError> {
         let mut transforms = vec![None; self.nodes.len()];
         let mut nodes_with_parent_transform = self.root_nodes.iter().map(|&node| (node, Mat4::IDENTITY)).collect::<Vec<_>>();
@@ -221,6 +219,10 @@ impl Gltf {
             }
         }
         Ok(transforms)
+    }
+
+    fn mesh_iter(&self) -> mesh_iter::MeshIter<'_> {
+        mesh_iter::MeshIter::new(self, self.root_nodes.clone())
     }
 
     fn get_animated_transform(&self, node_index: usize, playing_animations: &[(f32, &Animation)]) -> Result<Mat4, AnimationError> {
@@ -531,7 +533,11 @@ fn create_gltf(
             occlusion,
             emissive,
             factors,
-            alpha_mode: mat.alpha_mode,
+            alpha_mode: match mat.alpha_mode {
+                gltf_json::AlphaMode::Opaque => AlphaMode::Opaque,
+                gltf_json::AlphaMode::Mask => AlphaMode::AlphaToCoverage,
+                gltf_json::AlphaMode::Blend => AlphaMode::Blend,
+            },
         };
         let name = mat.name.unwrap_or_else(|| ArrayString::from("unnamed material").unwrap());
         materials.push(Material::new(descriptors, pipeline_specific_data, name).map_err(GltfLoadingError::MaterialCreation)?);

@@ -1,5 +1,5 @@
-use crate::scene::camera::GlobalTransforms;
 use crate::descriptors::GltfFactors;
+use crate::scene::camera::GlobalTransforms;
 use ash::vk;
 use core::mem::{self, MaybeUninit};
 use glam::{Mat4, Vec2, Vec3, Vec4};
@@ -32,8 +32,8 @@ unsafe impl bytemuck::Pod for MaterialPushConstants {}
 pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
     PipelineIndex::Opaque,
     PipelineIndex::SkinnedOpaque,
-    PipelineIndex::Clipped,
-    PipelineIndex::SkinnedClipped,
+    PipelineIndex::AlphaToCoverage,
+    PipelineIndex::SkinnedAlphaToCoverage,
     PipelineIndex::Blended,
     PipelineIndex::SkinnedBlended,
     PipelineIndex::RenderResolutionPostProcess,
@@ -41,7 +41,7 @@ pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
 
 pub const SKINNED_PIPELINES: [PipelineIndex; 3] = [
     PipelineIndex::SkinnedOpaque,
-    PipelineIndex::SkinnedClipped,
+    PipelineIndex::SkinnedAlphaToCoverage,
     PipelineIndex::SkinnedBlended,
 ];
 
@@ -52,9 +52,9 @@ pub enum PipelineIndex {
     /// Skinned opaque geometry pass.
     SkinnedOpaque,
     /// Alpha-to-coverage "fake transparent" geometry pass.
-    Clipped,
+    AlphaToCoverage,
     /// Skinned alpha-to-coverage "fake transparent" geometry pass.
-    SkinnedClipped,
+    SkinnedAlphaToCoverage,
     /// Transparent geomtry pass.
     Blended,
     /// Skinned transparent geomtry pass.
@@ -72,7 +72,7 @@ impl PipelineIndex {
 
     pub(crate) fn skinned(&self) -> bool {
         use PipelineIndex::*;
-        [SkinnedOpaque, SkinnedClipped, SkinnedBlended].contains(self)
+        [SkinnedOpaque, SkinnedAlphaToCoverage, SkinnedBlended].contains(self)
     }
 }
 

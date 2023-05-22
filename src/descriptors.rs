@@ -1,6 +1,5 @@
 use crate::arena::{ForBuffers, ForImages, VulkanArena};
 use crate::debug_utils;
-use crate::gltf::gltf_json;
 use crate::image_loading::{ImageLoadingError, PbrDefaults};
 use crate::physical_device::PhysicalDevice;
 use crate::pipeline_parameters::{
@@ -18,8 +17,6 @@ use bytemuck::{Pod, Zeroable};
 use core::hash::{Hash, Hasher};
 use core::mem;
 use glam::Vec4;
-
-pub use gltf_json::AlphaMode;
 
 #[derive(thiserror::Error, Debug)]
 pub enum DescriptorError {
@@ -44,9 +41,9 @@ fn get_pipelines(data: &PipelineSpecificData) -> ArrayVec<PipelineIndex, MAX_PIP
     use PipelineIndex::*;
     match data {
         PipelineSpecificData::Gltf { alpha_mode, .. } => match alpha_mode {
-            gltf_json::AlphaMode::Opaque => [Opaque, SkinnedOpaque].into(),
-            gltf_json::AlphaMode::Mask => [Clipped, SkinnedClipped].into(),
-            gltf_json::AlphaMode::Blend => [Blended, SkinnedBlended].into(),
+            AlphaMode::Opaque => [Opaque, SkinnedOpaque].into(),
+            AlphaMode::AlphaToCoverage => [AlphaToCoverage, SkinnedAlphaToCoverage].into(),
+            AlphaMode::Blend => [Blended, SkinnedBlended].into(),
         },
     }
 }
@@ -65,6 +62,13 @@ pub struct GltfFactors {
 unsafe impl Zeroable for GltfFactors {}
 // repr(c), the contents are Pods, and there's no padding.
 unsafe impl Pod for GltfFactors {}
+
+#[derive(Clone, Copy)]
+pub enum AlphaMode {
+    Opaque,
+    AlphaToCoverage,
+    Blend,
+}
 
 #[derive(Clone)]
 pub enum PipelineSpecificData {

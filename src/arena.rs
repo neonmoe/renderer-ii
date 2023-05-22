@@ -180,7 +180,7 @@ impl VulkanArena<ForBuffers> {
         let buffer_memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         let alignment = buffer_memory_requirements.alignment;
 
-        let offset = align_up(self.offset, alignment);
+        let offset = self.offset.next_multiple_of(alignment);
         let required_size = buffer_memory_requirements.size;
 
         if self.total_size - offset < required_size {
@@ -287,7 +287,7 @@ impl VulkanArena<ForImages> {
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
         let alignment = image_memory_requirements.alignment;
 
-        let offset = align_up(self.offset, alignment);
+        let offset = self.offset.next_multiple_of(alignment);
         let size = image_memory_requirements.size;
 
         if self.total_size - offset < size {
@@ -422,53 +422,5 @@ impl MemoryProps {
             unwanted: vk::MemoryPropertyFlags::DEVICE_LOCAL,
             fallback: vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         }
-    }
-}
-
-/// Returns `value` or the nearest integer greater than `value` which
-/// is divisible by `align_to`.
-pub(crate) fn align_up(value: vk::DeviceSize, align_to: vk::DeviceSize) -> vk::DeviceSize {
-    if value % align_to == 0 {
-        value
-    } else {
-        value + align_to - (value % align_to)
-    }
-}
-
-/// Returns `value` or the nearest integer less than `value` which
-/// is divisible by `align_to`.
-#[allow(dead_code)]
-fn align_down(value: vk::DeviceSize, align_to: vk::DeviceSize) -> vk::DeviceSize {
-    if value % align_to == 0 {
-        value
-    } else {
-        value - (value % align_to)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn align_up_works() {
-        assert_eq!(16, super::align_up(15, 8));
-        assert_eq!(16, super::align_up(9, 8));
-        assert_eq!(64, super::align_up(9, 64));
-        assert_eq!(64 * 3, super::align_up(64 * 3 - 1, 64));
-        assert_eq!(64 * 3, super::align_up(64 * 3 - 32, 64));
-        assert_eq!(64 * 3, super::align_up(64 * 3 - 63, 64));
-        assert_eq!(64 * 3, super::align_up(64 * 3, 64));
-        assert_eq!(0, super::align_up(0, 64));
-    }
-
-    #[test]
-    fn align_down_works() {
-        assert_eq!(8, super::align_down(15, 8));
-        assert_eq!(8, super::align_down(9, 8));
-        assert_eq!(0, super::align_down(9, 64));
-        assert_eq!(64 * 2, super::align_down(64 * 3 - 1, 64));
-        assert_eq!(64 * 2, super::align_down(64 * 3 - 32, 64));
-        assert_eq!(64 * 2, super::align_down(64 * 3 - 63, 64));
-        assert_eq!(64 * 3, super::align_down(64 * 3, 64));
-        assert_eq!(0, super::align_down(0, 64));
     }
 }

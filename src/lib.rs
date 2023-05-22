@@ -1,6 +1,8 @@
 //! A Vulkan renderer for 3D games. The mission statement will
 //! probably narrow down over time.
 
+#![feature(int_roundings)] // seems like this will get merged soon enough
+
 // TODO: #![warn(clippy::pedantic)]
 // TODO: #![no_std]
 

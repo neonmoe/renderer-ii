@@ -359,7 +359,11 @@ impl Renderer {
         }
 
         use PipelineIndex::*;
-        for (static_pl, skinned_pl) in [(Opaque, SkinnedOpaque), (Clipped, SkinnedClipped), (Blended, SkinnedBlended)] {
+        for (static_pl, skinned_pl) in [
+            (Opaque, SkinnedOpaque),
+            (AlphaToCoverage, SkinnedAlphaToCoverage),
+            (Blended, SkinnedBlended),
+        ] {
             profiling::scope!("pipeline");
             let static_meshes = &static_meshes[static_pl];
             if !static_meshes.is_empty() {

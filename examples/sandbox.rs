@@ -575,7 +575,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
 
             {
                 profiling::scope!("queue meshes to render");
-                scene.queue(&sponza_model, Mat4::IDENTITY);
+                sponza_model.queue(&mut scene, Mat4::IDENTITY);
 
                 let animations = smol_ame_model
                     .animations
@@ -584,7 +584,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
                     .collect::<Vec<(f32, &neonvk::Animation)>>();
                 let smol_ame_transform =
                     Mat4::from_scale(Vec3::ONE * 0.7) * Mat4::from_quat(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
-                scene.queue_animated(&smol_ame_model, smol_ame_transform, &animations)?;
+                smol_ame_model.queue_animated(&mut scene, smol_ame_transform, &animations)?;
             }
         }
 
