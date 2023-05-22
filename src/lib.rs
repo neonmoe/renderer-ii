@@ -19,6 +19,8 @@ macro_rules! cstr {
 mod debug_utils;
 mod physical_device_features;
 
+use debug_utils::*;
+
 // TODO: Remove memmap2
 // TODO: Add a file loading module to replace std::fs in the gltf loading code.
 
@@ -56,9 +58,11 @@ pub use descriptors::{AlphaMode, DescriptorError, Descriptors, GltfFactors, Mate
 mod device;
 pub use device::create_device;
 
-pub mod display_utils {
+mod display_utils {
     use core::fmt::{Display, Formatter, Result};
 
+    /// Wrapper around u64 for pretty-printing byte amount with the appropriate
+    /// size prefix (KiB, MiB, etc.).
     #[derive(Debug)]
     pub struct Bytes(pub u64);
 
@@ -78,6 +82,7 @@ pub mod display_utils {
         }
     }
 }
+pub use display_utils::*;
 
 pub mod image_loading;
 

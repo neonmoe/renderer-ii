@@ -1,5 +1,4 @@
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
-use crate::debug_utils;
 use crate::physical_device::PhysicalDevice;
 use crate::pipelines::{AttachmentLayout, Pipelines};
 use crate::swapchain::Swapchain;
@@ -81,7 +80,7 @@ impl Framebuffers {
             }
             for framebuffer_image_info in image_infos {
                 let image = unsafe { device.create_image(&framebuffer_image_info, None) }.map_err(FramebufferCreationError::QueryImage)?;
-                debug_utils::name_vulkan_object(device, image, format_args!("memory requirement querying temp image"));
+                crate::name_vulkan_object(device, image, format_args!("memory requirement querying temp image"));
                 let reqs = unsafe { device.get_image_memory_requirements(image) };
                 let size_mod = framebuffer_size % reqs.alignment;
                 if size_mod != 0 {
@@ -137,8 +136,8 @@ impl Framebuffers {
         for (i, sc) in swapchain_image_views.iter().enumerate() {
             let frame_count = swapchain_image_views.len();
             let nth = i + 1;
-            debug_utils::name_vulkan_object(device, sc.inner, format_args!("swapchain (frame {nth}/{frame_count})"));
-            debug_utils::name_vulkan_object(device, sc.image.inner(), format_args!("swapchain (frame {nth}/{frame_count})"));
+            crate::name_vulkan_object(device, sc.inner, format_args!("swapchain (frame {nth}/{frame_count})"));
+            crate::name_vulkan_object(device, sc.image.inner(), format_args!("swapchain (frame {nth}/{frame_count})"));
         }
 
         let hdr_image = framebuffer_arena
@@ -149,8 +148,8 @@ impl Framebuffers {
             vk::ImageAspectFlags::COLOR,
             HDR_COLOR_ATTACHMENT_FORMAT,
         )?;
-        debug_utils::name_vulkan_object(device, hdr_image_view.inner, format_args!("hdr fb"));
-        debug_utils::name_vulkan_object(device, hdr_image_view.image.inner(), format_args!("hdr fb"));
+        crate::name_vulkan_object(device, hdr_image_view.inner, format_args!("hdr fb"));
+        crate::name_vulkan_object(device, hdr_image_view.image.inner(), format_args!("hdr fb"));
 
         let depth_image = framebuffer_arena
             .create_image(depth_image_info, format_args!(""))
@@ -160,8 +159,8 @@ impl Framebuffers {
             vk::ImageAspectFlags::DEPTH,
             physical_device.depth_format,
         )?;
-        debug_utils::name_vulkan_object(device, depth_image_view.inner, format_args!("depth fb"));
-        debug_utils::name_vulkan_object(device, depth_image_view.image.inner(), format_args!("depth fb"));
+        crate::name_vulkan_object(device, depth_image_view.inner, format_args!("depth fb"));
+        crate::name_vulkan_object(device, depth_image_view.image.inner(), format_args!("depth fb"));
 
         let resolve_src_image_view = if let Some(create_info) = resolve_src_image_info {
             let image = framebuffer_arena
@@ -173,8 +172,8 @@ impl Framebuffers {
             None
         };
         if let Some(image_view) = &resolve_src_image_view {
-            debug_utils::name_vulkan_object(device, image_view.inner, format_args!("tonemapped fb"));
-            debug_utils::name_vulkan_object(device, image_view.image.inner(), format_args!("tonemapped fb"));
+            crate::name_vulkan_object(device, image_view.inner, format_args!("tonemapped fb"));
+            crate::name_vulkan_object(device, image_view.image.inner(), format_args!("tonemapped fb"));
         }
 
         let framebuffers = swapchain_image_views
@@ -210,7 +209,7 @@ impl Framebuffers {
         for (i, framebuffer) in framebuffers.iter().enumerate() {
             let frame_count = framebuffers.len();
             let nth = i + 1;
-            debug_utils::name_vulkan_object(device, framebuffer.inner, format_args!("main fb {nth}/{frame_count}"));
+            crate::name_vulkan_object(device, framebuffer.inner, format_args!("main fb {nth}/{frame_count}"));
         }
 
         Ok(Framebuffers {

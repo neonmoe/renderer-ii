@@ -1,6 +1,5 @@
-use crate::debug_utils;
-use crate::vulkan_raii::{self, AnyImage, Device, Surface};
 use crate::physical_device::PhysicalDevice;
+use crate::vulkan_raii::{self, AnyImage, Device, Surface};
 use alloc::rc::Rc;
 use arrayvec::ArrayVec;
 use ash::extensions::khr;
@@ -79,7 +78,7 @@ impl Swapchain {
         let vk::Extent2D { width, height } = extent;
         let swapchain_format = physical_device.swapchain_format;
         let frame_count = images.len() as u32;
-        debug_utils::name_vulkan_object(
+        crate::name_vulkan_object(
             device,
             swapchain.inner,
             format_args!("{width}x{height}, {swapchain_format:?}, {frame_count} frames"),
@@ -137,7 +136,7 @@ impl Swapchain {
         let vk::Extent2D { width, height } = extent;
         let swapchain_format = physical_device.swapchain_format;
         let frame_count = self.images.len() as u32;
-        debug_utils::name_vulkan_object(
+        crate::name_vulkan_object(
             device,
             self.swapchain.inner,
             format_args!("{width}x{height}, {swapchain_format:?}, {frame_count} frames"),

@@ -1,4 +1,3 @@
-use crate::display_utils::Bytes;
 use arrayvec::ArrayVec;
 use ash::vk;
 use core::convert::TryInto;
@@ -11,7 +10,7 @@ pub enum NtexDecodeError {
     #[error("ntex header contained depth: {0}. Non-1 values are not supported yet.")]
     DepthUnsupported(u32),
     #[error("ntex image data ended early: file contains {actual} of data, expected at least {expected}")]
-    NotEnoughPixels { expected: Bytes, actual: Bytes },
+    NotEnoughPixels { expected: crate::Bytes, actual: crate::Bytes },
     #[error("ntex file length does not match header, expected: {expected}, actual: {actual}")]
     FileLength { expected: usize, actual: usize },
 }
@@ -53,8 +52,8 @@ pub fn decode(bytes: &[u8]) -> Result<NtexData, NtexDecodeError> {
             * block_size as usize;
         if prev_mip_end + mip_size + 1024 > bytes.len() {
             return Err(NtexDecodeError::NotEnoughPixels {
-                expected: Bytes((prev_mip_end + mip_size + 1024) as u64),
-                actual: Bytes(bytes.len() as u64),
+                expected: crate::Bytes((prev_mip_end + mip_size + 1024) as u64),
+                actual: crate::Bytes(bytes.len() as u64),
             });
         }
         mip_ranges.push(prev_mip_end..prev_mip_end + mip_size);

@@ -1,4 +1,3 @@
-use crate::debug_utils;
 use crate::physical_device::PhysicalDevice;
 use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
 use ash::vk;
@@ -83,7 +82,7 @@ impl Uploader {
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
                 .map_err(UploaderError::TransferCommandPoolCreation)?;
-            debug_utils::name_vulkan_object(device, command_pool, format_args!("upload cmds (T) for {}", debug_identifier));
+            crate::name_vulkan_object(device, command_pool, format_args!("upload cmds (T) for {}", debug_identifier));
             CommandPool {
                 inner: command_pool,
                 device: device.clone(),
@@ -97,7 +96,7 @@ impl Uploader {
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
                 .map_err(UploaderError::GraphicsCommandPoolCreation)?;
-            debug_utils::name_vulkan_object(device, command_pool, format_args!("upload cmds (G) for {}", debug_identifier));
+            crate::name_vulkan_object(device, command_pool, format_args!("upload cmds (G) for {}", debug_identifier));
             CommandPool {
                 inner: command_pool,
                 device: device.clone(),
@@ -193,12 +192,12 @@ impl Uploader {
                 unsafe { self.device.allocate_command_buffers(&graphics) }.map_err(UploadError::GraphicsCommandBufferCreation)?;
             [transfer_buffers[0], graphics_buffers[0]]
         };
-        debug_utils::name_vulkan_object(
+        crate::name_vulkan_object(
             &self.device,
             transfer_cmdbuf,
             format_args!("upload cmds (T) for {}: {}", self.debug_identifier, debug_identifier),
         );
-        debug_utils::name_vulkan_object(
+        crate::name_vulkan_object(
             &self.device,
             graphics_cmdbuf,
             format_args!("upload cmds (G) for {}: {}", self.debug_identifier, debug_identifier),
@@ -216,7 +215,7 @@ impl Uploader {
                 device: self.device.clone(),
             }
         };
-        debug_utils::name_vulkan_object(
+        crate::name_vulkan_object(
             &self.device,
             upload_fence.inner,
             format_args!("upload fence for {}: {}", self.debug_identifier, debug_identifier),
@@ -236,7 +235,7 @@ impl Uploader {
                 device: self.device.clone(),
             }
         };
-        debug_utils::name_vulkan_object(
+        crate::name_vulkan_object(
             &self.device,
             transfer_signal_semaphore.inner,
             format_args!("T->G signal for {}: {}", self.debug_identifier, debug_identifier),

@@ -1,5 +1,4 @@
 use crate::arena::{ArenaType, ForBuffers, ForImages};
-use crate::debug_utils;
 use crate::vulkan_raii::Device;
 use ash::vk;
 use core::marker::PhantomData;
@@ -33,7 +32,7 @@ impl VulkanArenaMeasurer<ForBuffers> {
         profiling::scope!("query buffer memory requirements");
         let buffer =
             unsafe { self.device.create_buffer(&buffer_create_info, None) }.map_err(VulkanArenaMeasurementError::BufferCreation)?;
-        debug_utils::name_vulkan_object(&self.device, buffer, format_args!("memory requirement querying temp buffer"));
+        crate::name_vulkan_object(&self.device, buffer, format_args!("memory requirement querying temp buffer"));
         let buffer_memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         unsafe { self.device.destroy_buffer(buffer, None) };
         let alignment = buffer_memory_requirements.alignment;
@@ -48,7 +47,7 @@ impl VulkanArenaMeasurer<ForImages> {
     pub fn add_image(&mut self, image_create_info: vk::ImageCreateInfo) -> Result<(), VulkanArenaMeasurementError> {
         profiling::scope!("query image memory requirements");
         let image = unsafe { self.device.create_image(&image_create_info, None) }.map_err(VulkanArenaMeasurementError::ImageCreation)?;
-        debug_utils::name_vulkan_object(&self.device, image, format_args!("memory requirement querying temp image"));
+        crate::name_vulkan_object(&self.device, image, format_args!("memory requirement querying temp image"));
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
         unsafe { self.device.destroy_image(image, None) };
         let alignment = image_memory_requirements.alignment;

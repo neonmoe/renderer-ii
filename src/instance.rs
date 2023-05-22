@@ -1,4 +1,3 @@
-use crate::debug_utils;
 use arrayvec::ArrayVec;
 use ash::extensions::ext;
 use ash::{vk, Entry};
@@ -83,7 +82,7 @@ impl Instance {
             create_info = create_info.push_next(&mut validation_features);
         }
 
-        let mut debug_utils_messenger_create_info = debug_utils::create_debug_utils_messenger_info();
+        let mut debug_utils_messenger_create_info = crate::create_debug_utils_messenger_info();
         if debug_utils_available {
             create_info = create_info.push_next(&mut debug_utils_messenger_create_info);
         }
@@ -94,7 +93,7 @@ impl Instance {
         };
 
         if debug_utils_available {
-            debug_utils::init_debug_utils(&entry, &instance);
+            crate::init_debug_utils(&entry, &instance);
             let debug_utils = ash::extensions::ext::DebugUtils::new(&entry, &instance);
             let _ = unsafe { debug_utils.create_debug_utils_messenger(&debug_utils_messenger_create_info, None) };
         }

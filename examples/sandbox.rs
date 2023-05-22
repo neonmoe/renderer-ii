@@ -388,7 +388,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
     }
 
     fn print_memory_usage(when: &str) {
-        use neonvk::display_utils::Bytes;
+        use neonvk::Bytes;
         let in_use = Bytes(neonvk::get_allocated_vram_in_use());
         let allocated = Bytes(neonvk::get_allocated_vram());
         let peak = Bytes(neonvk::get_allocated_vram_peak());

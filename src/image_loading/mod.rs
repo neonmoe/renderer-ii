@@ -1,5 +1,4 @@
 use crate::arena::{ForBuffers, ForImages, VulkanArena, VulkanArenaError};
-use crate::debug_utils;
 use crate::memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use crate::uploader::{UploadError, Uploader};
 use crate::vulkan_raii::{Device, ImageView};
@@ -300,7 +299,7 @@ fn create_pixel(
             image: Rc::new(image_allocation.into()),
         }
     };
-    debug_utils::name_vulkan_object(device, image_view.inner, format_args!("{}", debug_identifier));
+    crate::name_vulkan_object(device, image_view.inner, format_args!("{}", debug_identifier));
 
     Ok(image_view)
 }
@@ -471,7 +470,7 @@ pub fn load_ntex(
             image: Rc::new(image_allocation.into()),
         }
     };
-    debug_utils::name_vulkan_object(device, image_view.inner, format_args!("{}", debug_identifier));
+    crate::name_vulkan_object(device, image_view.inner, format_args!("{}", debug_identifier));
 
     Ok(image_view)
 }

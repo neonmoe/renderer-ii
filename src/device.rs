@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::physical_device::{PhysicalDevice, QueueFamily};
+use crate::physical_device_features;
 use crate::vulkan_raii::Device;
-use crate::{debug_utils, physical_device_features};
 use alloc::boxed::Box;
 use arrayvec::ArrayVec;
 use ash::extensions::khr;
@@ -38,17 +38,17 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
     get_device_queues(&device, &queue_families, &mut queues);
     let [graphics_queue, transfer_queue, surface_queue] = queues;
     if graphics_queue == surface_queue && graphics_queue == transfer_queue {
-        debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics+surface+transfer"));
+        crate::name_vulkan_object(&device, graphics_queue, format_args!("graphics+surface+transfer"));
     } else if graphics_queue == surface_queue {
-        debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics+surface"));
-        debug_utils::name_vulkan_object(&device, transfer_queue, format_args!("transfer"));
+        crate::name_vulkan_object(&device, graphics_queue, format_args!("graphics+surface"));
+        crate::name_vulkan_object(&device, transfer_queue, format_args!("transfer"));
     } else if surface_queue == transfer_queue {
-        debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
-        debug_utils::name_vulkan_object(&device, surface_queue, format_args!("surface+transfer"));
+        crate::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
+        crate::name_vulkan_object(&device, surface_queue, format_args!("surface+transfer"));
     } else {
-        debug_utils::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
-        debug_utils::name_vulkan_object(&device, surface_queue, format_args!("surface"));
-        debug_utils::name_vulkan_object(&device, transfer_queue, format_args!("transfer"));
+        crate::name_vulkan_object(&device, graphics_queue, format_args!("graphics"));
+        crate::name_vulkan_object(&device, surface_queue, format_args!("surface"));
+        crate::name_vulkan_object(&device, transfer_queue, format_args!("transfer"));
     }
 
     let device = Device {
@@ -58,10 +58,10 @@ pub fn create_device(instance: &Instance, physical_device: &PhysicalDevice) -> R
         transfer_queue,
     };
 
-    debug_utils::name_vulkan_object(&device, device.inner.handle(), format_args!("{}", physical_device.name));
+    crate::name_vulkan_object(&device, device.inner.handle(), format_args!("{}", physical_device.name));
     // These two do not seem to interact with validation layers / RenderDoc very well.x
-    //debug_utils::name_vulkan_object(&device, physical_device.inner, format_args!("{}", physical_device.name));
-    //debug_utils::name_vulkan_object(&device, instance.handle(), format_args!("{}", env!("CARGO_PKG_NAME")));
+    //crate::name_vulkan_object(&device, physical_device.inner, format_args!("{}", physical_device.name));
+    //crate::name_vulkan_object(&device, instance.handle(), format_args!("{}", env!("CARGO_PKG_NAME")));
 
     Ok(device)
 }

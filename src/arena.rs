@@ -2,7 +2,6 @@
 use crate::physical_device::PhysicalDevice;
 use crate::uploader::{UploadError, Uploader};
 use crate::vulkan_raii::{Buffer, Device, DeviceMemory, Image};
-use crate::{debug_utils, display_utils};
 use alloc::rc::Rc;
 use ash::vk;
 use ash::Instance;
@@ -16,11 +15,11 @@ pub enum VulkanArenaError {
     #[error("no heap with the required flags (id: {0}, flags: {1:?})")]
     MissingMemoryType(String, vk::MemoryPropertyFlags),
     #[error("no heap with specified flags has enough memory (id: {0}, flags: {1:?}, size: {2})")]
-    HeapsOutOfMemory(String, vk::MemoryPropertyFlags, display_utils::Bytes),
+    HeapsOutOfMemory(String, vk::MemoryPropertyFlags, crate::Bytes),
     #[error("vulkan memory allocation failed (id: {1}, size: {2})")]
-    Allocate(#[source] vk::Result, String, display_utils::Bytes),
+    Allocate(#[source] vk::Result, String, crate::Bytes),
     #[error("mapping vulkan memory failed (id: {1}, size: {2})")]
-    Map(#[source] vk::Result, String, display_utils::Bytes),
+    Map(#[source] vk::Result, String, crate::Bytes),
     #[error("tried to reset arena while some resources allocated from it are still in use ({0} refs)")]
     NotResettable(usize),
     #[error("arena {identifier} ({used}/{total} bytes used) cannot fit {required} bytes")]
@@ -102,18 +101,17 @@ impl<T: ArenaType> VulkanArena<T> {
             profiling::scope!("vk::allocate_memory");
             log::trace!("vk::allocate_memory({} bytes, index {})", size, memory_type_index);
             unsafe { device.allocate_memory(&alloc_info, None) }
-                .map_err(|err| VulkanArenaError::Allocate(err, debug_identifier.clone(), display_utils::Bytes(size)))?
+                .map_err(|err| VulkanArenaError::Allocate(err, debug_identifier.clone(), crate::Bytes(size)))?
         };
-        debug_utils::name_vulkan_object(device, memory, debug_identifier_args);
+        crate::name_vulkan_object(device, memory, debug_identifier_args);
 
-        let mapped_memory_ptr = if T::MAPPABLE
-            && memory_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
-        {
-            unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }
-                .map_err(|err| VulkanArenaError::Map(err, debug_identifier.clone(), display_utils::Bytes(size)))? as *mut u8
-        } else {
-            ptr::null_mut()
-        };
+        let mapped_memory_ptr =
+            if T::MAPPABLE && memory_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT) {
+                unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }
+                    .map_err(|err| VulkanArenaError::Map(err, debug_identifier.clone(), crate::Bytes(size)))? as *mut u8
+            } else {
+                ptr::null_mut()
+            };
 
         let device_local = memory_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL);
         let device_local_size = if device_local { size } else { 0 };
@@ -200,7 +198,7 @@ impl VulkanArena<ForBuffers> {
                 return Err(err);
             }
         }
-        debug_utils::name_vulkan_object(&self.device, buffer, name);
+        crate::name_vulkan_object(&self.device, buffer, name);
 
         if self.mapped_memory_ptr.is_null() {
             if let (Some(uploader), Some(staging_arena)) = (uploader, staging_arena) {
@@ -308,7 +306,7 @@ impl VulkanArena<ForImages> {
             }
         }
 
-        debug_utils::name_vulkan_object(&self.device, image, name);
+        crate::name_vulkan_object(&self.device, image, name);
 
         let new_offset = offset + size;
         if self.device_local {
@@ -377,7 +375,7 @@ fn get_memory_type_index(
         Err(VulkanArenaError::HeapsOutOfMemory(
             debug_identifier.to_string(),
             flags.fallback,
-            display_utils::Bytes(size),
+            crate::Bytes(size),
         ))
     } else {
         Err(VulkanArenaError::MissingMemoryType(debug_identifier.to_string(), flags.fallback))

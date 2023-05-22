@@ -1,4 +1,3 @@
-use crate::debug_utils;
 use crate::descriptors::Descriptors;
 use crate::framebuffers::HDR_COLOR_ATTACHMENT_FORMAT;
 use crate::physical_device::PhysicalDevice;
@@ -56,7 +55,7 @@ impl Pipelines {
             physical_device.depth_format,
             attachment_sample_count,
         )?;
-        debug_utils::name_vulkan_object(device, render_pass, format_args!("main render pass"));
+        crate::name_vulkan_object(device, render_pass, format_args!("main render pass"));
         let render_pass = Rc::new(RenderPass {
             inner: render_pass,
             device: device.clone(),
@@ -73,7 +72,7 @@ impl Pipelines {
         let mut vk_pipelines_iter = vk_pipelines.into_iter();
         let pipelines = PipelineMap::new::<PipelineCreationError, _>(|name| {
             let pipeline = vk_pipelines_iter.next().unwrap();
-            debug_utils::name_vulkan_object(device, pipeline, format_args!("{name:?}"));
+            crate::name_vulkan_object(device, pipeline, format_args!("{name:?}"));
             Ok(vulkan_raii::Pipeline {
                 inner: pipeline,
                 device: device.clone(),
@@ -242,7 +241,7 @@ fn create_pipelines(
             // TODO: What to do with big-endian systems? Re: spirv consists of u32s.
             let create_info = vk::ShaderModuleCreateInfo::default().code(spirv);
             let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(PipelineCreationError::ShaderModule)?;
-            debug_utils::name_vulkan_object(device, shader_module, format_args!("{}", filename));
+            crate::name_vulkan_object(device, shader_module, format_args!("{}", filename));
             Ok(shader_module)
         })
     };
@@ -350,7 +349,7 @@ fn create_pipelines(
         // take care of the rest.
         let create_info = vk::PipelineCacheCreateInfo::default().flags(vk::PipelineCacheCreateFlags::EXTERNALLY_SYNCHRONIZED);
         let pipeline_cache = unsafe { device.create_pipeline_cache(&create_info, None) }.ok()?;
-        debug_utils::name_vulkan_object(device, pipeline_cache, format_args!("all pipelines"));
+        crate::name_vulkan_object(device, pipeline_cache, format_args!("all pipelines"));
         Some(PipelineCache {
             inner: pipeline_cache,
             device: device.clone(),

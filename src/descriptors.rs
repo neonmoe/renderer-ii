@@ -1,5 +1,4 @@
 use crate::arena::{ForBuffers, ForImages, VulkanArena};
-use crate::debug_utils;
 use crate::image_loading::{ImageLoadingError, PbrDefaults};
 use crate::physical_device::PhysicalDevice;
 use crate::pipeline_parameters::{
@@ -197,7 +196,7 @@ impl Descriptors {
             .anisotropy_enable(true)
             .max_anisotropy(physical_device.properties.limits.max_sampler_anisotropy);
         let sampler = unsafe { device.create_sampler(&sampler_create_info, None) }.map_err(DescriptorError::ImmutableSamplerCreation)?;
-        debug_utils::name_vulkan_object(device, sampler, format_args!("immutable default sampler"));
+        crate::name_vulkan_object(device, sampler, format_args!("immutable default sampler"));
         let sampler = Rc::new(Sampler {
             inner: sampler,
             device: device.clone(),
@@ -236,7 +235,7 @@ impl Descriptors {
                             .bindings(&bindings);
                         let dsl = unsafe { device.create_descriptor_set_layout(&create_info, None) }
                             .map_err(DescriptorError::DescriptorSetLayoutCreation)?;
-                        debug_utils::name_vulkan_object(device, dsl, format_args!("set {i} for pipeline {pl:?}"));
+                        crate::name_vulkan_object(device, dsl, format_args!("set {i} for pipeline {pl:?}"));
                         Ok(dsl)
                     })
                     .collect::<Result<ArrayVec<_, 8>, DescriptorError>>()?;
@@ -260,7 +259,7 @@ impl Descriptors {
                 .push_constant_ranges(&push_constant_ranges);
             let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
                 .map_err(DescriptorError::PipelineLayoutCreation)?;
-            debug_utils::name_vulkan_object(device, pipeline_layout, format_args!("for pipeline {pipeline:?}"));
+            crate::name_vulkan_object(device, pipeline_layout, format_args!("for pipeline {pipeline:?}"));
             let pipeline_layout = PipelineLayout {
                 inner: pipeline_layout,
                 device: device.clone(),
@@ -288,7 +287,7 @@ impl Descriptors {
                 .create_descriptor_pool(&descriptor_pool_create_info, None)
                 .map_err(DescriptorError::DescriptorPoolCreation)
         }?;
-        debug_utils::name_vulkan_object(device, descriptor_pool, format_args!("the descriptor pool"));
+        crate::name_vulkan_object(device, descriptor_pool, format_args!("the descriptor pool"));
         let descriptor_pool = Rc::new(DescriptorPool {
             inner: descriptor_pool,
             device: device.clone(),
@@ -303,7 +302,7 @@ impl Descriptors {
             let descriptor_sets =
                 unsafe { device.allocate_descriptor_sets(&create_info) }.map_err(DescriptorError::AllocateDescriptorSets)?;
             for (i, descriptor_set) in descriptor_sets.iter().enumerate() {
-                debug_utils::name_vulkan_object(device, *descriptor_set, format_args!("set {i} for pipeline {pl:?}"));
+                crate::name_vulkan_object(device, *descriptor_set, format_args!("set {i} for pipeline {pl:?}"));
             }
             Ok(DescriptorSets {
                 inner: ArrayVec::from_iter(descriptor_sets.into_iter()),

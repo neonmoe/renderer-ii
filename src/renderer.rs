@@ -1,5 +1,4 @@
 use crate::arena::{ForBuffers, MemoryProps, VulkanArena, VulkanArenaError};
-use crate::debug_utils;
 use crate::descriptors::Descriptors;
 use crate::framebuffers::Framebuffers;
 use crate::mesh::VERTEX_BUFFERS;
@@ -85,7 +84,7 @@ impl Renderer {
         let ready_for_present = {
             let semaphore = unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
                 .map_err(RendererError::PresentReadySemaphoreCreation)?;
-            debug_utils::name_vulkan_object(device, semaphore, format_args!("render finish semaphore"));
+            crate::name_vulkan_object(device, semaphore, format_args!("render finish semaphore"));
             Semaphore {
                 inner: semaphore,
                 device: device.clone(),
@@ -95,7 +94,7 @@ impl Renderer {
         let frame_end_fence = {
             let fence_create_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
             let fence = unsafe { device.create_fence(&fence_create_info, None) }.map_err(RendererError::FrameEndFenceCreation)?;
-            debug_utils::name_vulkan_object(device, fence, format_args!("frame end fence"));
+            crate::name_vulkan_object(device, fence, format_args!("frame end fence"));
             Fence {
                 inner: fence,
                 device: device.clone(),
@@ -108,7 +107,7 @@ impl Renderer {
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool =
                 unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(RendererError::CommandPoolCreation)?;
-            debug_utils::name_vulkan_object(device, command_pool, format_args!("rendering cmds"));
+            crate::name_vulkan_object(device, command_pool, format_args!("rendering cmds"));
             Rc::new(CommandPool {
                 inner: command_pool,
                 device: device.clone(),
@@ -130,7 +129,7 @@ impl Renderer {
                 .create_fence(&vk::FenceCreateInfo::default(), None)
                 .map_err(RendererError::FrameStartSemaphoreCreation)
         }?;
-        debug_utils::name_vulkan_object(device, frame_start_fence, format_args!("wait_frame fence"));
+        crate::name_vulkan_object(device, frame_start_fence, format_args!("wait_frame fence"));
         let frame_start_fence = Fence {
             inner: frame_start_fence,
             device: device.clone(),
@@ -308,7 +307,7 @@ impl Renderer {
                 .command_buffer_count(1);
             let command_buffers = unsafe { self.device.allocate_command_buffers(&command_buffer_allocate_info) }
                 .map_err(RendererError::CommandBufferAllocation)?;
-            debug_utils::name_vulkan_object(&self.device, command_buffers[0], format_args!("frame rendering cmds"));
+            crate::name_vulkan_object(&self.device, command_buffers[0], format_args!("frame rendering cmds"));
             self.command_buffer = Some(CommandBuffer {
                 inner: command_buffers[0],
                 device: self.device.clone(),
