@@ -42,77 +42,9 @@ impl TextureKind {
     pub fn convert_format(self, format: vk::Format) -> vk::Format {
         match self {
             TextureKind::SrgbColor => to_srgb(format),
-            TextureKind::NormalMap => to_snorm(format),
+            TextureKind::NormalMap => format,
             TextureKind::LinearColor => format,
         }
-    }
-}
-
-/// If the `format` is a 'UNORM' format, and has an SRGB variant,
-/// return that.
-///
-/// Does not work for the 3D ASTC ones.
-fn to_srgb(format: vk::Format) -> vk::Format {
-    match format {
-        vk::Format::R8_UNORM => vk::Format::R8_SRGB,
-        vk::Format::R8G8_UNORM => vk::Format::R8G8_SRGB,
-        vk::Format::R8G8B8_UNORM => vk::Format::R8G8B8_SRGB,
-        vk::Format::R8G8B8A8_UNORM => vk::Format::R8G8B8A8_SRGB,
-        vk::Format::B8G8R8_UNORM => vk::Format::B8G8R8_SRGB,
-        vk::Format::B8G8R8A8_UNORM => vk::Format::B8G8R8A8_SRGB,
-        vk::Format::A8B8G8R8_UNORM_PACK32 => vk::Format::A8B8G8R8_SRGB_PACK32,
-        vk::Format::BC2_UNORM_BLOCK => vk::Format::BC2_SRGB_BLOCK,
-        vk::Format::BC3_UNORM_BLOCK => vk::Format::BC3_SRGB_BLOCK,
-        vk::Format::BC7_UNORM_BLOCK => vk::Format::BC7_SRGB_BLOCK,
-        vk::Format::BC1_RGB_UNORM_BLOCK => vk::Format::BC1_RGB_SRGB_BLOCK,
-        vk::Format::BC1_RGBA_UNORM_BLOCK => vk::Format::BC1_RGBA_SRGB_BLOCK,
-        vk::Format::ETC2_R8G8B8_UNORM_BLOCK => vk::Format::ETC2_R8G8B8_SRGB_BLOCK,
-        vk::Format::ETC2_R8G8B8A1_UNORM_BLOCK => vk::Format::ETC2_R8G8B8A1_SRGB_BLOCK,
-        vk::Format::ETC2_R8G8B8A8_UNORM_BLOCK => vk::Format::ETC2_R8G8B8A8_SRGB_BLOCK,
-        vk::Format::PVRTC1_2BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC1_2BPP_SRGB_BLOCK_IMG,
-        vk::Format::PVRTC1_4BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC1_4BPP_SRGB_BLOCK_IMG,
-        vk::Format::PVRTC2_2BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC2_2BPP_SRGB_BLOCK_IMG,
-        vk::Format::PVRTC2_4BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC2_4BPP_SRGB_BLOCK_IMG,
-        vk::Format::ASTC_4X4_UNORM_BLOCK => vk::Format::ASTC_4X4_SRGB_BLOCK,
-        vk::Format::ASTC_5X4_UNORM_BLOCK => vk::Format::ASTC_5X4_SRGB_BLOCK,
-        vk::Format::ASTC_5X5_UNORM_BLOCK => vk::Format::ASTC_5X5_SRGB_BLOCK,
-        vk::Format::ASTC_6X5_UNORM_BLOCK => vk::Format::ASTC_6X5_SRGB_BLOCK,
-        vk::Format::ASTC_6X6_UNORM_BLOCK => vk::Format::ASTC_6X6_SRGB_BLOCK,
-        vk::Format::ASTC_8X5_UNORM_BLOCK => vk::Format::ASTC_8X5_SRGB_BLOCK,
-        vk::Format::ASTC_8X6_UNORM_BLOCK => vk::Format::ASTC_8X6_SRGB_BLOCK,
-        vk::Format::ASTC_8X8_UNORM_BLOCK => vk::Format::ASTC_8X8_SRGB_BLOCK,
-        vk::Format::ASTC_10X5_UNORM_BLOCK => vk::Format::ASTC_10X5_SRGB_BLOCK,
-        vk::Format::ASTC_10X6_UNORM_BLOCK => vk::Format::ASTC_10X6_SRGB_BLOCK,
-        vk::Format::ASTC_10X8_UNORM_BLOCK => vk::Format::ASTC_10X8_SRGB_BLOCK,
-        vk::Format::ASTC_10X10_UNORM_BLOCK => vk::Format::ASTC_10X10_SRGB_BLOCK,
-        vk::Format::ASTC_12X10_UNORM_BLOCK => vk::Format::ASTC_12X10_SRGB_BLOCK,
-        vk::Format::ASTC_12X12_UNORM_BLOCK => vk::Format::ASTC_12X12_SRGB_BLOCK,
-        f => f,
-    }
-}
-
-/// If the `format` is a 'UNORM' format, return the 'SNORM' variant if
-/// there is one.
-fn to_snorm(format: vk::Format) -> vk::Format {
-    match format {
-        vk::Format::R8_UNORM => vk::Format::R8_SNORM,
-        vk::Format::R8G8_UNORM => vk::Format::R8G8_SNORM,
-        vk::Format::R8G8B8_UNORM => vk::Format::R8G8B8_SNORM,
-        vk::Format::R8G8B8A8_UNORM => vk::Format::R8G8B8A8_SNORM,
-        vk::Format::B8G8R8_UNORM => vk::Format::B8G8R8_SNORM,
-        vk::Format::B8G8R8A8_UNORM => vk::Format::B8G8R8A8_SNORM,
-        vk::Format::A8B8G8R8_UNORM_PACK32 => vk::Format::A8B8G8R8_SNORM_PACK32,
-        vk::Format::A2R10G10B10_UNORM_PACK32 => vk::Format::A2R10G10B10_SNORM_PACK32,
-        vk::Format::A2B10G10R10_UNORM_PACK32 => vk::Format::A2B10G10R10_SNORM_PACK32,
-        vk::Format::R16_UNORM => vk::Format::R16_SNORM,
-        vk::Format::R16G16_UNORM => vk::Format::R16G16_SNORM,
-        vk::Format::R16G16B16_UNORM => vk::Format::R16G16B16_SNORM,
-        vk::Format::R16G16B16A16_UNORM => vk::Format::R16G16B16A16_SNORM,
-        vk::Format::BC4_UNORM_BLOCK => vk::Format::BC4_SNORM_BLOCK,
-        vk::Format::BC5_UNORM_BLOCK => vk::Format::BC5_SNORM_BLOCK,
-        vk::Format::EAC_R11_UNORM_BLOCK => vk::Format::EAC_R11_SNORM_BLOCK,
-        vk::Format::EAC_R11G11_UNORM_BLOCK => vk::Format::EAC_R11G11_SNORM_BLOCK,
-        f => f,
     }
 }
 
@@ -130,135 +62,6 @@ pub fn get_image_create_info(extent: vk::Extent3D, mip_levels: u32, format: vk::
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
 }
 
-pub fn create_pixel(
-    device: &Device,
-    staging_arena: &mut VulkanArena<ForBuffers>,
-    uploader: &mut Uploader,
-    arena: &mut VulkanArena<ForImages>,
-    pixels: [u8; 4],
-    kind: TextureKind,
-    debug_identifier: &str,
-) -> Result<ImageView, ImageLoadingError> {
-    let format = kind.convert_format(vk::Format::R8G8B8A8_UNORM);
-    let extent = vk::Extent3D::default().width(1).height(1).depth(1);
-    let &mut Uploader {
-        graphics_queue_family,
-        transfer_queue_family,
-        ..
-    } = uploader;
-
-    let staging_buffer = {
-        profiling::scope!("allocate and create 1px staging buffer");
-        let buffer_size = pixels.len() as vk::DeviceSize;
-        let buffer_create_info = vk::BufferCreateInfo::default()
-            .size(buffer_size)
-            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        staging_arena
-            .create_buffer(
-                buffer_create_info,
-                &pixels,
-                None,
-                None,
-                format_args!("staging buffer for {}", debug_identifier),
-            )
-            .map_err(ImageLoadingError::StagingBufferCreation)?
-    };
-
-    let image_allocation = {
-        profiling::scope!("allocate 1px gpu texture");
-        let image_info = get_image_create_info(extent, 1, format);
-        arena
-            .create_image(image_info, format_args!("{}", debug_identifier))
-            .map_err(ImageLoadingError::ImageCreation)?
-    };
-
-    let subresource_range = vk::ImageSubresourceRange::default()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .base_mip_level(0)
-        .level_count(1)
-        .base_array_layer(0)
-        .layer_count(1);
-
-    uploader
-        .start_upload(
-            staging_buffer,
-            format_args!("{}", debug_identifier),
-            |device, staging_buffer, command_buffer| {
-                profiling::scope!("vk::cmd_copy_buffer_to_image");
-                let barrier_from_undefined_to_transfer_dst = [vk::ImageMemoryBarrier2::default()
-                    .image(image_allocation.inner)
-                    .subresource_range(subresource_range)
-                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .src_access_mask(vk::AccessFlags2::NONE)
-                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::COPY)];
-                let dep_info = vk::DependencyInfo::default().image_memory_barriers(&barrier_from_undefined_to_transfer_dst);
-                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
-                let subresource_layers_dst = vk::ImageSubresourceLayers::default()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .mip_level(0)
-                    .base_array_layer(0)
-                    .layer_count(1);
-                let image_copy_region = vk::BufferImageCopy::default()
-                    .buffer_offset(0)
-                    .buffer_row_length(1)
-                    .buffer_image_height(1)
-                    .image_subresource(subresource_layers_dst)
-                    .image_extent(extent);
-                unsafe {
-                    device.cmd_copy_buffer_to_image(
-                        command_buffer,
-                        staging_buffer.inner,
-                        image_allocation.inner,
-                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                        &[image_copy_region],
-                    );
-                }
-            },
-            |device, command_buffer| {
-                profiling::scope!("record transfer->shader barrier");
-                let barrier_from_transfer_dst_to_shader = [vk::ImageMemoryBarrier2::default()
-                    .image(image_allocation.inner)
-                    .subresource_range(subresource_range)
-                    .src_queue_family_index(transfer_queue_family)
-                    .dst_queue_family_index(graphics_queue_family)
-                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
-                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                    .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)];
-                let dep_info = vk::DependencyInfo::default().image_memory_barriers(&barrier_from_transfer_dst_to_shader);
-                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
-            },
-        )
-        .map_err(ImageLoadingError::StartTextureUpload)?;
-
-    let image_view = {
-        let image_view_create_info = vk::ImageViewCreateInfo::default()
-            .image(image_allocation.inner)
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .format(format)
-            .subresource_range(subresource_range);
-
-        let image_view =
-            unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(ImageLoadingError::ImageViewCreation)?;
-        ImageView {
-            inner: image_view,
-            device: device.clone(),
-            image: Rc::new(image_allocation.into()),
-        }
-    };
-    crate::name_vulkan_object(device, image_view.inner, format_args!("{}", debug_identifier));
-
-    Ok(image_view)
-}
-
 pub fn get_image_data_create_info(image_data: &ImageData, kind: TextureKind) -> Result<vk::ImageCreateInfo<'static>, ImageLoadingError> {
     let ImageData {
         width,
@@ -270,6 +73,25 @@ pub fn get_image_data_create_info(image_data: &ImageData, kind: TextureKind) -> 
     let format = kind.convert_format(*format);
     let extent = vk::Extent3D::default().width(*width).height(*height).depth(1);
     Ok(get_image_create_info(extent, mip_ranges.len() as u32, format))
+}
+
+pub fn create_pixel(
+    device: &Device,
+    staging_arena: &mut VulkanArena<ForBuffers>,
+    uploader: &mut Uploader,
+    arena: &mut VulkanArena<ForImages>,
+    pixels: [u8; 4],
+    kind: TextureKind,
+    debug_identifier: &str,
+) -> Result<ImageView, ImageLoadingError> {
+    let image_data = ImageData {
+        width: 1,
+        height: 1,
+        format: vk::Format::R8G8B8A8_UNORM,
+        pixels: &pixels,
+        mip_ranges: ArrayVec::from_iter([0..pixels.len()]),
+    };
+    load_image(device, staging_arena, uploader, arena, &image_data, kind, debug_identifier)
 }
 
 #[profiling::function]
@@ -425,4 +247,47 @@ pub fn load_image(
     crate::name_vulkan_object(device, image_view.inner, format_args!("{}", debug_identifier));
 
     Ok(image_view)
+}
+
+/// If the `format` is a 'UNORM' format, and has an SRGB variant,
+/// return that.
+///
+/// Does not work for the 3D ASTC ones.
+fn to_srgb(format: vk::Format) -> vk::Format {
+    match format {
+        vk::Format::R8_UNORM => vk::Format::R8_SRGB,
+        vk::Format::R8G8_UNORM => vk::Format::R8G8_SRGB,
+        vk::Format::R8G8B8_UNORM => vk::Format::R8G8B8_SRGB,
+        vk::Format::R8G8B8A8_UNORM => vk::Format::R8G8B8A8_SRGB,
+        vk::Format::B8G8R8_UNORM => vk::Format::B8G8R8_SRGB,
+        vk::Format::B8G8R8A8_UNORM => vk::Format::B8G8R8A8_SRGB,
+        vk::Format::A8B8G8R8_UNORM_PACK32 => vk::Format::A8B8G8R8_SRGB_PACK32,
+        vk::Format::BC2_UNORM_BLOCK => vk::Format::BC2_SRGB_BLOCK,
+        vk::Format::BC3_UNORM_BLOCK => vk::Format::BC3_SRGB_BLOCK,
+        vk::Format::BC7_UNORM_BLOCK => vk::Format::BC7_SRGB_BLOCK,
+        vk::Format::BC1_RGB_UNORM_BLOCK => vk::Format::BC1_RGB_SRGB_BLOCK,
+        vk::Format::BC1_RGBA_UNORM_BLOCK => vk::Format::BC1_RGBA_SRGB_BLOCK,
+        vk::Format::ETC2_R8G8B8_UNORM_BLOCK => vk::Format::ETC2_R8G8B8_SRGB_BLOCK,
+        vk::Format::ETC2_R8G8B8A1_UNORM_BLOCK => vk::Format::ETC2_R8G8B8A1_SRGB_BLOCK,
+        vk::Format::ETC2_R8G8B8A8_UNORM_BLOCK => vk::Format::ETC2_R8G8B8A8_SRGB_BLOCK,
+        vk::Format::PVRTC1_2BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC1_2BPP_SRGB_BLOCK_IMG,
+        vk::Format::PVRTC1_4BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC1_4BPP_SRGB_BLOCK_IMG,
+        vk::Format::PVRTC2_2BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC2_2BPP_SRGB_BLOCK_IMG,
+        vk::Format::PVRTC2_4BPP_UNORM_BLOCK_IMG => vk::Format::PVRTC2_4BPP_SRGB_BLOCK_IMG,
+        vk::Format::ASTC_4X4_UNORM_BLOCK => vk::Format::ASTC_4X4_SRGB_BLOCK,
+        vk::Format::ASTC_5X4_UNORM_BLOCK => vk::Format::ASTC_5X4_SRGB_BLOCK,
+        vk::Format::ASTC_5X5_UNORM_BLOCK => vk::Format::ASTC_5X5_SRGB_BLOCK,
+        vk::Format::ASTC_6X5_UNORM_BLOCK => vk::Format::ASTC_6X5_SRGB_BLOCK,
+        vk::Format::ASTC_6X6_UNORM_BLOCK => vk::Format::ASTC_6X6_SRGB_BLOCK,
+        vk::Format::ASTC_8X5_UNORM_BLOCK => vk::Format::ASTC_8X5_SRGB_BLOCK,
+        vk::Format::ASTC_8X6_UNORM_BLOCK => vk::Format::ASTC_8X6_SRGB_BLOCK,
+        vk::Format::ASTC_8X8_UNORM_BLOCK => vk::Format::ASTC_8X8_SRGB_BLOCK,
+        vk::Format::ASTC_10X5_UNORM_BLOCK => vk::Format::ASTC_10X5_SRGB_BLOCK,
+        vk::Format::ASTC_10X6_UNORM_BLOCK => vk::Format::ASTC_10X6_SRGB_BLOCK,
+        vk::Format::ASTC_10X8_UNORM_BLOCK => vk::Format::ASTC_10X8_SRGB_BLOCK,
+        vk::Format::ASTC_10X10_UNORM_BLOCK => vk::Format::ASTC_10X10_SRGB_BLOCK,
+        vk::Format::ASTC_12X10_UNORM_BLOCK => vk::Format::ASTC_12X10_SRGB_BLOCK,
+        vk::Format::ASTC_12X12_UNORM_BLOCK => vk::Format::ASTC_12X12_SRGB_BLOCK,
+        f => f,
+    }
 }

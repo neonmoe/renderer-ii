@@ -33,7 +33,8 @@ void main() {
         texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
     vec2 metallic_roughness =
         texture(sampler2D(metallic_roughness[push_constant.texture_index], tex_sampler), in_uv).xy;
-    vec4 normal_tex = texture(sampler2D(normal[push_constant.texture_index], tex_sampler), in_uv);
+    vec3 normal_tex =
+        texture(sampler2D(normal[push_constant.texture_index], tex_sampler), in_uv).xyz * 2.0 - 1.0;
     vec4 occlusion = texture(sampler2D(occlusion[push_constant.texture_index], tex_sampler), in_uv);
     vec3 emissive =
         texture(sampler2D(emissive[push_constant.texture_index], tex_sampler), in_uv).xyz;
@@ -51,7 +52,7 @@ void main() {
 
     vec3 bitangent = in_tangent.w * cross(in_normal, in_tangent.xyz);
     mat3 tangent_to_world = mat3(in_tangent.xyz, bitangent, in_normal);
-    vec3 normal = tangent_to_world * normal_tex.xyz;
+    vec3 normal = tangent_to_world * normal_tex;
 
     emissive *= emissive_factor;
     metallic_roughness *= metallic_roughness_factor;
