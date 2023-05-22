@@ -1,18 +1,28 @@
 use crate::arena::{ForBuffers, MemoryProps, VulkanArena, VulkanArenaError};
-use crate::descriptors::Descriptors;
-use crate::framebuffers::Framebuffers;
-use crate::mesh::VERTEX_BUFFERS;
 use crate::physical_device::PhysicalDevice;
-use crate::pipeline_parameters::{MaterialPushConstants, PipelineIndex, PipelineMap, RenderSettings, MAX_BONE_COUNT};
-use crate::pipelines::Pipelines;
-use crate::scene::{Scene, SkinnedModel, StaticMeshMap};
-use crate::swapchain::Swapchain;
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use alloc::rc::Rc;
 use arrayvec::ArrayVec;
 use ash::{vk, Instance};
 use core::fmt::Arguments;
 use glam::Mat4;
+
+pub(crate) mod camera;
+pub(crate) mod descriptors;
+pub(crate) mod framebuffers;
+pub(crate) mod mesh;
+pub(crate) mod pipelines;
+pub(crate) mod scene;
+pub(crate) mod swapchain;
+
+use camera::*;
+use descriptors::*;
+use framebuffers::*;
+use mesh::*;
+use pipelines::pipeline_parameters::*;
+use pipelines::*;
+use scene::*;
+use swapchain::*;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RendererError {
@@ -478,12 +488,12 @@ impl Renderer {
                     .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
             }
 
-            let mut vertex_buffers = ArrayVec::<vk::Buffer, { VERTEX_BUFFERS + 1 }>::new();
+            let mut vertex_buffers = ArrayVec::<vk::Buffer, { mesh::VERTEX_BUFFERS + 1 }>::new();
             vertex_buffers.push(transform_buffer.inner);
             for vertex_buffer in &mesh.vertex_buffers {
                 vertex_buffers.push(vertex_buffer.inner);
             }
-            let mut vertex_offsets = ArrayVec::<vk::DeviceSize, { VERTEX_BUFFERS + 1 }>::new();
+            let mut vertex_offsets = ArrayVec::<vk::DeviceSize, { mesh::VERTEX_BUFFERS + 1 }>::new();
             vertex_offsets.push(0);
             vertex_offsets.try_extend_from_slice(&mesh.vertices_offsets).unwrap();
 
@@ -558,12 +568,12 @@ impl Renderer {
                         .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
                 }
 
-                let mut vertex_buffers = ArrayVec::<vk::Buffer, { VERTEX_BUFFERS + 1 }>::new();
+                let mut vertex_buffers = ArrayVec::<vk::Buffer, { mesh::VERTEX_BUFFERS + 1 }>::new();
                 vertex_buffers.push(transform_buffer.inner);
                 for vertex_buffer in &mesh.vertex_buffers {
                     vertex_buffers.push(vertex_buffer.inner);
                 }
-                let mut vertex_offsets = ArrayVec::<vk::DeviceSize, { VERTEX_BUFFERS + 1 }>::new();
+                let mut vertex_offsets = ArrayVec::<vk::DeviceSize, { mesh::VERTEX_BUFFERS + 1 }>::new();
                 vertex_offsets.push(0);
                 vertex_offsets.try_extend_from_slice(&mesh.vertices_offsets).unwrap();
 

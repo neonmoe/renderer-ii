@@ -1,21 +1,19 @@
-use crate::arena::{ForBuffers, ForImages, VulkanArena};
-use crate::image_loading::{ImageLoadingError, PbrDefaults};
 use crate::physical_device::PhysicalDevice;
-use crate::pipeline_parameters::{
+use crate::renderer::pipelines::pipeline_parameters::{
     DescriptorSetLayoutParams, MaterialPushConstants, PipelineIndex, PipelineMap, PipelineParameters, MAX_BONE_COUNT, MAX_TEXTURE_COUNT,
     PIPELINE_PARAMETERS, SKINNED_PIPELINES,
 };
-use crate::uploader::Uploader;
 use crate::vulkan_raii::{
     Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, Framebuffer, ImageView, PipelineLayout, Sampler,
 };
 use alloc::rc::{Rc, Weak};
 use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
-use bytemuck::{Pod, Zeroable};
-use core::hash::{Hash, Hasher};
 use core::mem;
-use glam::Vec4;
+
+pub(crate) mod material;
+
+use material::{AlphaMode, Material, PipelineSpecificData};
 
 #[derive(thiserror::Error, Debug)]
 pub enum DescriptorError {
@@ -31,11 +29,9 @@ pub enum DescriptorError {
     DescriptorPoolCreation(#[source] vk::Result),
     #[error("failed to allocate descriptor sets")]
     AllocateDescriptorSets(#[source] vk::Result),
-    #[error("failed to create fallback textures for materials")]
-    CreateMaterialDefaultTextures(#[source] ImageLoadingError),
 }
 
-const MAX_PIPELINES_PER_MATERIAL: usize = 2;
+pub(crate) const MAX_PIPELINES_PER_MATERIAL: usize = 2;
 fn get_pipelines(data: &PipelineSpecificData) -> ArrayVec<PipelineIndex, MAX_PIPELINES_PER_MATERIAL> {
     use PipelineIndex::*;
     match data {
@@ -47,102 +43,12 @@ fn get_pipelines(data: &PipelineSpecificData) -> ArrayVec<PipelineIndex, MAX_PIP
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct GltfFactors {
-    /// (r, g, b, a).
-    pub base_color: Vec4,
-    /// (r, g, b, _). Vec4 to make sure there's no padding/alignment issues.
-    pub emissive: Vec4,
-    /// (metallic, roughness, alpha_cutoff, _). Vec4 to make sure there's no padding.
-    pub metallic_roughness_alpha_cutoff: Vec4,
-}
-// Mat4's are Pods, therefore they are Zeroable, therefore this is too.
-unsafe impl Zeroable for GltfFactors {}
-// repr(c), the contents are Pods, and there's no padding.
-unsafe impl Pod for GltfFactors {}
-
-#[derive(Clone, Copy)]
-pub enum AlphaMode {
-    Opaque,
-    AlphaToCoverage,
-    Blend,
-}
-
-#[derive(Clone)]
-pub enum PipelineSpecificData {
-    Gltf {
-        base_color: Option<Rc<ImageView>>,
-        metallic_roughness: Option<Rc<ImageView>>,
-        normal: Option<Rc<ImageView>>,
-        occlusion: Option<Rc<ImageView>>,
-        emissive: Option<Rc<ImageView>>,
-        /// (Buffer, offset, size) that contains a [GltfFactors].
-        factors: (Rc<Buffer>, vk::DeviceSize, vk::DeviceSize),
-        alpha_mode: AlphaMode,
-    },
-}
-
-/// A unique index into one pipeline's textures and other material data.
-pub struct Material {
-    pub name: ArrayString<64>,
-    array_indices: ArrayVec<(PipelineIndex, u32), MAX_PIPELINES_PER_MATERIAL>,
-    data: PipelineSpecificData,
-}
-
-impl Material {
-    pub fn new(descriptors: &mut Descriptors, data: PipelineSpecificData, name: ArrayString<64>) -> Result<Rc<Material>, DescriptorError> {
-        profiling::scope!("material slot reservation");
-        let array_indices = get_pipelines(&data)
-            .iter()
-            .map(|&pipeline| {
-                let (i, _) = descriptors.material_slots_per_pipeline[pipeline]
-                    .iter_mut()
-                    .enumerate()
-                    .find(|(_, slot)| slot.is_none())
-                    .ok_or(DescriptorError::MaterialIndexReserve)?;
-                Ok((pipeline, i as u32))
-            })
-            .collect::<Result<ArrayVec<(PipelineIndex, u32), MAX_PIPELINES_PER_MATERIAL>, _>>()?;
-        let material = Rc::new(Material { name, array_indices, data });
-        for &(pipeline, index) in &material.array_indices {
-            descriptors.material_slots_per_pipeline[pipeline][index as usize] = Some(Rc::downgrade(&material));
-            descriptors.material_updated_per_pipeline[pipeline][index as usize] = false;
-        }
-        Ok(material)
-    }
-
-    pub(crate) fn array_index(&self, pipeline: PipelineIndex) -> Option<u32> {
-        for &(pipeline_, index) in &self.array_indices {
-            if pipeline == pipeline_ {
-                return Some(index);
-            }
-        }
-        None
-    }
-
-    pub fn pipeline(&self, skinned: bool) -> PipelineIndex {
-        for &(pipeline, _) in &self.array_indices {
-            if pipeline.skinned() == skinned {
-                return pipeline;
-            }
-        }
-        // The array_indices vec is filled out with get_pipelines(), which
-        // always returns both a skinned and a non-skinned pipeline.
-        unreachable!()
-    }
-}
-
-impl PartialEq for Material {
-    fn eq(&self, other: &Self) -> bool {
-        self.array_indices == other.array_indices
-    }
-}
-impl Eq for Material {}
-impl Hash for Material {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.array_indices.hash(state);
-    }
+pub struct PbrDefaults {
+    pub base_color: ImageView,
+    pub metallic_roughness: ImageView,
+    pub normal: ImageView,
+    pub occlusion: ImageView,
+    pub emissive: ImageView,
 }
 
 type MaterialSlot = Option<Weak<Material>>;
@@ -174,14 +80,31 @@ pub struct Descriptors {
     material_updated_per_pipeline: PipelineMap<ArrayVec<bool, { MAX_TEXTURE_COUNT as usize }>>,
 }
 
+impl Material {
+    pub fn new(descriptors: &mut Descriptors, data: PipelineSpecificData, name: ArrayString<64>) -> Result<Rc<Material>, DescriptorError> {
+        profiling::scope!("material slot reservation");
+        let array_indices = get_pipelines(&data)
+            .iter()
+            .map(|&pipeline| {
+                let (i, _) = descriptors.material_slots_per_pipeline[pipeline]
+                    .iter_mut()
+                    .enumerate()
+                    .find(|(_, slot)| slot.is_none())
+                    .ok_or(DescriptorError::MaterialIndexReserve)?;
+                Ok((pipeline, i as u32))
+            })
+            .collect::<Result<ArrayVec<(PipelineIndex, u32), MAX_PIPELINES_PER_MATERIAL>, _>>()?;
+        let material = Rc::new(Material { name, array_indices, data });
+        for &(pipeline, index) in &material.array_indices {
+            descriptors.material_slots_per_pipeline[pipeline][index as usize] = Some(Rc::downgrade(&material));
+            descriptors.material_updated_per_pipeline[pipeline][index as usize] = false;
+        }
+        Ok(material)
+    }
+}
+
 impl Descriptors {
-    pub fn new(
-        device: &Device,
-        physical_device: &PhysicalDevice,
-        pbr_defaults_staging_arena: &mut VulkanArena<ForBuffers>,
-        pbr_defaults_uploader: &mut Uploader,
-        pbr_defaults_arena: &mut VulkanArena<ForImages>,
-    ) -> Result<Descriptors, DescriptorError> {
+    pub fn new(device: &Device, physical_device: &PhysicalDevice, pbr_defaults: PbrDefaults) -> Result<Descriptors, DescriptorError> {
         profiling::scope!("creating descriptor sets");
         let sampler_create_info = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::LINEAR)
@@ -316,9 +239,6 @@ impl Descriptors {
             Ok(ArrayVec::from_iter([None].into_iter().cycle().take(MAX_TEXTURE_COUNT as usize)))
         })?;
         let material_updated_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| Ok([true; MAX_TEXTURE_COUNT as usize].into()))?;
-
-        let pbr_defaults = PbrDefaults::new(device, pbr_defaults_staging_arena, pbr_defaults_uploader, pbr_defaults_arena)
-            .map_err(DescriptorError::CreateMaterialDefaultTextures)?;
 
         Ok(Descriptors {
             pipeline_layouts,

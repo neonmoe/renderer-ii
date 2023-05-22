@@ -1,16 +1,16 @@
 use crate::arena::{ForBuffers, ForImages, VulkanArena, VulkanArenaError};
-use crate::memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use crate::uploader::{UploadError, Uploader};
 use crate::vulkan_raii::{Device, ImageView};
 use alloc::rc::Rc;
+use arrayvec::ArrayVec;
 use ash::vk;
+use core::ops::Range;
 
 pub mod ntex;
+pub mod pbr_defaults;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ImageLoadingError {
-    #[error("failed to decode ntex file")]
-    Ntex(#[source] ntex::NtexDecodeError),
     #[error("failed to create staging buffer for the image")]
     StagingBufferCreation(#[source] VulkanArenaError),
     #[error("failed to create the image")]
@@ -21,6 +21,16 @@ pub enum ImageLoadingError {
     ImageViewCreation(#[source] vk::Result),
 }
 
+pub struct ImageData<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub format: vk::Format,
+    /// Note: not necessarily actual pixels, just the pixel data.
+    pub pixels: &'a [u8],
+    /// The ranges from `pixels` that represent different mip levels.
+    pub mip_ranges: ArrayVec<Range<usize>, 16>,
+}
+
 #[derive(Clone, Copy)]
 pub enum TextureKind {
     SrgbColor,
@@ -29,7 +39,7 @@ pub enum TextureKind {
 }
 
 impl TextureKind {
-    fn convert_format(self, format: vk::Format) -> vk::Format {
+    pub fn convert_format(self, format: vk::Format) -> vk::Format {
         match self {
             TextureKind::SrgbColor => to_srgb(format),
             TextureKind::NormalMap => to_snorm(format),
@@ -106,62 +116,7 @@ fn to_snorm(format: vk::Format) -> vk::Format {
     }
 }
 
-const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
-const BLACK: [u8; 4] = [0, 0, 0, 0xFF];
-const NORMAL_Z: [u8; 4] = [0, 0, 0b01111111, 0];
-const M_AND_R: [u8; 4] = [0, 0x88, 0, 0];
-
-pub struct PbrDefaults {
-    pub base_color: ImageView,
-    pub metallic_roughness: ImageView,
-    pub normal: ImageView,
-    pub occlusion: ImageView,
-    pub emissive: ImageView,
-}
-
-impl PbrDefaults {
-    pub fn new(
-        device: &Device,
-        staging_arena: &mut VulkanArena<ForBuffers>,
-        uploader: &mut Uploader,
-        arena: &mut VulkanArena<ForImages>,
-    ) -> Result<PbrDefaults, ImageLoadingError> {
-        profiling::scope!("pbr default textures creation");
-
-        let mut create_pixel = |color, kind, name| create_pixel(device, staging_arena, uploader, arena, color, kind, name);
-        let base_color = create_pixel(WHITE, TextureKind::SrgbColor, "default pbr base color")?;
-        let metallic_roughness = create_pixel(M_AND_R, TextureKind::LinearColor, "default pbr metallic/roughness")?;
-        let normal = create_pixel(NORMAL_Z, TextureKind::NormalMap, "default pbr normals")?;
-        let occlusion = create_pixel(WHITE, TextureKind::LinearColor, "default pbr occlusion")?;
-        let emissive = create_pixel(BLACK, TextureKind::SrgbColor, "default pbr emissive")?;
-
-        Ok(PbrDefaults {
-            base_color,
-            metallic_roughness,
-            normal,
-            occlusion,
-            emissive,
-        })
-    }
-
-    pub fn measure(measurer: &mut VulkanArenaMeasurer<ForImages>) -> Result<(), VulkanArenaMeasurementError> {
-        for kind in [
-            TextureKind::SrgbColor,   // Base color
-            TextureKind::LinearColor, // Metallic/roughness
-            TextureKind::NormalMap,   // Normals
-            TextureKind::LinearColor, // Ambient occlusion
-            TextureKind::SrgbColor,   // Emissive
-        ] {
-            let format = kind.convert_format(vk::Format::R8G8B8A8_UNORM);
-            let extent = vk::Extent3D::default().width(1).height(1).depth(1);
-            let image_create_info = get_image_create_info(extent, 1, format);
-            measurer.add_image(image_create_info)?;
-        }
-        Ok(())
-    }
-}
-
-fn get_image_create_info(extent: vk::Extent3D, mip_levels: u32, format: vk::Format) -> vk::ImageCreateInfo<'static> {
+pub fn get_image_create_info(extent: vk::Extent3D, mip_levels: u32, format: vk::Format) -> vk::ImageCreateInfo<'static> {
     vk::ImageCreateInfo::default()
         .image_type(vk::ImageType::TYPE_2D)
         .extent(extent)
@@ -175,7 +130,7 @@ fn get_image_create_info(extent: vk::Extent3D, mip_levels: u32, format: vk::Form
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
 }
 
-fn create_pixel(
+pub fn create_pixel(
     device: &Device,
     staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
@@ -304,36 +259,33 @@ fn create_pixel(
     Ok(image_view)
 }
 
-pub fn get_ntex_create_info(bytes: &[u8], kind: TextureKind) -> Result<vk::ImageCreateInfo, ImageLoadingError> {
-    let ntex::NtexData {
+pub fn get_image_data_create_info(image_data: &ImageData, kind: TextureKind) -> Result<vk::ImageCreateInfo<'static>, ImageLoadingError> {
+    let ImageData {
         width,
         height,
         format,
         mip_ranges,
         ..
-    } = ntex::decode(bytes).map_err(ImageLoadingError::Ntex)?;
-    let format = kind.convert_format(format);
-    let extent = vk::Extent3D::default().width(width).height(height).depth(1);
+    } = image_data;
+    let format = kind.convert_format(*format);
+    let extent = vk::Extent3D::default().width(*width).height(*height).depth(1);
     Ok(get_image_create_info(extent, mip_ranges.len() as u32, format))
 }
 
 #[profiling::function]
-pub fn load_ntex(
+pub fn load_image(
     device: &Device,
     staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
-    bytes: &[u8],
+    image_data: &ImageData,
     kind: TextureKind,
     debug_identifier: &str,
 ) -> Result<ImageView, ImageLoadingError> {
-    let ntex::NtexData {
-        width,
-        height,
-        format,
-        pixels,
-        mip_ranges,
-    } = ntex::decode(bytes).map_err(ImageLoadingError::Ntex)?;
+    let ImageData { width, height, format, .. } = *image_data;
+    let pixels = &image_data.pixels;
+    let mip_ranges = &image_data.mip_ranges;
+
     let format = kind.convert_format(format);
     let extent = vk::Extent3D::default().width(width).height(height).depth(1);
     let &mut Uploader {

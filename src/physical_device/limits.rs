@@ -1,6 +1,6 @@
 //! VkPhysicalDeviceLimits checks that can be made against PipelinesParameters.
 
-use crate::pipeline_parameters::{MaterialPushConstants, PipelineParameters, PIPELINE_PARAMETERS};
+use crate::renderer::pipelines::pipeline_parameters::{MaterialPushConstants, PipelineParameters, PIPELINE_PARAMETERS};
 use ash::vk;
 
 #[derive(Debug, thiserror::Error)]

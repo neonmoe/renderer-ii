@@ -1,13 +1,11 @@
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
-use crate::physical_device::PhysicalDevice;
-use crate::pipelines::{AttachmentLayout, Pipelines};
-use crate::swapchain::Swapchain;
+use crate::physical_device::{PhysicalDevice, HDR_COLOR_ATTACHMENT_FORMAT};
+use crate::renderer::pipelines::AttachmentLayout;
+use crate::renderer::{Pipelines, Swapchain};
 use crate::vulkan_raii::{AnyImage, Device, Framebuffer, ImageView};
 use alloc::rc::Rc;
 use arrayvec::ArrayVec;
 use ash::{vk, Instance};
-
-pub const HDR_COLOR_ATTACHMENT_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 
 #[derive(thiserror::Error, Debug)]
 pub enum FramebufferCreationError {

@@ -1,6 +1,4 @@
-use crate::error::Error;
-use ash::vk;
-use ash::{Device, Instance};
+use ash::{vk, Instance};
 
 #[derive(Debug)]
 pub struct SupportedFeatures {
@@ -13,11 +11,11 @@ pub struct SupportedFeatures {
     synchronization2: bool,
 }
 
-pub fn create_device_with_feature_requirements(
+pub fn create_with_features(
     instance: &Instance,
     physical_device: vk::PhysicalDevice,
     device_create_info: vk::DeviceCreateInfo,
-) -> Result<Device, Error> {
+) -> Result<ash::Device, vk::Result> {
     // Note: requested features should match what is checked in has_required_features
     let features = vk::PhysicalDeviceFeatures::default()
         .sampler_anisotropy(true)
@@ -36,7 +34,7 @@ pub fn create_device_with_feature_requirements(
         .enabled_features(&features);
     {
         profiling::scope!("vk::create_device");
-        unsafe { instance.create_device(physical_device, &device_create_info, None) }.map_err(Error::DeviceCreation)
+        unsafe { instance.create_device(physical_device, &device_create_info, None) }
     }
 }
 

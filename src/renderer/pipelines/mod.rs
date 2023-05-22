@@ -1,14 +1,16 @@
-use crate::descriptors::Descriptors;
-use crate::framebuffers::HDR_COLOR_ATTACHMENT_FORMAT;
-use crate::physical_device::PhysicalDevice;
-use crate::pipeline_parameters::{PipelineIndex, PipelineMap, Shader, ALL_PIPELINES, PIPELINE_PARAMETERS};
+use crate::physical_device::{PhysicalDevice, HDR_COLOR_ATTACHMENT_FORMAT};
+use crate::renderer::descriptors::Descriptors;
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout, RenderPass};
 use alloc::rc::Rc;
 use arrayvec::ArrayVec;
 use ash::vk;
 use hashbrown::HashMap;
 
-pub(crate) enum AttachmentLayout {
+pub mod pipeline_parameters;
+
+use pipeline_parameters::*;
+
+pub enum AttachmentLayout {
     /// Attachments:
     /// - hdr color,
     /// - depth,

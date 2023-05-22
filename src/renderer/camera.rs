@@ -1,27 +1,12 @@
-use bytemuck::{Pod, Zeroable};
+use crate::renderer::pipelines::pipeline_parameters::ProjViewTransforms;
 use glam::{Mat4, Quat, Vec3};
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct GlobalTransforms {
-    _projection: Mat4,
-    _view: Mat4,
-}
-
-// Mat4's are Pods, therefore they are Zeroable, therefore this is too.
-unsafe impl Zeroable for GlobalTransforms {}
-
-// repr(c) + Mat4's are Pods since glam has the bytemuck feature enabled.
-unsafe impl Pod for GlobalTransforms {}
-
-impl GlobalTransforms {
-    fn new(camera_transform: Mat4, width: f32, height: f32, near: f32, far: f32) -> GlobalTransforms {
-        let fov = 74f32.to_radians();
-        let aspect_ratio = width / height;
-        GlobalTransforms {
-            _projection: reverse_z_rh_projection(fov, aspect_ratio, near, far),
-            _view: camera_transform.inverse(),
-        }
+fn create_proj_view(camera_transform: Mat4, width: f32, height: f32, near: f32, far: f32) -> ProjViewTransforms {
+    let fov = 74f32.to_radians();
+    let aspect_ratio = width / height;
+    ProjViewTransforms {
+        projection: reverse_z_rh_projection(fov, aspect_ratio, near, far),
+        view: camera_transform.inverse(),
     }
 }
 
@@ -68,8 +53,8 @@ impl Default for Camera {
 
 impl Camera {
     #[profiling::function]
-    pub(crate) fn create_global_transforms(&self, width: f32, height: f32) -> GlobalTransforms {
-        GlobalTransforms::new(
+    pub(crate) fn create_global_transforms(&self, width: f32, height: f32) -> ProjViewTransforms {
+        create_proj_view(
             Mat4::from_rotation_translation(self.orientation, self.position),
             width,
             height,

@@ -1,4 +1,4 @@
-use crate::image_loading::{self, ImageLoadingError, TextureKind};
+use crate::image_loading::{self, ntex, ImageLoadingError, TextureKind};
 use crate::{gltf_json, GltfLoadingError};
 use ash::vk;
 use neonvk::{ForBuffers, ForImages, GltfFactors, VulkanArenaMeasurementError, VulkanArenaMeasurer};
@@ -81,7 +81,12 @@ fn measure(
         let bytes = crate::load_image_bytes(&mut memmap_holder, resource_path, bin_buffer, image, &gltf)
             .map_err(GltfMemoryMeasurementError::GltfLoading)?;
         let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
-        let image_create_info = image_loading::get_ntex_create_info(bytes, kind).map_err(GltfMemoryMeasurementError::ImageLoading)?;
+        let name = image.uri.as_deref().unwrap_or("glb binary buffer");
+        let image_data = ntex::decode(bytes)
+            .map_err(|err| GltfLoadingError::NtexDecoding(err, name.to_string()))
+            .map_err(GltfMemoryMeasurementError::GltfLoading)?;
+        let image_create_info =
+            image_loading::get_image_data_create_info(&image_data, kind).map_err(GltfMemoryMeasurementError::ImageLoading)?;
         image_measurer
             .add_image(image_create_info)
             .map_err(GltfMemoryMeasurementError::VulkanArenaMeasurement)?;

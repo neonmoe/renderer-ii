@@ -1,12 +1,8 @@
-use crate::descriptors::Material;
-use crate::mesh::Mesh;
+use crate::renderer::descriptors::material::Material;
 use crate::physical_device::PhysicalDevice;
-use crate::pipeline_parameters::{PipelineIndex, PipelineMap};
+use crate::renderer::{Camera, Mesh, PipelineIndex, PipelineMap};
 use glam::Mat4;
 use hashbrown::HashMap;
-
-pub(crate) mod camera;
-pub use camera::Camera;
 
 pub struct JointOffset(pub(crate) u32);
 

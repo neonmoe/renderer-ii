@@ -1,6 +1,3 @@
-use crate::framebuffers::HDR_COLOR_ATTACHMENT_FORMAT;
-use crate::physical_device_features::{self, SupportedFeatures};
-use crate::pipeline_parameters::limits::{self, PhysicalDeviceLimitBreak};
 use arrayvec::ArrayVec;
 use ash::extensions::khr;
 use ash::vk;
@@ -8,6 +5,15 @@ use ash::{Entry, Instance};
 use core::ffi::CStr;
 use core::fmt::{self, Display, Formatter};
 use std::error::Error;
+
+mod device_creation;
+pub mod limits;
+mod physical_device_features;
+
+use limits::PhysicalDeviceLimitBreak;
+use physical_device_features::SupportedFeatures;
+
+pub const HDR_COLOR_ATTACHMENT_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 
 #[derive(thiserror::Error, Debug)]
 pub enum PhysicalDeviceRejectionReason {

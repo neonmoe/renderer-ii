@@ -1,7 +1,7 @@
+use crate::image_loading::ImageData;
 use arrayvec::ArrayVec;
 use ash::vk;
 use core::convert::TryInto;
-use core::ops::Range;
 
 #[derive(thiserror::Error, Debug)]
 pub enum NtexDecodeError {
@@ -15,18 +15,8 @@ pub enum NtexDecodeError {
     FileLength { expected: usize, actual: usize },
 }
 
-pub struct NtexData<'a> {
-    pub width: u32,
-    pub height: u32,
-    pub format: vk::Format,
-    /// Note: not necessarily actual pixels, just the pixel data.
-    pub pixels: &'a [u8],
-    /// The ranges from `pixels` that represent different mip levels.
-    pub mip_ranges: ArrayVec<Range<usize>, 16>,
-}
-
 #[profiling::function]
-pub fn decode(bytes: &[u8]) -> Result<NtexData, NtexDecodeError> {
+pub fn decode(bytes: &[u8]) -> Result<ImageData, NtexDecodeError> {
     if &bytes[0..40] != b"The GPU decodable image container format" || bytes.len() < 1024 {
         return Err(NtexDecodeError::InvalidHeader);
     }
@@ -67,7 +57,7 @@ pub fn decode(bytes: &[u8]) -> Result<NtexData, NtexDecodeError> {
         });
     }
 
-    Ok(NtexData {
+    Ok(ImageData {
         width,
         height,
         format: vk::Format::from_raw(format as i32),

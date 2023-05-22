@@ -17,7 +17,6 @@ macro_rules! cstr {
 // internal modules:
 
 mod debug_utils;
-mod physical_device_features;
 
 use debug_utils::*;
 
@@ -48,15 +47,6 @@ mod arena;
 pub use arena::{ForBuffers, ForImages, MemoryProps, VulkanArena, VulkanArenaError};
 
 pub use ash::vk;
-
-mod framebuffers;
-pub use framebuffers::Framebuffers;
-
-mod descriptors;
-pub use descriptors::{AlphaMode, DescriptorError, Descriptors, GltfFactors, Material, PipelineSpecificData};
-
-mod device;
-pub use device::create_device;
 
 mod display_utils {
     use core::fmt::{Display, Formatter, Result};
@@ -91,35 +81,26 @@ pub mod include_words;
 mod instance;
 pub use instance::Instance;
 
-mod error;
-pub use error::Error;
-
 mod memory_measurement {
     mod arena;
     pub use arena::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 }
 pub use memory_measurement::*;
 
-mod mesh;
-pub use mesh::Mesh;
-
 mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 
-mod pipelines;
-pub use pipelines::Pipelines;
-
-mod pipeline_parameters;
-pub use pipeline_parameters::PipelineIndex;
-
 mod renderer;
-pub use renderer::{FrameIndex, Renderer, RendererError};
-
-mod scene;
-pub use scene::{Camera, Scene, SkinnedModel, StaticMeshMap};
+pub use renderer::descriptors::material::{AlphaMode, GltfFactors, Material, PipelineSpecificData};
+pub use renderer::descriptors::{DescriptorError, Descriptors, PbrDefaults};
+pub use renderer::framebuffers::{FramebufferCreationError, Framebuffers};
+pub use renderer::mesh::Mesh;
+pub use renderer::pipelines::{PipelineCreationError, Pipelines};
+pub use renderer::scene::{JointOffset, Scene, SkinnedModel, StaticMeshMap};
+pub use renderer::swapchain::{Swapchain, SwapchainBase, SwapchainError, SwapchainSettings};
+pub use renderer::{Renderer, RendererError};
 
 mod surface {
-    use crate::Error;
     use ash::extensions::khr;
     use ash::{Entry, Instance};
     use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
@@ -131,11 +112,10 @@ mod surface {
         instance: &Instance,
         display: &dyn HasRawDisplayHandle,
         window: &dyn HasRawWindowHandle,
-    ) -> Result<Surface, Error> {
+    ) -> Result<Surface, ash::vk::Result> {
         profiling::scope!("window surface creation");
         let surface =
-            unsafe { ash_window::create_surface(entry, instance, display.raw_display_handle(), window.raw_window_handle(), None) }
-                .map_err(Error::SurfaceCreation)?;
+            unsafe { ash_window::create_surface(entry, instance, display.raw_display_handle(), window.raw_window_handle(), None) }?;
         let surface_ext = khr::Surface::new(entry, instance);
         Ok(Surface {
             inner: surface,
@@ -144,9 +124,6 @@ mod surface {
     }
 }
 pub use surface::{create_surface, Surface};
-
-mod swapchain;
-pub use swapchain::{Swapchain, SwapchainBase, SwapchainSettings};
 
 mod uploader;
 pub use uploader::Uploader;

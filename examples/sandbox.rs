@@ -375,7 +375,7 @@ fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
 fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mutex: Arc<Mutex<SharedState>>) -> anyhow::Result<()> {
     let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner);
     let physical_device = physical_devices.remove(0)?;
-    let device = neonvk::create_device(&instance.inner, &physical_device)?;
+    let device = physical_device.create_device(&instance.inner)?;
 
     let msaa_samples = neonvk::vk::SampleCountFlags::TYPE_4;
     if !physical_device
@@ -412,7 +412,9 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
     };
     let mut assets_buffers_measurer = neonvk::VulkanArenaMeasurer::new(&device);
     let mut assets_textures_measurer = neonvk::VulkanArenaMeasurer::new(&device);
-    neonvk::image_loading::PbrDefaults::measure(&mut assets_textures_measurer)?;
+    for image_create_info in neonvk::image_loading::pbr_defaults::all_defaults_create_infos() {
+        assets_textures_measurer.add_image(image_create_info)?;
+    }
     gltf::measure_gltf_memory_usage(
         (&mut assets_buffers_measurer, &mut assets_textures_measurer),
         &resources_path.join("sponza/glTF/Sponza.gltf"),
@@ -462,7 +464,8 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
 
     print_memory_usage("after arena creation");
 
-    let mut descriptors = neonvk::Descriptors::new(&device, &physical_device, &mut staging_arena, &mut uploader, &mut texture_arena)?;
+    let pbr_defaults = neonvk::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena)?;
+    let mut descriptors = neonvk::Descriptors::new(&device, &physical_device, pbr_defaults)?;
 
     let upload_start = Instant::now();
     let sponza_model = gltf::Gltf::from_gltf(
@@ -590,7 +593,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
 
         if recreate_swapchain {
             profiling::scope!("handle resize");
-            device.wait_idle()?;
+            device.wait_idle();
             drop(framebuffers);
             swapchain.recreate(&device, &physical_device, &swapchain_settings)?;
             pipelines = neonvk::Pipelines::new(
@@ -637,7 +640,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
 
     {
         profiling::scope!("wait for gpu to be idle before exit");
-        device.wait_idle()?;
+        device.wait_idle();
     }
 
     print_memory_usage("after ending the rendering loop");

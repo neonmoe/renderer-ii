@@ -8,7 +8,7 @@ use core::ops::Range;
 use glam::{Mat4, Quat, Vec3, Vec4};
 use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
-use neonvk::image_loading::{self, ImageLoadingError, TextureKind};
+use neonvk::image_loading::{self, ntex, ImageLoadingError, TextureKind};
 use neonvk::{
     AlphaMode, Buffer, DescriptorError, Descriptors, Device, ForBuffers, ForImages, GltfFactors, ImageView, Material, Mesh,
     PipelineSpecificData, Uploader, VulkanArena, VulkanArenaError,
@@ -69,6 +69,8 @@ pub enum GltfLoadingError {
     BufferCreationFromGlb(#[source] VulkanArenaError),
     #[error("failed to create a buffer for gltf from the material parameters")]
     BufferCreationFromMaterialParameters(#[source] VulkanArenaError),
+    #[error("failed to decode ntex {1}")]
+    NtexDecoding(#[source] ntex::NtexDecodeError, String),
     #[error("failed to load image {1}")]
     ImageLoading(#[source] ImageLoadingError, String),
     #[error("failed to create material")]
@@ -460,11 +462,12 @@ fn create_gltf(
     let mut images = Vec::with_capacity(gltf.images.len());
     for (i, image) in gltf.images.iter().enumerate() {
         profiling::scope!("uploading image", &format!("file: {:?}", image.uri));
-        let bytes = load_image_bytes(&mut memmap_holder, resource_path, bin_buffer, image, &gltf)?;
-        let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
         let name = image.uri.as_deref().unwrap_or("glb binary buffer");
+        let bytes = load_image_bytes(&mut memmap_holder, resource_path, bin_buffer, image, &gltf)?;
+        let image_data = ntex::decode(bytes).map_err(|err| GltfLoadingError::NtexDecoding(err, name.to_string()))?;
+        let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
         images.push(Rc::new(
-            image_loading::load_ntex(device, staging_arena, uploader, image_arena, bytes, kind, name)
+            image_loading::load_image(device, staging_arena, uploader, image_arena, &image_data, kind, name)
                 .map_err(|err| GltfLoadingError::ImageLoading(err, name.to_string()))?,
         ));
     }

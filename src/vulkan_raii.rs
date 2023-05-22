@@ -46,8 +46,8 @@ impl Device {
     /// recreation and after the game loop is over to make sure none of the
     /// resources are in use before destroying anything.
     #[profiling::function]
-    pub fn wait_idle(&self) -> Result<(), crate::Error> {
-        unsafe { self.inner.device_wait_idle() }.map_err(crate::Error::DeviceWaitIdle)
+    pub fn wait_idle(&self) {
+        unsafe { self.inner.device_wait_idle() }.unwrap()
     }
 }
 

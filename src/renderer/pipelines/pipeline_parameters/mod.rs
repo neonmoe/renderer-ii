@@ -1,33 +1,35 @@
-use crate::descriptors::GltfFactors;
-use crate::scene::camera::GlobalTransforms;
+use crate::renderer::descriptors::material::GltfFactors;
 use ash::vk;
+use bytemuck::{Pod, Zeroable};
 use core::mem::{self, MaybeUninit};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
 mod constants;
-pub mod limits;
 
 pub use constants::*;
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct ProjViewTransforms {
+    pub projection: Mat4,
+    pub view: Mat4,
+}
+
 /// The per-frame uniform buffer.
-#[derive(Clone, Copy)]
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 pub struct RenderSettings {
     // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
     pub debug_value: u32,
 }
 
-unsafe impl bytemuck::Zeroable for RenderSettings {}
-unsafe impl bytemuck::Pod for RenderSettings {}
-
 /// The per-material uniform buffer.
-#[derive(Clone, Copy)]
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 pub struct MaterialPushConstants {
     // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
     pub texture_index: u32,
 }
-
-unsafe impl bytemuck::Zeroable for MaterialPushConstants {}
-unsafe impl bytemuck::Pod for MaterialPushConstants {}
 
 pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
     PipelineIndex::Opaque,
@@ -163,7 +165,7 @@ pub(crate) enum Shader {
 macro_rules! shader {
     ($shader_name:literal) => {{
         use crate::include_words;
-        static SPIRV: &[u32] = include_words!(concat!("../../shaders/spirv/", $shader_name, ".spv"));
+        static SPIRV: &[u32] = include_words!(concat!("../../../../shaders/spirv/", $shader_name, ".spv"));
         ($shader_name, SPIRV)
     }};
 }
@@ -296,7 +298,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::VERTEX,
         binding_flags: vk::DescriptorBindingFlags::empty(),
-        descriptor_size: Some(mem::size_of::<GlobalTransforms>() as vk::DeviceSize),
+        descriptor_size: Some(mem::size_of::<ProjViewTransforms>() as vk::DeviceSize),
     },
     DescriptorSetLayoutParams {
         binding: 1,
