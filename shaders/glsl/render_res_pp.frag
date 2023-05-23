@@ -19,6 +19,14 @@ vec3 aces(vec3 x) {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0, 1);
 }
 
+vec3 reinhard(vec3 x) {
+    // These weights seem good, source: https://en.wikipedia.org/wiki/Relative_luminance
+    float luminance = 0.2126 * x.r + 0.7152 * x.g + 0.0722 * x.b;
+    // Reinhard tonemapping: https://en.wikipedia.org/wiki/Tone_mapping
+    float tonemapped_luminance = luminance / (1.0 + luminance);
+    return x / luminance * tonemapped_luminance;
+}
+
 void main() {
     // Handles post-processing effects that are done before MSAA resolve and down/upsampling passes:
     // - Tonemapping
@@ -28,15 +36,6 @@ void main() {
 #else
     vec3 linear = subpassLoad(in_color).rgb;
 #endif
-    if (uf_render_settings.debug_value == 6) {
-        out_color = vec4(aces(linear), 1.0);
-    } else if (uf_render_settings.debug_value == 7) {
-        out_color = vec4(clamp(linear, 0, 1), 1.0);
-    } else {
-        // These weights seem good, source: https://en.wikipedia.org/wiki/Relative_luminance
-        float luminance = 0.2126 * linear.r + 0.7152 * linear.g + 0.0722 * linear.b;
-        // Reinhard tonemapping: https://en.wikipedia.org/wiki/Tone_mapping
-        float tonemapped_luminance = luminance / (1.0 + luminance);
-        out_color = vec4(linear / luminance * tonemapped_luminance, 1.0);
-    }
+    float exposure = 0.8;
+    out_color = vec4(aces(linear * exposure), 1.0);
 }
