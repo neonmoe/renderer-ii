@@ -10,7 +10,7 @@ use glam::Vec4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-pub struct GltfFactors {
+pub struct PbrFactors {
     /// (r, g, b, a).
     pub base_color: Vec4,
     /// (r, g, b, _). Vec4 to make sure there's no padding/alignment issues.
@@ -28,13 +28,13 @@ pub enum AlphaMode {
 
 #[derive(Clone)]
 pub enum PipelineSpecificData {
-    Gltf {
+    Pbr {
         base_color: Option<Rc<ImageView>>,
         metallic_roughness: Option<Rc<ImageView>>,
         normal: Option<Rc<ImageView>>,
         occlusion: Option<Rc<ImageView>>,
         emissive: Option<Rc<ImageView>>,
-        /// (Buffer, offset, size) that contains a [GltfFactors].
+        /// (Buffer, offset, size) that contains a [PbrFactors].
         factors: (Rc<Buffer>, vk::DeviceSize, vk::DeviceSize),
         alpha_mode: AlphaMode,
     },

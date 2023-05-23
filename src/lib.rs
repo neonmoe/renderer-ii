@@ -20,9 +20,6 @@ mod debug_utils;
 
 use debug_utils::*;
 
-// TODO: Remove memmap2
-// TODO: Add a file loading module to replace std::fs in the gltf loading code.
-
 // public-facing modules:
 
 mod vram_usage {
@@ -91,7 +88,7 @@ mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 
 mod renderer;
-pub use renderer::descriptors::material::{AlphaMode, GltfFactors, Material, PipelineSpecificData};
+pub use renderer::descriptors::material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
 pub use renderer::descriptors::{DescriptorError, Descriptors, PbrDefaults};
 pub use renderer::framebuffers::{FramebufferCreationError, Framebuffers};
 pub use renderer::mesh::Mesh;

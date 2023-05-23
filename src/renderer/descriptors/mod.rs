@@ -35,7 +35,7 @@ pub(crate) const MAX_PIPELINES_PER_MATERIAL: usize = 2;
 fn get_pipelines(data: &PipelineSpecificData) -> ArrayVec<PipelineIndex, MAX_PIPELINES_PER_MATERIAL> {
     use PipelineIndex::*;
     match data {
-        PipelineSpecificData::Gltf { alpha_mode, .. } => match alpha_mode {
+        PipelineSpecificData::Pbr { alpha_mode, .. } => match alpha_mode {
             AlphaMode::Opaque => [Opaque, SkinnedOpaque].into(),
             AlphaMode::AlphaToCoverage => [AlphaToCoverage, SkinnedAlphaToCoverage].into(),
             AlphaMode::Blend => [Blended, SkinnedBlended].into(),
@@ -319,7 +319,7 @@ impl Descriptors {
 
     fn write_material(&self, pipeline: PipelineIndex, index: u32, material: &Material, pending_writes: &mut PendingWritesVec) {
         match &material.data {
-            PipelineSpecificData::Gltf {
+            PipelineSpecificData::Pbr {
                 base_color,
                 metallic_roughness,
                 normal,

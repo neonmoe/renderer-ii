@@ -10,7 +10,7 @@ use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
 use neonvk::image_loading::{self, ntex, ImageLoadingError, TextureKind};
 use neonvk::{
-    AlphaMode, Buffer, DescriptorError, Descriptors, Device, ForBuffers, ForImages, GltfFactors, ImageView, Material, Mesh,
+    AlphaMode, Buffer, DescriptorError, Descriptors, Device, ForBuffers, ForImages, ImageView, Material, Mesh, PbrFactors,
     PipelineSpecificData, Uploader, VulkanArena, VulkanArenaError,
 };
 use std::fs::{self, File};
@@ -525,10 +525,10 @@ fn create_gltf(
         let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex)));
         let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
 
-        let factors_size = mem::size_of::<GltfFactors>() as u64;
+        let factors_size = mem::size_of::<PbrFactors>() as u64;
         let factors = (factors_buffer.clone(), factors_size * i as u64, factors_size);
 
-        let pipeline_specific_data = PipelineSpecificData::Gltf {
+        let pipeline_specific_data = PipelineSpecificData::Pbr {
             base_color,
             metallic_roughness,
             normal,
@@ -1025,7 +1025,7 @@ pub(crate) fn get_gltf_texture_kinds(gltf: &gltf_json::GltfJson) -> Result<HashM
     Ok(image_texture_kinds)
 }
 
-pub(crate) fn get_material_factors(gltf: &gltf_json::GltfJson) -> Result<Vec<GltfFactors>, GltfLoadingError> {
+pub(crate) fn get_material_factors(gltf: &gltf_json::GltfJson) -> Result<Vec<PbrFactors>, GltfLoadingError> {
     let mut material_factors = Vec::with_capacity(gltf.materials.len());
     for mat in &gltf.materials {
         let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
@@ -1036,7 +1036,7 @@ pub(crate) fn get_material_factors(gltf: &gltf_json::GltfJson) -> Result<Vec<Glt
         } else {
             0.0
         };
-        material_factors.push(GltfFactors {
+        material_factors.push(PbrFactors {
             base_color: pbr
                 .base_color_factor
                 .as_ref()

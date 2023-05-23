@@ -1,4 +1,4 @@
-use crate::renderer::descriptors::material::GltfFactors;
+use crate::renderer::descriptors::material::PbrFactors;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use core::mem::{self, MaybeUninit};
@@ -19,7 +19,6 @@ pub struct ProjViewTransforms {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct RenderSettings {
-    // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
     pub debug_value: u32,
 }
 
@@ -27,7 +26,6 @@ pub struct RenderSettings {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct MaterialPushConstants {
-    // NOTE: Careful with changing this struct, the bytemuck impls are very strict!
     pub texture_index: u32,
 }
 
@@ -365,7 +363,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-        descriptor_size: Some(mem::size_of::<GltfFactors>() as vk::DeviceSize),
+        descriptor_size: Some(mem::size_of::<PbrFactors>() as vk::DeviceSize),
     },
 ];
 

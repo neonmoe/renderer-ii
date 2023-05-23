@@ -1,7 +1,7 @@
 use crate::image_loading::{self, ntex, ImageLoadingError, TextureKind};
 use crate::{gltf_json, GltfLoadingError};
 use ash::vk;
-use neonvk::{ForBuffers, ForImages, GltfFactors, VulkanArenaMeasurementError, VulkanArenaMeasurer};
+use neonvk::{ForBuffers, ForImages, PbrFactors, VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use std::fs;
 use std::path::Path;
 
@@ -95,7 +95,7 @@ fn measure(
     {
         profiling::scope!("measure material parameters mem reqs");
         let material_factors = crate::get_material_factors(&gltf).map_err(GltfMemoryMeasurementError::GltfLoading)?;
-        let factors_size = bytemuck::cast_slice::<GltfFactors, u8>(&material_factors).len() as vk::DeviceSize;
+        let factors_size = bytemuck::cast_slice::<PbrFactors, u8>(&material_factors).len() as vk::DeviceSize;
         buffer_measurer
             .add_buffer(crate::get_material_factors_buffer_create_info(factors_size))
             .map_err(GltfMemoryMeasurementError::VulkanArenaMeasurement)?;
