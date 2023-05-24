@@ -1,5 +1,9 @@
-//! A Vulkan renderer for 3D games. The mission statement will
-//! probably narrow down over time.
+//! A Vulkan renderer for 3D games. The mission statement will probably narrow
+//! down over time.
+//!
+//! Currently targeting the
+//! [VP_LUNARG_desktop_baseline_2022](https://vulkan.lunarg.com/doc/sdk/1.3.246.1/windows/profiles_definitions.html)
+//! Vulkan Profile.
 
 #![feature(int_roundings)] // seems like this will get merged soon enough
 

@@ -241,11 +241,8 @@ fn filter_capable_device(
         vk::FormatFeatureFlags::SAMPLED_IMAGE | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR | vk::FormatFeatureFlags::TRANSFER_DST;
     require_format(vk::Format::R8G8B8A8_SRGB, texture_usage_features); // Uncompressed textures
     require_format(vk::Format::R8G8B8A8_UNORM, texture_usage_features); // Uncompressed textures
-    require_format(vk::Format::R8G8B8A8_SNORM, texture_usage_features); // Uncompressed textures
-    require_format(vk::Format::BC6H_SFLOAT_BLOCK, texture_usage_features); // Compressed textures
-    require_format(vk::Format::BC6H_UFLOAT_BLOCK, texture_usage_features); // Compressed textures
-    require_format(vk::Format::BC7_UNORM_BLOCK, texture_usage_features); // Compressed textures
     require_format(vk::Format::BC7_SRGB_BLOCK, texture_usage_features); // Compressed textures
+    require_format(vk::Format::BC7_UNORM_BLOCK, texture_usage_features); // Compressed textures
     require_format(HDR_COLOR_ATTACHMENT_FORMAT, vk::FormatFeatureFlags::COLOR_ATTACHMENT); // HDR color attachments
 
     // From the spec:
@@ -281,8 +278,51 @@ fn filter_capable_device(
         use limits::*;
         use vk::DescriptorType as D;
 
-        // TODO: Debugging limits based on spec minimums / manually chosen higher limits
-        let limits = &props.limits;
+        // The limits are set up to be the minimum of the system limit and the
+        // targeted profile's limit. This will provide useful errors in two cases:
+        // - During development, having accidentally made something require too much resources (over profile)
+        // - Debugging user issues, with their GPU being below the minimum spec and hitting limits (over system)
+        use vk_profile::pd_limit;
+        let limits = vk::PhysicalDeviceLimits {
+            max_uniform_buffer_range: pd_limit!["max_uniform_buffer_range"].min(props.limits.max_uniform_buffer_range),
+            max_storage_buffer_range: pd_limit!["max_storage_buffer_range"].min(props.limits.max_storage_buffer_range),
+            max_push_constants_size: pd_limit!["max_push_constants_size"].min(props.limits.max_push_constants_size),
+            max_bound_descriptor_sets: pd_limit!["max_bound_descriptor_sets"].min(props.limits.max_bound_descriptor_sets),
+            max_per_stage_resources: pd_limit!["max_per_stage_resources"].min(props.limits.max_per_stage_resources),
+            max_vertex_input_attributes: pd_limit!["max_vertex_input_attributes"].min(props.limits.max_vertex_input_attributes),
+            max_vertex_input_bindings: pd_limit!["max_vertex_input_bindings"].min(props.limits.max_vertex_input_bindings),
+            max_vertex_input_attribute_offset: pd_limit!["max_vertex_input_attribute_offset"]
+                .min(props.limits.max_vertex_input_attribute_offset),
+            max_vertex_input_binding_stride: pd_limit!["max_vertex_input_binding_stride"].min(props.limits.max_vertex_input_binding_stride),
+            max_per_stage_descriptor_samplers: pd_limit!["max_per_stage_descriptor_samplers"]
+                .min(props.limits.max_per_stage_descriptor_samplers),
+            max_per_stage_descriptor_uniform_buffers: pd_limit!["max_per_stage_descriptor_uniform_buffers"]
+                .min(props.limits.max_per_stage_descriptor_uniform_buffers),
+            max_per_stage_descriptor_storage_buffers: pd_limit!["max_per_stage_descriptor_storage_buffers"]
+                .min(props.limits.max_per_stage_descriptor_storage_buffers),
+            max_per_stage_descriptor_sampled_images: pd_limit!["max_per_stage_descriptor_sampled_images"]
+                .min(props.limits.max_per_stage_descriptor_sampled_images),
+            max_per_stage_descriptor_storage_images: pd_limit!["max_per_stage_descriptor_storage_images"]
+                .min(props.limits.max_per_stage_descriptor_storage_images),
+            max_per_stage_descriptor_input_attachments: pd_limit!["max_per_stage_descriptor_input_attachments"]
+                .min(props.limits.max_per_stage_descriptor_input_attachments),
+            max_descriptor_set_samplers: pd_limit!["max_descriptor_set_samplers"].min(props.limits.max_descriptor_set_samplers),
+            max_descriptor_set_uniform_buffers: pd_limit!["max_descriptor_set_uniform_buffers"]
+                .min(props.limits.max_descriptor_set_uniform_buffers),
+            max_descriptor_set_uniform_buffers_dynamic: pd_limit!["max_descriptor_set_uniform_buffers_dynamic"]
+                .min(props.limits.max_descriptor_set_uniform_buffers_dynamic),
+            max_descriptor_set_storage_buffers: pd_limit!["max_descriptor_set_storage_buffers"]
+                .min(props.limits.max_descriptor_set_storage_buffers),
+            max_descriptor_set_storage_buffers_dynamic: pd_limit!["max_descriptor_set_storage_buffers_dynamic"]
+                .min(props.limits.max_descriptor_set_storage_buffers_dynamic),
+            max_descriptor_set_sampled_images: pd_limit!["max_descriptor_set_sampled_images"]
+                .min(props.limits.max_descriptor_set_sampled_images),
+            max_descriptor_set_storage_images: pd_limit!["max_descriptor_set_storage_images"]
+                .min(props.limits.max_descriptor_set_storage_images),
+            max_descriptor_set_input_attachments: pd_limit!["max_descriptor_set_input_attachments"]
+                .min(props.limits.max_descriptor_set_input_attachments),
+            ..Default::default()
+        };
 
         let mut check_limit_break = |r: Result<(), PhysicalDeviceLimitBreak>| {
             if let Err(reason) = r {
