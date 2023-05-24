@@ -261,6 +261,7 @@ impl Renderer {
         unsafe {
             profiling::scope!("queue render");
             self.device
+                .sync2
                 .queue_submit2(self.device.graphics_queue, &submit_infos, self.frame_end_fence.inner)
                 .map_err(RendererError::RenderQueueSubmit)
         }

@@ -13,7 +13,7 @@ once_cell = "1.17.1"
 tinyjson = "2.5.1"
 
 [features]
-default = ["desktop_baseline_2022"]
+default = ["desktop_baseline_2023"]
 android_baseline_2021 = []
 android_baseline_2022 = []
 desktop_baseline_2022 = []

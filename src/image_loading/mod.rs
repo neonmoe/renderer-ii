@@ -168,7 +168,7 @@ pub fn load_image(
                         .src_stage_mask(vk::PipelineStageFlags2::NONE)
                         .dst_stage_mask(vk::PipelineStageFlags2::COPY)];
                     let dep_info = vk::DependencyInfo::default().image_memory_barriers(&barrier_from_undefined_to_transfer_dst);
-                    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+                    unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
                     let subresource_layers_dst = vk::ImageSubresourceLayers::default()
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .mip_level(mip_level as u32)
@@ -217,7 +217,7 @@ pub fn load_image(
                         .src_stage_mask(vk::PipelineStageFlags2::COPY)
                         .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)];
                     let dep_info = vk::DependencyInfo::default().image_memory_barriers(&barrier_from_transfer_dst_to_shader);
-                    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+                    unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
                 }
             },
         )

@@ -375,7 +375,7 @@ fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
 fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mutex: Arc<Mutex<SharedState>>) -> anyhow::Result<()> {
     let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner);
     let physical_device = physical_devices.remove(0)?;
-    let device = physical_device.create_device(&instance.inner)?;
+    let device = physical_device.create_device(&instance.entry, &instance.inner)?;
 
     let msaa_samples = neonvk::vk::SampleCountFlags::TYPE_4;
     if !physical_device
@@ -517,14 +517,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
         prev_frame = state.frame;
     }
 
-    let mut swapchain = neonvk::Swapchain::new(
-        &instance.entry,
-        &instance.inner,
-        &device,
-        &physical_device,
-        surface,
-        &swapchain_settings,
-    )?;
+    let mut swapchain = neonvk::Swapchain::new(&device, &physical_device, surface, &swapchain_settings)?;
     print_memory_usage("after swapchain creation");
     let mut pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, msaa_samples, None)?;
     print_memory_usage("after pipelines creation");

@@ -3,7 +3,7 @@ use crate::vulkan_raii::Device;
 use alloc::boxed::Box;
 use arrayvec::ArrayVec;
 use ash::extensions::khr;
-use ash::{vk, Instance};
+use ash::{vk, Entry, Instance};
 use core::ffi::c_char;
 
 #[derive(thiserror::Error, Debug)]
@@ -16,26 +16,25 @@ pub enum DeviceError {
 
 impl PhysicalDevice {
     /// Creates a new VkDevice. It only needs to be destroyed if creating a new one.
-    pub fn create_device(&self, instance: &Instance) -> Result<Device, DeviceError> {
+    pub fn create_device(&self, entry: &Entry, instance: &Instance) -> Result<Device, DeviceError> {
         profiling::scope!("vulkan device creation");
 
         // Just to have an array to point at for the queue priorities.
         let ones = [1.0, 1.0, 1.0];
-        let queue_families = [
-            self.graphics_queue_family,
-            self.transfer_queue_family,
-            self.surface_queue_family,
-        ];
+        let queue_families = [self.graphics_queue_family, self.transfer_queue_family, self.surface_queue_family];
         let queue_create_infos = create_device_queue_create_infos(&queue_families, &ones);
 
         let mut extensions: ArrayVec<*const c_char, 3> = ArrayVec::new();
         extensions.push(khr::Swapchain::NAME.as_ptr());
         log::debug!("Device extension: {}", khr::Swapchain::NAME.to_str().unwrap());
+        extensions.push(khr::Synchronization2::NAME.as_ptr());
+        log::debug!("Device extension: {}", khr::Synchronization2::NAME.to_str().unwrap());
         if self.extension_supported("VK_EXT_memory_budget") {
             extensions.push(cstr!("VK_EXT_memory_budget").as_ptr());
             log::debug!("Device extension (optional): VK_EXT_memory_budget");
         }
 
+        // TODO: Add vk-profile checks for extensions
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&extensions);
@@ -60,6 +59,9 @@ impl PhysicalDevice {
         }
 
         let device = Device {
+            sync2: ash::extensions::khr::Synchronization2::new(instance, &device),
+            surface: ash::extensions::khr::Surface::new(entry, instance),
+            swapchain: ash::extensions::khr::Swapchain::new(instance, &device),
             inner: Box::leak(Box::new(device)),
             graphics_queue,
             surface_queue,

@@ -162,8 +162,8 @@ impl Uploader {
         queue_graphics_commands: G,
     ) -> Result<(), UploadError>
     where
-        F: Fn(&ash::Device, &Buffer, vk::CommandBuffer),
-        G: Fn(&ash::Device, vk::CommandBuffer),
+        F: Fn(&Device, &Buffer, vk::CommandBuffer),
+        G: Fn(&Device, vk::CommandBuffer),
     {
         self._start_upload(staging_buffer, debug_identifier, &queue_transfer_commands, &queue_graphics_commands)
     }
@@ -172,8 +172,8 @@ impl Uploader {
         &mut self,
         staging_buffer: Buffer,
         debug_identifier: Arguments,
-        queue_transfer_commands: &dyn Fn(&ash::Device, &Buffer, vk::CommandBuffer),
-        queue_graphics_commands: &dyn Fn(&ash::Device, vk::CommandBuffer),
+        queue_transfer_commands: &dyn Fn(&Device, &Buffer, vk::CommandBuffer),
+        queue_graphics_commands: &dyn Fn(&Device, vk::CommandBuffer),
     ) -> Result<(), UploadError> {
         profiling::scope!("start upload");
         let [transfer_cmdbuf, graphics_cmdbuf] = {

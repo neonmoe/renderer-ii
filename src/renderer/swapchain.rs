@@ -3,7 +3,7 @@ use crate::vulkan_raii::{self, AnyImage, Device, Surface};
 use alloc::rc::Rc;
 use arrayvec::ArrayVec;
 use ash::extensions::khr;
-use ash::{vk, Entry, Instance};
+use ash::vk;
 
 #[derive(thiserror::Error, Debug)]
 pub enum SwapchainError {
@@ -33,14 +33,10 @@ pub struct Swapchain {
     pub extent: vk::Extent2D,
     pub(crate) images: ArrayVec<Rc<AnyImage>, 8>,
     swapchain: Rc<vulkan_raii::Swapchain>,
-    surface_ext: khr::Surface,
-    swapchain_ext: khr::Swapchain,
 }
 
 impl Swapchain {
     pub fn new(
-        entry: &Entry,
-        instance: &Instance,
         device: &Device,
         physical_device: &PhysicalDevice,
         surface: Surface,
@@ -48,15 +44,13 @@ impl Swapchain {
     ) -> Result<Swapchain, SwapchainError> {
         profiling::scope!("swapchain creation");
 
-        let surface_ext = khr::Surface::new(entry, instance);
-        let swapchain_ext = khr::Swapchain::new(instance, device);
         let queue_family_indices = [
             physical_device.graphics_queue_family.index,
             physical_device.surface_queue_family.index,
         ];
         let (swapchain, extent) = create_swapchain(
-            &surface_ext,
-            &swapchain_ext,
+            &device.surface,
+            &device.swapchain,
             surface.inner,
             None,
             physical_device,
@@ -65,11 +59,11 @@ impl Swapchain {
         )?;
         let swapchain = Rc::new(vulkan_raii::Swapchain {
             inner: swapchain,
-            device: swapchain_ext.clone(),
+            device: device.swapchain.clone(),
             surface,
         });
 
-        let images = unsafe { swapchain_ext.get_swapchain_images(swapchain.inner) }
+        let images = unsafe { device.swapchain.get_swapchain_images(swapchain.inner) }
             .map_err(SwapchainError::GetSwapchainImages)?
             .into_iter()
             .map(|image| Rc::new(AnyImage::Swapchain(image, swapchain.clone())))
@@ -84,13 +78,7 @@ impl Swapchain {
             format_args!("{width}x{height}, {swapchain_format:?}, {frame_count} frames"),
         );
 
-        Ok(Swapchain {
-            extent,
-            images,
-            swapchain,
-            surface_ext,
-            swapchain_ext,
-        })
+        Ok(Swapchain { extent, images, swapchain })
     }
 
     pub fn recreate(
@@ -112,8 +100,8 @@ impl Swapchain {
             physical_device.surface_queue_family.index,
         ];
         let (new_swapchain, extent) = create_swapchain(
-            &self.surface_ext,
-            &self.swapchain_ext,
+            &device.surface,
+            &device.swapchain,
             swapchain_holder.surface.inner,
             Some(swapchain_holder.inner),
             physical_device,
@@ -121,13 +109,13 @@ impl Swapchain {
             settings,
         )?;
         // The mutable borrow of self.inner ensures that this won't leave any dangling swapchains.
-        unsafe { self.swapchain_ext.destroy_swapchain(swapchain_holder.inner, None) };
+        unsafe { device.swapchain.destroy_swapchain(swapchain_holder.inner, None) };
         // And now swapchain.inner is a valid swapchain again.
         swapchain_holder.inner = new_swapchain;
         self.extent = extent;
 
         self.images.extend(
-            unsafe { self.swapchain_ext.get_swapchain_images(self.swapchain.inner) }
+            unsafe { device.swapchain.get_swapchain_images(self.swapchain.inner) }
                 .map_err(SwapchainError::GetSwapchainImages)?
                 .into_iter()
                 .map(|image| Rc::new(AnyImage::Swapchain(image, self.swapchain.clone()))),

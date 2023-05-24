@@ -232,7 +232,7 @@ impl VulkanArena<ForBuffers> {
                                 .src_stage_mask(vk::PipelineStageFlags2::NONE)
                                 .dst_stage_mask(vk::PipelineStageFlags2::COPY)];
                             let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&barrier_from_graphics_to_transfer);
-                            unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+                            unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
                             let (src, dst) = (staging_buffer.inner, buffer);
                             let copy_regions = [vk::BufferCopy::default().size(buffer_create_info.size)];
                             unsafe { device.cmd_copy_buffer(command_buffer, src, dst, &copy_regions) };
@@ -250,7 +250,7 @@ impl VulkanArena<ForBuffers> {
                                 .src_stage_mask(vk::PipelineStageFlags2::COPY)
                                 .dst_stage_mask(vk::PipelineStageFlags2::VERTEX_INPUT)];
                             let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&barrier_from_transfer_to_graphics);
-                            unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+                            unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
                         },
                     )
                     .map_err(VulkanArenaError::Upload)?;

@@ -34,6 +34,7 @@ impl Gltf {
                     let skin = &self.skins[skin_index];
                     let joint_size = size_of::<Mat4>();
                     let joints_buffer_size = skin.joints.len() * joint_size;
+                    // TODO: Reuse skeletons (aka joint_offset) between identical skins
                     let (joints_offset, joints_buffer) = scene.allocate_joint_offset(joints_buffer_size);
                     for (i, joint) in skin.joints.iter().enumerate() {
                         let animated_transform = animated_node_transforms[joint.node_index].unwrap_or(Mat4::IDENTITY);

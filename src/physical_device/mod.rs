@@ -221,6 +221,7 @@ fn filter_capable_device(
         }
     }
 
+    // TODO: Add vk-profile checks for formats
     let format_supported = |format: vk::Format, flags: vk::FormatFeatureFlags| -> bool {
         let format_properties = unsafe {
             profiling::scope!("vk::get_physical_device_format_properties");
@@ -283,7 +284,7 @@ fn filter_capable_device(
         // - During development, having accidentally made something require too much resources (over profile)
         // - Debugging user issues, with their GPU being below the minimum spec and hitting limits (over system)
         use vk_profile::pd_limit;
-        let limits = vk::PhysicalDeviceLimits {
+        let mut limits = vk::PhysicalDeviceLimits {
             max_uniform_buffer_range: pd_limit!["max_uniform_buffer_range"].min(props.limits.max_uniform_buffer_range),
             max_storage_buffer_range: pd_limit!["max_storage_buffer_range"].min(props.limits.max_storage_buffer_range),
             max_push_constants_size: pd_limit!["max_push_constants_size"].min(props.limits.max_push_constants_size),
@@ -323,6 +324,7 @@ fn filter_capable_device(
                 .min(props.limits.max_descriptor_set_input_attachments),
             ..Default::default()
         };
+        limits.max_per_stage_descriptor_uniform_buffers = 26; // TODO: Require less uniform buffers
 
         let mut check_limit_break = |r: Result<(), PhysicalDeviceLimitBreak>| {
             if let Err(reason) = r {

@@ -1,5 +1,7 @@
 use ash::{vk, Instance};
 
+// TODO: Add vk-profile checks for features
+
 #[derive(Debug)]
 pub struct SupportedFeatures {
     sampler_anisotropy: bool,
