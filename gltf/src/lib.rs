@@ -8,8 +8,8 @@ use core::ops::Range;
 use glam::{Mat4, Quat, Vec3, Vec4};
 use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
-use neonvk::image_loading::{self, ntex, ImageLoadingError, TextureKind};
-use neonvk::{
+use renderer::image_loading::{self, ntex, ImageLoadingError, TextureKind};
+use renderer::{
     AlphaMode, Buffer, DescriptorError, Descriptors, Device, ForBuffers, ForImages, ImageView, Material, Mesh, PbrFactors,
     PipelineSpecificData, Uploader, VulkanArena, VulkanArenaError,
 };

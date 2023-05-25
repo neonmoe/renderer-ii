@@ -31,8 +31,8 @@ uf_render_settings;
 void main() {
     vec4 base_color =
         texture(sampler2D(base_color[push_constant.texture_index], tex_sampler), in_uv);
-    vec2 metallic_roughness =
-        texture(sampler2D(metallic_roughness[push_constant.texture_index], tex_sampler), in_uv).xy;
+    vec4 metallic_roughness =
+        texture(sampler2D(metallic_roughness[push_constant.texture_index], tex_sampler), in_uv);
     vec3 normal_tex =
         texture(sampler2D(normal[push_constant.texture_index], tex_sampler), in_uv).xyz * 2.0 - 1.0;
     vec4 occlusion = texture(sampler2D(occlusion[push_constant.texture_index], tex_sampler), in_uv);
@@ -41,9 +41,10 @@ void main() {
 
     vec4 base_color_factor = factors[push_constant.texture_index].base_color;
     vec3 emissive_factor = factors[push_constant.texture_index].emissive.xyz;
-    vec2 metallic_roughness_factor =
-        factors[push_constant.texture_index].metallic_roughness_alpha_cutoff.xy;
-    float alpha_cutoff = factors[push_constant.texture_index].metallic_roughness_alpha_cutoff.z;
+    vec3 mtl_rgh_alpha = factors[push_constant.texture_index].metallic_roughness_alpha_cutoff.xyz;
+    float metallic_factor = mtl_rgh_alpha.x;
+    float roughness_factor = mtl_rgh_alpha.y;
+    float alpha_cutoff = mtl_rgh_alpha.z;
 
     base_color *= base_color_factor;
     if (base_color.a <= alpha_cutoff) {
@@ -55,7 +56,8 @@ void main() {
     vec3 normal = tangent_to_world * normal_tex;
 
     emissive *= emissive_factor;
-    metallic_roughness *= metallic_roughness_factor;
+    float roughness = metallic_roughness.g * roughness_factor;
+    float metallic = metallic_roughness.b * metallic_factor;
 
     switch (uf_render_settings.debug_value) {
     // The actual rendering case, enabled by default and by pressing 0 in

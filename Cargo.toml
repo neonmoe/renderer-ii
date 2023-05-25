@@ -1,35 +1,8 @@
-[package]
-name = "neonvk"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-arrayvec = { version = "0.7", default-features = false }
-# requires std, but a PR for move to core+alloc exists (#664)
-ash = { git = "https://github.com/ash-rs/ash", default-features = false, features = ["linked", "debug"] }
-ash-window = { git = "https://github.com/ash-rs/ash" }
-bytemuck = { version = "1.9", features = ["derive"] }
-glam = { version = "0.23", default-features = false, features = ["libm", "bytemuck"] }
-hashbrown = { version = "0.13" }
-log = { version = "0.4" }
-profiling = { version = "1.0" }
-raw-window-handle = { version = "0.5.1" }
-tracy-client = { version = "0.14.2", optional = true }
-# requires std, until error_in_core is stabilized
-thiserror = { version = "1.0" }
-typed-arena = { version = "2.0", default-features = false }
-vk-profile = { path = "vk-profile" }
-
-[dev-dependencies]
-sdl2 = { git = "https://github.com/Rust-SDL2/rust-sdl2", features = ["raw-window-handle"] }
-anyhow = { version = "1.0" }
-gltf = { path = "gltf" }
-
-[[example]]
-name = "sandbox"
-
-[features]
-profile-with-tracy = ["profiling/profile-with-tracy", "tracy-client"]
-profile-with-tracing = ["profiling/profile-with-tracing"]
-profile-with-puffin = ["profiling/profile-with-puffin"]
-vulkan-validation = []
+[workspace]
+members = [
+    "gltf",
+    "make-ntex",
+    "renderer",
+    "vk-profile",
+    "examples/sandbox",
+]

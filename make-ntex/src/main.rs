@@ -76,7 +76,7 @@ fn main() -> ExitCode {
     let failures: u32 = opts
         .images
         .par_iter()
-        .map(|path| (path, convert(&opts, &path, &counter, count)))
+        .map(|path| (path, convert(&opts, path, &counter, count)))
         .map(|(path, result)| {
             if let Err(err) = result {
                 print(&opts, format_args!("Failed to convert {}, {}.", path, err));
@@ -214,11 +214,7 @@ fn convert(opts: &Opts, path: &str, counter: &AtomicUsize, count: usize) -> Resu
             let mip_image = if mip == 0 {
                 image.clone()
             } else {
-                let filter = if sharpen {
-                    FilterType::Lanczos3
-                } else {
-                    FilterType::Triangle
-                };
+                let filter = if sharpen { FilterType::Lanczos3 } else { FilterType::Triangle };
                 image.resize_exact(image.width() / (1 << mip), image.height() / (1 << mip), filter)
             };
             compress_image(mip_image)

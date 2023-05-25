@@ -1,0 +1,21 @@
+[package]
+name = "sandbox"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { version = "1.0" }
+glam = { version = "0.23", default-features = false, features = ["libm", "bytemuck"] }
+gltf = { path = "../../gltf" }
+log = { version = "0.4" }
+profiling = { version = "1.0" }
+renderer = { path = "../../renderer" }
+sdl2 = { git = "https://github.com/Rust-SDL2/rust-sdl2", features = ["raw-window-handle"] }
+thiserror = { version = "1.0" }
+tracy-client = { version = "0.15.2", optional = true }
+
+[features]
+profile-with-tracy = ["renderer/profile-with-tracy", "tracy-client"]
+profile-with-tracing = ["renderer/profile-with-tracing"]
+profile-with-puffin = ["renderer/profile-with-puffin"]
+vulkan-validation = ["renderer/vulkan-validation"]

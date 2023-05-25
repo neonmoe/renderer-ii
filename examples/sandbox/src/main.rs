@@ -18,7 +18,7 @@ enum SandboxError {
     #[error("sdl error: {0}")]
     Sdl(String),
     #[error("MSAA sample count not supported: {0:?}")]
-    MsaaSampleCountNotSupported(neonvk::vk::SampleCountFlags),
+    MsaaSampleCountNotSupported(renderer::vk::SampleCountFlags),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -129,12 +129,12 @@ fn main_() -> anyhow::Result<()> {
             let mut prev_allocated = -1.0;
             let mut prev_in_use = -1.0;
             loop {
-                let allocated = neonvk::get_allocated_vram() as f64;
+                let allocated = renderer::get_allocated_vram() as f64;
                 if allocated != prev_allocated {
                     tracy_client::plot!("allocated vram (bytes)", prev_allocated);
                     prev_allocated = allocated;
                 }
-                let in_use = neonvk::get_allocated_vram_in_use() as f64;
+                let in_use = renderer::get_allocated_vram_in_use() as f64;
                 if in_use != prev_in_use {
                     tracy_client::plot!("used vram (bytes)", prev_in_use);
                     prev_in_use = in_use;
@@ -144,14 +144,14 @@ fn main_() -> anyhow::Result<()> {
         })
         .unwrap();
 
-    let instance = neonvk::Instance::new(
+    let instance = renderer::Instance::new(
         &window,
         unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(b"sandbox example application\0") },
         env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
         env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
         env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
     )?;
-    let surface = neonvk::create_surface(&instance.entry, &instance.inner, &window, &window)?;
+    let surface = renderer::create_surface(&instance.entry, &instance.inner, &window, &window)?;
     let rendering_thread = std::thread::Builder::new()
         .name(format!("{}-render", env!("CARGO_CRATE_NAME")))
         .spawn({
@@ -372,12 +372,12 @@ fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
     }
 }
 
-fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mutex: Arc<Mutex<SharedState>>) -> anyhow::Result<()> {
-    let mut physical_devices = neonvk::get_physical_devices(&instance.entry, &instance.inner, surface.inner);
+fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, state_mutex: Arc<Mutex<SharedState>>) -> anyhow::Result<()> {
+    let mut physical_devices = renderer::get_physical_devices(&instance.entry, &instance.inner, surface.inner);
     let physical_device = physical_devices.remove(0)?;
     let device = physical_device.create_device(&instance.entry, &instance.inner)?;
 
-    let msaa_samples = neonvk::vk::SampleCountFlags::TYPE_4;
+    let msaa_samples = renderer::vk::SampleCountFlags::TYPE_4;
     if !physical_device
         .properties
         .limits
@@ -388,10 +388,10 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
     }
 
     fn print_memory_usage(when: &str) {
-        use neonvk::Bytes;
-        let in_use = Bytes(neonvk::get_allocated_vram_in_use());
-        let allocated = Bytes(neonvk::get_allocated_vram());
-        let peak = Bytes(neonvk::get_allocated_vram_peak());
+        use renderer::Bytes;
+        let in_use = Bytes(renderer::get_allocated_vram_in_use());
+        let allocated = Bytes(renderer::get_allocated_vram());
+        let peak = Bytes(renderer::get_allocated_vram_peak());
         log::info!("VRAM usage {when:40} {in_use}/{allocated}, peaked at {peak}");
     }
 
@@ -399,20 +399,20 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
 
     let resources_path = {
         let current_path = Path::new(".").canonicalize().unwrap();
-        let path = if current_path.ends_with("examples") {
+        let path = if current_path.ends_with("src") {
             "."
-        } else if current_path.ends_with("sponza") {
-            ".."
-        } else if current_path.ends_with("glTF") {
-            "../.."
+        } else if current_path.ends_with("sandbox") {
+            "src"
+        } else if current_path.ends_with("examples") {
+            "sandbox/src"
         } else {
-            "examples"
+            "examples/sandbox/src"
         };
         Path::new(path)
     };
-    let mut assets_buffers_measurer = neonvk::VulkanArenaMeasurer::new(&device);
-    let mut assets_textures_measurer = neonvk::VulkanArenaMeasurer::new(&device);
-    for image_create_info in neonvk::image_loading::pbr_defaults::all_defaults_create_infos() {
+    let mut assets_buffers_measurer = renderer::VulkanArenaMeasurer::new(&device);
+    let mut assets_textures_measurer = renderer::VulkanArenaMeasurer::new(&device);
+    for image_create_info in renderer::image_loading::pbr_defaults::all_defaults_create_infos() {
         assets_textures_measurer.add_image(image_create_info)?;
     }
     gltf::measure_gltf_memory_usage(
@@ -430,31 +430,31 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
 
     // Allocate in order of importance: if budget runs out, the arenas allocated
     // later may be allocated from a slower heap.
-    let mut texture_arena = neonvk::VulkanArena::new(
+    let mut texture_arena = renderer::VulkanArena::new(
         &instance.inner,
         &device,
         &physical_device,
         assets_textures_measurer.measured_size,
-        neonvk::MemoryProps::for_textures(),
+        renderer::MemoryProps::for_textures(),
         format_args!("sandbox assets (textures)"),
     )?;
-    let mut buffer_arena = neonvk::VulkanArena::new(
+    let mut buffer_arena = renderer::VulkanArena::new(
         &instance.inner,
         &device,
         &physical_device,
         assets_buffers_measurer.measured_size,
-        neonvk::MemoryProps::for_buffers(),
+        renderer::MemoryProps::for_buffers(),
         format_args!("sandbox assets (buffers)"),
     )?;
-    let mut staging_arena = neonvk::VulkanArena::new(
+    let mut staging_arena = renderer::VulkanArena::new(
         &instance.inner,
         &device,
         &physical_device,
         assets_buffers_measurer.measured_size + assets_textures_measurer.measured_size,
-        neonvk::MemoryProps::for_staging(),
+        renderer::MemoryProps::for_staging(),
         format_args!("sandbox assets (staging)"),
     )?;
-    let mut uploader = neonvk::Uploader::new(
+    let mut uploader = renderer::Uploader::new(
         &device,
         device.graphics_queue,
         device.transfer_queue,
@@ -464,8 +464,8 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
 
     print_memory_usage("after arena creation");
 
-    let pbr_defaults = neonvk::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena)?;
-    let mut descriptors = neonvk::Descriptors::new(&device, &physical_device, pbr_defaults)?;
+    let pbr_defaults = renderer::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena)?;
+    let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults)?;
 
     let upload_start = Instant::now();
     let sponza_model = gltf::Gltf::from_gltf(
@@ -510,20 +510,20 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
     {
         let state = state_mutex.lock().unwrap();
         let (width, height) = (state.width, state.height);
-        swapchain_settings = neonvk::SwapchainSettings {
-            extent: neonvk::vk::Extent2D { width, height },
+        swapchain_settings = renderer::SwapchainSettings {
+            extent: renderer::vk::Extent2D { width, height },
             immediate_present: state.immediate_present,
         };
         prev_frame = state.frame;
     }
 
-    let mut swapchain = neonvk::Swapchain::new(&device, &physical_device, surface, &swapchain_settings)?;
+    let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings)?;
     print_memory_usage("after swapchain creation");
-    let mut pipelines = neonvk::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, msaa_samples, None)?;
+    let mut pipelines = renderer::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, msaa_samples, None)?;
     print_memory_usage("after pipelines creation");
-    let mut framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
+    let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
     print_memory_usage("after framebuffers creation");
-    let mut renderer = neonvk::Renderer::new(&instance.inner, &device, &physical_device)?;
+    let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device)?;
     print_memory_usage("after renderer creation");
 
     'running: loop {
@@ -553,7 +553,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
             if let Some(resize_timestamp) = state.queued_resize {
                 let duration_since_resize = Instant::now() - resize_timestamp;
                 if duration_since_resize > Duration::from_millis(100) {
-                    swapchain_settings.extent = neonvk::vk::Extent2D {
+                    swapchain_settings.extent = renderer::vk::Extent2D {
                         width: state.width,
                         height: state.height,
                     };
@@ -565,7 +565,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
 
             debug_value = state.debug_value;
 
-            scene = neonvk::Scene::new(&physical_device);
+            scene = renderer::Scene::new(&physical_device);
             scene.camera.orientation = Quat::from_rotation_y(state.cam_yaw) * Quat::from_rotation_x(state.cam_pitch);
             scene.camera.position = Vec3::new(state.cam_x, state.cam_y, state.cam_z);
 
@@ -589,7 +589,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
             device.wait_idle();
             drop(framebuffers);
             swapchain.recreate(&device, &physical_device, &swapchain_settings)?;
-            pipelines = neonvk::Pipelines::new(
+            pipelines = renderer::Pipelines::new(
                 &device,
                 &physical_device,
                 &descriptors,
@@ -597,7 +597,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
                 msaa_samples,
                 Some(pipelines),
             )?;
-            framebuffers = neonvk::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
+            framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
         }
 
         {
@@ -609,7 +609,7 @@ fn rendering_main(instance: neonvk::Instance, surface: neonvk::Surface, state_mu
             }
             match { renderer.present_frame(frame_index, &swapchain) } {
                 Ok(_) => {}
-                Err(neonvk::RendererError::SwapchainOutOfDate(_)) => {}
+                Err(renderer::RendererError::SwapchainOutOfDate(_)) => {}
                 Err(err) => {
                     log::error!("Error during regular frame present: {}", err);
                     return Err(err.into());

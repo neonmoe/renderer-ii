@@ -12,8 +12,8 @@ hashbrown = { version = "0.13", features = ["serde"] }
 log = { version = "0.4" }
 # requires std, only used by the gltf module
 memmap2 = { version = "0.5" }
-neonvk = { path = ".." }
 profiling = { version = "1.0" }
+renderer = { path = "../renderer" }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 thiserror = { version = "1.0" }
