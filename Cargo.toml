@@ -5,4 +5,5 @@ members = [
     "renderer",
     "vk-profile",
     "examples/sandbox",
+    "examples/triangle",
 ]
