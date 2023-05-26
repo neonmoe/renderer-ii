@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 arrayvec = { version = "0.7", default-features = false, features = ["serde"] }
-ash = { git = "https://github.com/ash-rs/ash", default-features = false, features = ["linked", "debug"] }
 bytemuck = { version = "1.9" }
 glam = { version = "0.23", default-features = false, features = ["libm", "bytemuck"] }
 hashbrown = { version = "0.13", features = ["serde"] }

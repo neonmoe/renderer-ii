@@ -1,5 +1,6 @@
-use crate::renderer::descriptors::material::Material;
 use crate::physical_device::PhysicalDevice;
+use crate::renderer::coordinate_system::CoordinateSystem;
+use crate::renderer::descriptors::material::Material;
 use crate::renderer::{Camera, Mesh, PipelineIndex, PipelineMap};
 use glam::Mat4;
 use hashbrown::HashMap;
@@ -19,6 +20,7 @@ pub type StaticMeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
 /// A container for the materials and meshes to render during a particular
 /// frame, and transforms for each instance.
 pub struct Scene<'a> {
+    pub world_space: CoordinateSystem,
     pub camera: Camera,
     pub static_meshes: PipelineMap<StaticMeshMap<'a>>,
     pub skinned_meshes: PipelineMap<Vec<SkinnedModel<'a>>>,
@@ -33,6 +35,7 @@ impl<'a> Scene<'a> {
     /// prepare the mesh data with proper alignment.
     pub fn new(physical_device: &PhysicalDevice) -> Self {
         Scene {
+            world_space: CoordinateSystem::VULKAN,
             camera: Camera::default(),
             static_meshes: PipelineMap::new::<(), _>(|_| Ok(HashMap::with_capacity(0))).unwrap(),
             skinned_meshes: PipelineMap::new::<(), _>(|_| Ok(Vec::with_capacity(0))).unwrap(),

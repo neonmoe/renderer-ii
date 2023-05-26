@@ -92,6 +92,7 @@ mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 
 mod renderer;
+pub use renderer::coordinate_system::CoordinateSystem;
 pub use renderer::descriptors::material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
 pub use renderer::descriptors::{DescriptorError, Descriptors, PbrDefaults};
 pub use renderer::framebuffers::{FramebufferCreationError, Framebuffers};

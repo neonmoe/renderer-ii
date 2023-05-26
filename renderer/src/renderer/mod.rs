@@ -8,6 +8,7 @@ use core::fmt::Arguments;
 use glam::Mat4;
 
 pub(crate) mod camera;
+pub(crate) mod coordinate_system;
 pub(crate) mod descriptors;
 pub(crate) mod framebuffers;
 pub(crate) mod mesh;
@@ -212,7 +213,9 @@ impl Renderer {
             temp_arena.create_buffer(buffer_create_info, buffer_bytes, None, None, format_args!("uniform ({name})"))
         }
 
-        let global_transforms = &[scene.camera.create_global_transforms(width as f32, height as f32)];
+        let global_transforms = &[scene
+            .camera
+            .create_global_transforms(width as f32, height as f32, scene.world_space)];
         let global_transforms_buffer = create_uniform_buffer(&mut self.temp_arena, global_transforms, "view+proj matrices")
             .map_err(RendererError::CameraTransformUniformCreation)?;
 

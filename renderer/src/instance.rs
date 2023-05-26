@@ -5,7 +5,7 @@ use core::ffi::c_char;
 use core::ffi::CStr;
 use raw_window_handle::HasRawDisplayHandle;
 
-pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_2;
+pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_3; // makes renderdoc not crash, should be 1.2
 
 #[derive(thiserror::Error, Debug)]
 pub enum InstanceCreationError {

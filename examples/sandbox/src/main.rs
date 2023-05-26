@@ -103,7 +103,6 @@ fn main_() -> anyhow::Result<()> {
 
     let (width, height) = window.vulkan_drawable_size();
     let state = SharedState {
-        cam_x: 3.0,
         cam_y: 1.6,
         cam_yaw: 1.56,
         width,
@@ -211,10 +210,10 @@ fn main_() -> anyhow::Result<()> {
                         Some(Keycode::Num5) => state.debug_value = 5,
                         Some(Keycode::Num6) => state.debug_value = 6,
                         Some(Keycode::Num7) => state.debug_value = 7,
-                        Some(Keycode::W) => state.dz = -1.0,
-                        Some(Keycode::A) => state.dx = -1.0,
-                        Some(Keycode::S) => state.dz = 1.0,
-                        Some(Keycode::D) => state.dx = 1.0,
+                        Some(Keycode::W) => state.dz = 1.0,
+                        Some(Keycode::S) => state.dz = -1.0,
+                        Some(Keycode::A) => state.dx = 1.0,
+                        Some(Keycode::D) => state.dx = -1.0,
                         Some(Keycode::Q) => state.dy = 1.0,
                         Some(Keycode::X) => state.dy = -1.0,
                         Some(Keycode::LShift) => state.sprinting = true,
@@ -232,10 +231,10 @@ fn main_() -> anyhow::Result<()> {
                         state.immediate_present = !state.immediate_present;
                         state.queued_resize = Some(Instant::now());
                     }
-                    Some(Keycode::S) if state.dz > 0.0 => state.dz = 0.0,
-                    Some(Keycode::W) if state.dz < 0.0 => state.dz = 0.0,
-                    Some(Keycode::D) if state.dx > 0.0 => state.dx = 0.0,
-                    Some(Keycode::A) if state.dx < 0.0 => state.dx = 0.0,
+                    Some(Keycode::W) if state.dz > 0.0 => state.dz = 0.0,
+                    Some(Keycode::S) if state.dz < 0.0 => state.dz = 0.0,
+                    Some(Keycode::A) if state.dx > 0.0 => state.dx = 0.0,
+                    Some(Keycode::D) if state.dx < 0.0 => state.dx = 0.0,
                     Some(Keycode::Q) if state.dy > 0.0 => state.dy = 0.0,
                     Some(Keycode::X) if state.dy < 0.0 => state.dy = 0.0,
                     Some(Keycode::LShift) => state.sprinting = false,
@@ -245,8 +244,8 @@ fn main_() -> anyhow::Result<()> {
                 Event::ControllerAxisMotion { axis, value, .. } => {
                     analog_controls = true;
                     match axis {
-                        Axis::LeftX => state.dx = get_axis_deadzoned(value),
-                        Axis::LeftY => state.dz = get_axis_deadzoned(value),
+                        Axis::LeftX => state.dx = -get_axis_deadzoned(value),
+                        Axis::LeftY => state.dz = -get_axis_deadzoned(value),
                         Axis::TriggerRight if value != 0 => state.dy = value as f32 / i16::MAX as f32,
                         Axis::TriggerRight if state.dy > 0.0 => state.dy = 0.0,
                         Axis::TriggerLeft if value != 0 => state.dy = -(value as f32 / i16::MAX as f32),
@@ -271,8 +270,8 @@ fn main_() -> anyhow::Result<()> {
 
                 Event::MouseMotion { xrel, yrel, .. } => {
                     if state.mouse_look {
-                        state.cam_yaw_once_delta += -xrel as f32 / 750.0;
-                        state.cam_pitch_once_delta += -yrel as f32 / 750.0;
+                        state.cam_yaw_once_delta -= xrel as f32 / 750.0;
+                        state.cam_pitch_once_delta += yrel as f32 / 750.0;
                     }
                 }
 
@@ -309,7 +308,7 @@ fn main_() -> anyhow::Result<()> {
             if let Some(controller) = &controller {
                 let speed = 2.0 / state.refresh_rate as f32;
                 state.cam_yaw_delta = -get_axis_deadzoned(controller.axis(Axis::RightX)) * speed;
-                state.cam_pitch_delta = -get_axis_deadzoned(controller.axis(Axis::RightY)) * speed;
+                state.cam_pitch_delta = get_axis_deadzoned(controller.axis(Axis::RightY)) * speed;
             }
         }
     }
@@ -568,6 +567,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
             scene = renderer::Scene::new(&physical_device);
             scene.camera.orientation = Quat::from_rotation_y(state.cam_yaw) * Quat::from_rotation_x(state.cam_pitch);
             scene.camera.position = Vec3::new(state.cam_x, state.cam_y, state.cam_z);
+            scene.world_space = renderer::CoordinateSystem::GLTF;
 
             {
                 profiling::scope!("queue meshes to render");
@@ -578,8 +578,11 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
                     .iter()
                     .map(|animation| (state.game_time % animation.end_time, animation))
                     .collect::<Vec<(f32, &gltf::Animation)>>();
-                let smol_ame_transform =
-                    Mat4::from_scale(Vec3::ONE * 0.7) * Mat4::from_quat(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+                let smol_ame_transform = Mat4::from_scale_rotation_translation(
+                    Vec3::ONE * 0.7,
+                    Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2),
+                    Vec3::new(3.0, 0.0, -0.5),
+                );
                 smol_ame_model.queue_animated(&mut scene, smol_ame_transform, &animations)?;
             }
         }
@@ -602,7 +605,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
 
         {
             profiling::scope!("rendering (vulkan calls)");
-            let frame_index = { renderer.wait_frame(&swapchain)? };
+            let frame_index = renderer.wait_frame(&swapchain)?;
             match renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, scene, debug_value) {
                 Ok(_) => {}
                 Err(err) => log::warn!("Error during regular frame rendering: {}", err),

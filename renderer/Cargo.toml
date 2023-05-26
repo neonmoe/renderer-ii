@@ -16,7 +16,6 @@ profiling = { version = "1.0" }
 raw-window-handle = { version = "0.5.1" }
 # requires std, until error_in_core is stabilized
 thiserror = { version = "1.0" }
-typed-arena = { version = "2.0", default-features = false }
 vk-profile = { path = "../vk-profile" }
 
 [features]

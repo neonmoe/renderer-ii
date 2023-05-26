@@ -1,6 +1,6 @@
-use crate::image_loading::{self, ntex, ImageLoadingError, TextureKind};
 use crate::{gltf_json, GltfLoadingError};
-use ash::vk;
+use renderer::image_loading::{self, ntex, ImageLoadingError, TextureKind};
+use renderer::vk;
 use renderer::{ForBuffers, ForImages, PbrFactors, VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use std::fs;
 use std::path::Path;
