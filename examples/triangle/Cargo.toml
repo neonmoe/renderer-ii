@@ -8,5 +8,8 @@ arrayvec = { version = "0.7", default-features = false }
 bytemuck = { version = "1.9" }
 glam = { version = "*", default-features = false } # Inherit version and features from renderer
 log = { version = "0.4" }
-renderer = { path = "../../renderer", features = ["vulkan-validation"] }
+renderer = { path = "../../renderer" }
 sdl2 = { git = "https://github.com/Rust-SDL2/rust-sdl2", features = ["raw-window-handle"] }
+
+[features]
+vulkan-validation = ["renderer/vulkan-validation"]

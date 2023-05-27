@@ -193,8 +193,7 @@ fn filter_capable_device(
     };
     let mut graphics_queue_family = None;
     let mut surface_queue_family = None;
-    let mut transfer_queue_family = None;
-    for (index, queue_family_properties) in queue_families.into_iter().enumerate() {
+    for (index, queue_family_properties) in queue_families.iter().enumerate() {
         let queue_family = QueueFamily {
             index: index as u32,
             max_count: queue_family_properties.queue_count as usize,
@@ -211,23 +210,48 @@ fn filter_capable_device(
                 surface_queue_family = Some(queue_family);
             }
         }
-        // Prefer transfer-only queues, as they can probably do
-        // transfers without disturbing rendering.
-        let transfer_only = queue_family_properties.queue_flags.contains(vk::QueueFlags::TRANSFER)
-            && !queue_family_properties.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-            && !queue_family_properties.queue_flags.contains(vk::QueueFlags::COMPUTE);
-        if transfer_queue_family.is_none() || transfer_only {
-            transfer_queue_family = Some(queue_family);
-        }
     }
 
-    // TODO: Add vk-profile checks for formats
+    let mut any_transfer_queue_family = None;
+    let mut dedicated_transfer_queue_family = None;
+    let mut non_graphics_transfer_queue_family = None;
+    for (index, queue_family_properties) in queue_families.iter().enumerate() {
+        let queue_family = QueueFamily {
+            index: index as u32,
+            max_count: queue_family_properties.queue_count as usize,
+        };
+        let has_transfer = queue_family_properties.queue_flags.contains(vk::QueueFlags::TRANSFER);
+        let has_graphics = queue_family_properties.queue_flags.contains(vk::QueueFlags::GRAPHICS);
+        let has_compute = queue_family_properties.queue_flags.contains(vk::QueueFlags::COMPUTE);
+        if any_transfer_queue_family.is_none() {
+            any_transfer_queue_family = Some(queue_family);
+        }
+        if dedicated_transfer_queue_family.is_none() && has_transfer && !has_graphics && !has_compute {
+            dedicated_transfer_queue_family = Some(queue_family);
+        }
+        if non_graphics_transfer_queue_family.is_none() && has_transfer && Some(queue_family) != graphics_queue_family {
+            non_graphics_transfer_queue_family = Some(queue_family);
+        }
+    }
+    let transfer_queue_family = dedicated_transfer_queue_family
+        .or(non_graphics_transfer_queue_family)
+        .or(any_transfer_queue_family);
+
+    let profile_optimal_tiling_features = vk_profile::all_optimal_tiling_features!();
     let format_supported = |format: vk::Format, flags: vk::FormatFeatureFlags| -> bool {
         let format_properties = unsafe {
             profiling::scope!("vk::get_physical_device_format_properties");
             instance.get_physical_device_format_properties(physical_device, format)
         };
-        format_properties.optimal_tiling_features.contains(flags)
+        if !format_properties.optimal_tiling_features.contains(flags) {
+            return false;
+        }
+        for (format_, optimal_tiling_features) in profile_optimal_tiling_features {
+            if format == format_ {
+                return optimal_tiling_features.contains(flags);
+            }
+        }
+        false
     };
     let mut require_format = |format: vk::Format, flags: vk::FormatFeatureFlags| -> bool {
         if !format_supported(format, flags) {

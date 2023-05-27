@@ -391,7 +391,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         let in_use = Bytes(renderer::get_allocated_vram_in_use());
         let allocated = Bytes(renderer::get_allocated_vram());
         let peak = Bytes(renderer::get_allocated_vram_peak());
-        log::info!("VRAM usage {when:40} {in_use}/{allocated}, peaked at {peak}");
+        log::info!("VRAM usage {when:40} {in_use}/{allocated},\tpeaked at {peak}");
     }
 
     print_memory_usage("before measurements");
@@ -492,7 +492,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
     }
     let now = Instant::now();
     log::info!(
-        "Spent {:?} loading resources, of which {:?} was waiting for upload.",
+        "Spent {:.2?} loading resources, of which {:.2?} was waiting for upload.",
         now - upload_start,
         now - upload_wait_start
     );

@@ -156,7 +156,7 @@ pub fn load_image(
                         .level_count(1)
                         .base_array_layer(0)
                         .layer_count(1);
-                    let barrier_from_undefined_to_transfer_dst = [vk::ImageMemoryBarrier2::default()
+                    let layout_to_transfer_dst = [vk::ImageMemoryBarrier2::default()
                         .image(image_allocation.inner)
                         .subresource_range(subresource_range)
                         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -167,8 +167,9 @@ pub fn load_image(
                         .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                         .src_stage_mask(vk::PipelineStageFlags2::NONE)
                         .dst_stage_mask(vk::PipelineStageFlags2::COPY)];
-                    let dep_info = vk::DependencyInfo::default().image_memory_barriers(&barrier_from_undefined_to_transfer_dst);
+                    let dep_info = vk::DependencyInfo::default().image_memory_barriers(&layout_to_transfer_dst);
                     unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+
                     let subresource_layers_dst = vk::ImageSubresourceLayers::default()
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .mip_level(mip_level as u32)
@@ -191,6 +192,17 @@ pub fn load_image(
                             &[image_copy_region],
                         );
                     }
+
+                    let release_to_graphics_queue = [vk::ImageMemoryBarrier2::default()
+                        .image(image_allocation.inner)
+                        .subresource_range(subresource_range)
+                        .src_queue_family_index(transfer_queue_family)
+                        .dst_queue_family_index(graphics_queue_family)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .src_stage_mask(vk::PipelineStageFlags2::COPY)];
+                    let dep_info = vk::DependencyInfo::default().image_memory_barriers(&release_to_graphics_queue);
+                    unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+
                     current_mip_level_extent.width = (current_mip_level_extent.width / 2).max(1);
                     current_mip_level_extent.height = (current_mip_level_extent.height / 2).max(1);
                     current_mip_level_extent.depth = (current_mip_level_extent.depth / 2).max(1);
@@ -205,7 +217,7 @@ pub fn load_image(
                         .level_count(1)
                         .base_array_layer(0)
                         .layer_count(1);
-                    let barrier_from_transfer_dst_to_shader = [vk::ImageMemoryBarrier2::default()
+                    let layout_to_shader_and_acquire_from_transfer_queue = [vk::ImageMemoryBarrier2::default()
                         .image(image_allocation.inner)
                         .subresource_range(subresource_range)
                         .src_queue_family_index(transfer_queue_family)
@@ -216,7 +228,7 @@ pub fn load_image(
                         .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                         .src_stage_mask(vk::PipelineStageFlags2::COPY)
                         .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)];
-                    let dep_info = vk::DependencyInfo::default().image_memory_barriers(&barrier_from_transfer_dst_to_shader);
+                    let dep_info = vk::DependencyInfo::default().image_memory_barriers(&layout_to_shader_and_acquire_from_transfer_queue);
                     unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
                 }
             },

@@ -26,9 +26,9 @@ use core::sync::atomic::Ordering;
 #[derive(Clone)]
 pub struct Device {
     pub inner: &'static ash::Device,
-    pub sync2: ash::extensions::khr::Synchronization2,
-    pub surface: ash::extensions::khr::Surface,
-    pub swapchain: ash::extensions::khr::Swapchain,
+    pub sync2: khr::Synchronization2,
+    pub surface: khr::Surface,
+    pub swapchain: khr::Swapchain,
     pub graphics_queue: vk::Queue,
     pub surface_queue: vk::Queue,
     pub transfer_queue: vk::Queue,
