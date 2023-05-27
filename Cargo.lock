@@ -445,12 +445,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "heck"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
-
-[[package]]
 name = "hermit-abi"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -905,7 +899,6 @@ dependencies = [
  "profiling",
  "raw-window-handle",
  "thiserror",
- "vk-profile",
 ]
 
 [[package]]
@@ -1094,12 +1087,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tinyjson"
-version = "2.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ab95735ea2c8fd51154d01e39cf13912a78071c2d89abc49a7ef102a7dd725a"
-
-[[package]]
 name = "tracing"
 version = "0.1.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1216,16 +1203,6 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
-
-[[package]]
-name = "vk-profile"
-version = "0.1.0"
-dependencies = [
- "cfg-if",
- "heck",
- "once_cell",
- "tinyjson",
-]
 
 [[package]]
 name = "wasi"

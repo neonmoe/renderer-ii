@@ -5,7 +5,7 @@ use core::ffi::c_char;
 use core::ffi::CStr;
 use raw_window_handle::HasRawDisplayHandle;
 
-pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_3; // makes renderdoc not crash, should be 1.2
+pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_2;
 
 #[derive(thiserror::Error, Debug)]
 pub enum InstanceCreationError {
@@ -38,14 +38,21 @@ impl Instance {
         let app_name = app_name.to_str().unwrap_or("<invalid utf-8>");
         log::debug!("Creating Vulkan instance with application name: \"{app_name}\", version: {major_version}.{minor_version}.{patch_version} (0x{version:X})");
 
-        let mut layers: ArrayVec<*const c_char, 1> = ArrayVec::new();
+        let mut layers: ArrayVec<*const c_char, 2> = ArrayVec::new();
         let mut validation_layer_enabled = false;
+        let mut profiles_layer_enabled = false;
         if cfg!(feature = "vulkan-validation") {
-            if is_validation_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
+            if is_layer_supported(&entry, "VK_LAYER_KHRONOS_validation") {
                 layers.push(cstr!("VK_LAYER_KHRONOS_validation").as_ptr());
                 validation_layer_enabled = true;
             } else {
                 log::error!("vulkan-validation feature is enabled, but VK_LAYER_KHRONOS_validation is not available on this system");
+            }
+            if is_layer_supported(&entry, "VK_LAYER_KHRONOS_profiles") {
+                layers.push(cstr!("VK_LAYER_KHRONOS_profiles").as_ptr());
+                profiles_layer_enabled = true;
+            } else {
+                log::error!("vulkan-validation feature is enabled, but VK_LAYER_KHRONOS_profiles is not available on this system");
             }
         }
 
@@ -82,6 +89,15 @@ impl Instance {
             create_info = create_info.push_next(&mut validation_features);
         }
 
+        if profiles_layer_enabled {
+            // ash doesn't have VkProfileLayerSettingsEXT, if/when that's
+            // available, prefer include_str!ing the JSON here.
+            std::env::set_var(
+                "VK_KHRONOS_PROFILES_PROFILE_FILE",
+                "renderer/src/vk-profiles/VP_LUNARG_desktop_baseline_2023.json",
+            );
+        }
+
         let mut debug_utils_messenger_create_info = crate::create_debug_utils_messenger_info();
         if debug_utils_available {
             create_info = create_info.push_next(&mut debug_utils_messenger_create_info);
@@ -107,7 +123,7 @@ fn make_api_version(variant: u32, major: u32, minor: u32, patch: u32) -> u32 {
 }
 
 #[profiling::function]
-fn is_validation_layer_supported(entry: &Entry, target_layer_name: &str) -> bool {
+fn is_layer_supported(entry: &Entry, target_layer_name: &str) -> bool {
     match {
         profiling::scope!("vk::enumerate_instance_layer_properties");
         entry.enumerate_instance_layer_properties()

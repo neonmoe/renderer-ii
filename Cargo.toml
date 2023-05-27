@@ -3,7 +3,6 @@ members = [
     "gltf",
     "make-ntex",
     "renderer",
-    "vk-profile",
     "examples/sandbox",
     "examples/triangle",
 ]

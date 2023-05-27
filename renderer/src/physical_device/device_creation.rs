@@ -2,7 +2,6 @@ use crate::physical_device::{physical_device_features, PhysicalDevice, QueueFami
 use crate::vulkan_raii::Device;
 use alloc::boxed::Box;
 use arrayvec::ArrayVec;
-use ash::extensions::khr;
 use ash::{vk, Entry, Instance};
 use core::ffi::c_char;
 
@@ -24,17 +23,21 @@ impl PhysicalDevice {
         let queue_families = [self.graphics_queue_family, self.transfer_queue_family, self.surface_queue_family];
         let queue_create_infos = create_device_queue_create_infos(&queue_families, &ones);
 
-        let mut extensions: ArrayVec<*const c_char, 3> = ArrayVec::new();
-        extensions.push(khr::Swapchain::NAME.as_ptr());
-        log::debug!("Device extension: {}", khr::Swapchain::NAME.to_str().unwrap());
-        extensions.push(khr::Synchronization2::NAME.as_ptr());
-        log::debug!("Device extension: {}", khr::Synchronization2::NAME.to_str().unwrap());
+        let mut extensions: ArrayVec<*const c_char, 4> = ArrayVec::new();
+        macro_rules! add_extension {
+            ($name:literal) => {{
+                let c_str = cstr!($name);
+                extensions.push(c_str.as_ptr());
+                log::debug!("Device extension: {}", $name);
+            }};
+        }
+        add_extension!("VK_KHR_swapchain");
+        add_extension!("VK_KHR_synchronization2");
+        add_extension!("VK_KHR_portability_subset");
         if self.extension_supported("VK_EXT_memory_budget") {
-            extensions.push(cstr!("VK_EXT_memory_budget").as_ptr());
-            log::debug!("Device extension (optional): VK_EXT_memory_budget");
+            add_extension!("VK_EXT_memory_budget");
         }
 
-        // TODO: Add vk-profile checks for extensions
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&extensions);

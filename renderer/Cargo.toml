@@ -16,7 +16,6 @@ profiling = { version = "1.0" }
 raw-window-handle = { version = "0.5.1" }
 # requires std, until error_in_core is stabilized
 thiserror = { version = "1.0" }
-vk-profile = { path = "../vk-profile" }
 
 [features]
 profile-with-tracy = ["profiling/profile-with-tracy"]
