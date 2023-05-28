@@ -1,3 +1,5 @@
+// TODO: Use dynamic rendering to clean up the renderer
+
 use crate::arena::{ForBuffers, MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
@@ -248,6 +250,7 @@ impl Renderer {
         self.temp_arena.add_buffer(global_transforms_buffer);
         self.temp_arena.add_buffer(render_settings_buffer);
         self.temp_arena.add_buffer(skinned_mesh_joints_buffer);
+        self.temp_arena.add_buffer(materials_temp_uniform.buffer);
 
         let command_buffer = self.record_command_buffer(
             frame_index,

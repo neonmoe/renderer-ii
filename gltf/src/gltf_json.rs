@@ -76,8 +76,8 @@ pub(crate) struct Buffer {
 #[derive(Deserialize)]
 pub(crate) struct BufferView {
     pub buffer: usize,
-    #[serde(rename = "byteOffset")]
-    pub byte_offset: Option<usize>,
+    #[serde(rename = "byteOffset", default = "const_zero_usize")]
+    pub byte_offset: usize,
     #[serde(rename = "byteLength")]
     pub byte_length: usize,
     #[serde(rename = "byteStride")]
@@ -88,8 +88,8 @@ pub(crate) struct BufferView {
 pub(crate) struct Accessor {
     #[serde(rename = "bufferView")]
     pub buffer_view: Option<usize>,
-    #[serde(rename = "byteOffset")]
-    pub byte_offset: Option<usize>,
+    #[serde(rename = "byteOffset", default = "const_zero_usize")]
+    pub byte_offset: usize,
     #[serde(rename = "componentType")]
     pub component_type: i32,
     pub count: usize,
@@ -126,12 +126,12 @@ pub(crate) struct Material {
     pub occlusion_texture: Option<TextureInfo>,
     #[serde(rename = "emissiveTexture")]
     pub emissive_texture: Option<TextureInfo>,
-    #[serde(rename = "emissiveFactor")]
-    pub emissive_factor: Option<[f32; 3]>,
+    #[serde(rename = "emissiveFactor", default = "const_zero_vec3")]
+    pub emissive_factor: [f32; 3],
     #[serde(rename = "alphaMode", default)]
     pub alpha_mode: AlphaMode,
-    #[serde(rename = "alphaCutoff")]
-    pub alpha_cutoff: Option<f32>,
+    #[serde(rename = "alphaCutoff", default = "const_half_f32")]
+    pub alpha_cutoff: f32,
 }
 
 #[derive(Deserialize, PartialEq, Clone, Copy, Default)]
@@ -147,12 +147,12 @@ pub enum AlphaMode {
 
 #[derive(Deserialize)]
 pub(crate) struct PbrMetallicRoughness {
-    #[serde(rename = "baseColorFactor")]
-    pub base_color_factor: Option<[f32; 4]>,
-    #[serde(rename = "metallicFactor")]
-    pub metallic_factor: Option<f32>,
-    #[serde(rename = "roughnessFactor")]
-    pub roughness_factor: Option<f32>,
+    #[serde(rename = "baseColorFactor", default = "const_one_vec4")]
+    pub base_color_factor: [f32; 4],
+    #[serde(rename = "metallicFactor", default = "const_one_f32")]
+    pub metallic_factor: f32,
+    #[serde(rename = "roughnessFactor", default = "const_one_f32")]
+    pub roughness_factor: f32,
     #[serde(rename = "baseColorTexture")]
     pub base_color_texture: Option<TextureInfo>,
     #[serde(rename = "metallicRoughnessTexture")]
@@ -162,8 +162,14 @@ pub(crate) struct PbrMetallicRoughness {
 #[derive(Deserialize)]
 pub(crate) struct TextureInfo {
     pub index: usize,
-    #[serde(rename = "texCoord")]
-    pub texcoord: Option<u32>,
+    #[serde(rename = "texCoord", default = "const_zero_u32")]
+    pub texcoord: u32,
+    /// The `strength` value from material.occlusionTextureInfo
+    #[serde(default = "const_one_f32")]
+    pub strength: f32,
+    /// The `scale` value from material.normalTextureInfo
+    #[serde(default = "const_one_f32")]
+    pub scale: f32,
 }
 
 #[allow(dead_code)]
@@ -173,10 +179,10 @@ pub(crate) struct Sampler {
     pub mag_filter: Option<u32>,
     #[serde(rename = "minFilter")]
     pub min_filter: Option<u32>,
-    #[serde(rename = "wrapS")]
-    pub wrap_s: Option<u32>,
-    #[serde(rename = "wrapT")]
-    pub wrap_t: Option<u32>,
+    #[serde(rename = "wrapS", default = "const_10497_u32")]
+    pub wrap_s: u32,
+    #[serde(rename = "wrapT", default = "const_10497_u32")]
+    pub wrap_t: u32,
     pub name: Option<String>,
 }
 
@@ -287,4 +293,32 @@ pub(crate) struct Skin {
     #[serde(rename = "inverseBindMatrices")]
     pub inverse_bind_matrices: Option<usize>,
     pub joints: Vec<usize>,
+}
+
+const fn const_one_f32() -> f32 {
+    1.0
+}
+
+const fn const_zero_u32() -> u32 {
+    0
+}
+
+const fn const_zero_usize() -> usize {
+    0
+}
+
+const fn const_zero_vec3() -> [f32; 3] {
+    [0.0; 3]
+}
+
+const fn const_half_f32() -> f32 {
+    0.5
+}
+
+const fn const_one_vec4() -> [f32; 4] {
+    [1.0; 4]
+}
+
+const fn const_10497_u32() -> u32 {
+    10497
 }

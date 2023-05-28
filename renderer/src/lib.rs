@@ -33,9 +33,19 @@ macro_rules! cstr {
 
 // internal modules:
 
+#[cfg(feature = "vulkan-debug-utils")]
 mod debug_utils;
+#[cfg(not(feature = "vulkan-debug-utils"))]
+mod debug_utils {
+    use ash::{vk, Device};
+    use core::fmt::Arguments;
+    #[allow(clippy::needless_pass_by_value)]
+    pub(crate) fn name_vulkan_object<H: vk::Handle>(_device: &Device, _object: H, _name: Arguments) {}
+}
 
-use debug_utils::{create_debug_utils_messenger_info, init_debug_utils, name_vulkan_object};
+use debug_utils::name_vulkan_object;
+#[cfg(feature = "vulkan-debug-utils")]
+use debug_utils::{create_debug_utils_messenger_info, init_debug_utils};
 
 // public-facing modules:
 

@@ -136,8 +136,8 @@ fn main() {
             emissive: None,
             factors: renderer::PbrFactors {
                 base_color: Vec4::new(0.2, 0.8, 0.2, 1.0),
-                emissive: Vec4::ZERO,
-                metallic_roughness_alpha_cutoff: Vec4::ONE * 0.5,
+                emissive_and_occlusion: Vec4::ZERO,
+                alpha_rgh_mtl_normal: Vec4::ONE * 0.5,
             },
             alpha_mode: renderer::AlphaMode::Opaque,
         },

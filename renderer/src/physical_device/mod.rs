@@ -171,7 +171,7 @@ fn filter_capable_device(
         profiling::scope!("vk::get_physical_device_properties");
         instance.get_physical_device_properties(physical_device)
     };
-    let req_vk_version = crate::instance::REQUIRED_VULKAN_VERSION;
+    let req_vk_version = vk::API_VERSION_1_2;
     if props.api_version < req_vk_version {
         reject(PhysicalDeviceRejectionReason::VulkanVersion(
             vk::api_version_major(req_vk_version),
@@ -180,12 +180,12 @@ fn filter_capable_device(
     };
 
     let extensions = get_extensions(instance, physical_device);
-    let mut assert_ext_supported = |ext_name: &'static str| {
+    for c_name in physical_device_features::REQUIRED_DEVICE_FEATURES {
+        let ext_name = c_name.to_str().unwrap();
         if extensions.iter().all(|s| s != ext_name) {
             reject(PhysicalDeviceRejectionReason::Extension(ext_name));
         }
-    };
-    assert_ext_supported(khr::Swapchain::NAME.to_str().unwrap());
+    }
 
     if let Err(reqs) = physical_device_features::has_required_features(instance, physical_device) {
         reject(PhysicalDeviceRejectionReason::DeviceRequirements(reqs));

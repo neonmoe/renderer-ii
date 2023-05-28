@@ -475,7 +475,7 @@ fn create_gltf(
     for mat in &gltf.materials {
         profiling::scope!("reading material");
         let mktex = |images: &[Rc<ImageView>], texture_info: &gltf_json::TextureInfo| {
-            if texture_info.texcoord.is_some() && texture_info.texcoord != Some(0) {
+            if texture_info.texcoord != 0 {
                 return Some(Err(GltfLoadingError::Misc("non-0 texCoord used for texture")));
             }
             let texture = match gltf.textures.get(texture_info.index) {
@@ -508,25 +508,20 @@ fn create_gltf(
         let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
 
         let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
-        let metallic_factor = pbr.metallic_factor.unwrap_or(1.0);
-        let roughness_factor = pbr.roughness_factor.unwrap_or(1.0);
+        let mtl = pbr.metallic_factor;
+        let rgh = pbr.roughness_factor;
+        let em_factor = Vec3::from(mat.emissive_factor);
+        let norm_factor = mat.normal_texture.as_ref().map(|t| t.scale).unwrap_or(1.0);
+        let occl_factor = mat.occlusion_texture.as_ref().map(|t| t.strength).unwrap_or(1.0);
         let alpha_cutoff = if mat.alpha_mode == gltf_json::AlphaMode::Mask {
-            mat.alpha_cutoff.unwrap_or(0.5)
+            mat.alpha_cutoff
         } else {
             0.0
         };
         let factors = PbrFactors {
-            base_color: pbr
-                .base_color_factor
-                .as_ref()
-                .map(|&[r, g, b, a]| Vec4::new(r, g, b, a))
-                .unwrap_or(Vec4::ONE),
-            emissive: mat
-                .emissive_factor
-                .as_ref()
-                .map(|&[r, g, b]| Vec4::new(r, g, b, 0.0))
-                .unwrap_or(Vec4::ZERO),
-            metallic_roughness_alpha_cutoff: Vec4::new(metallic_factor, roughness_factor, alpha_cutoff, 0.0),
+            base_color: Vec4::from(pbr.base_color_factor),
+            emissive_and_occlusion: Vec4::from((em_factor, occl_factor)),
+            alpha_rgh_mtl_normal: Vec4::new(alpha_cutoff, rgh, mtl, norm_factor),
         };
 
         let pipeline_specific_data = PipelineSpecificData::Pbr {
@@ -775,7 +770,7 @@ pub(crate) fn load_image_bytes<'a>(
             .buffers
             .get(buffer_view.buffer)
             .ok_or(GltfLoadingError::Oob("texture buffer"))?;
-        let buffer_offset = buffer_view.byte_offset.unwrap_or(0);
+        let buffer_offset = buffer_view.byte_offset;
         let buffer_size = buffer_view.byte_length;
         let buffer_bytes = if let Some(uri) = buffer.uri.as_ref() {
             let path = resource_path.join(uri);
@@ -934,7 +929,7 @@ fn get_buffer_view_from_accessor(
         None => return Err(GltfLoadingError::Misc("no buffer view")),
     };
     let view = gltf.buffer_views.get(view).ok_or(GltfLoadingError::Oob("buffer view"))?;
-    let offset = view.byte_offset.unwrap_or(0) + accessor.byte_offset.unwrap_or(0);
+    let offset = view.byte_offset + accessor.byte_offset;
     let length = view.byte_length;
     let stride = stride_for(ctype, atype);
     match view.byte_stride {

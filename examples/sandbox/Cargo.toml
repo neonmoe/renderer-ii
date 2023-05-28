@@ -18,4 +18,4 @@ tracy-client = { version = "0.15.2", optional = true }
 profile-with-tracy = ["renderer/profile-with-tracy", "tracy-client"]
 profile-with-tracing = ["renderer/profile-with-tracing"]
 profile-with-puffin = ["renderer/profile-with-puffin"]
-vulkan-validation = ["renderer/vulkan-validation"]
+vulkan-validation = ["renderer/vulkan-validation", "renderer/vulkan-debug-utils"]

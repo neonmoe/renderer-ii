@@ -64,7 +64,7 @@ struct PendingWrite<'a> {
 }
 
 pub(crate) struct MaterialTempUniforms {
-    buffer: Buffer,
+    pub buffer: Buffer,
     pbr_factors_offsets_and_sizes: PipelineMap<(vk::DeviceSize, vk::DeviceSize)>,
 }
 
@@ -287,8 +287,8 @@ impl Descriptors {
             let mut factors_soa = PbrFactorsSoa::zeroed();
             for (i, factors) in factors.iter().enumerate() {
                 factors_soa.base_color[i] = factors.base_color;
-                factors_soa.emissive[i] = factors.emissive;
-                factors_soa.metallic_roughness_alpha_cutoff[i] = factors.metallic_roughness_alpha_cutoff;
+                factors_soa.emissive_and_occlusion[i] = factors.emissive_and_occlusion;
+                factors_soa.alpha_rgh_mtl_normal[i] = factors.alpha_rgh_mtl_normal;
             }
             let factors_soa = [factors_soa];
             let factors_soa = bytemuck::cast_slice(&factors_soa);

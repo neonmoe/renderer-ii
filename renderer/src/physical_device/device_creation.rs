@@ -24,20 +24,16 @@ impl PhysicalDevice {
         let queue_create_infos = create_device_queue_create_infos(&queue_families, &ones);
 
         let mut extensions: ArrayVec<*const c_char, 4> = ArrayVec::new();
-        macro_rules! add_extension {
-            ($name:literal) => {{
-                let c_str = cstr!($name);
-                extensions.push(c_str.as_ptr());
-                log::debug!("Device extension: {}", $name);
-            }};
+        for name in physical_device_features::REQUIRED_DEVICE_FEATURES {
+            extensions.push(name.as_ptr());
+            log::debug!("Device extension: {}", name.to_str().unwrap());
         }
-        add_extension!("VK_KHR_swapchain");
-        add_extension!("VK_KHR_synchronization2");
-        if self.extension_supported("VK_KHR_portability_subset") {
-            add_extension!("VK_KHR_portability_subset");
-        }
-        if self.extension_supported("VK_EXT_memory_budget") {
-            add_extension!("VK_EXT_memory_budget");
+        for name in physical_device_features::OPTIONAL_DEVICE_FEATURES {
+            let name_str = name.to_str().unwrap();
+            if self.extension_supported(name_str) {
+                extensions.push(name.as_ptr());
+                log::debug!("Device extension (optional): {}", name_str);
+            }
         }
 
         let device_create_info = vk::DeviceCreateInfo::default()

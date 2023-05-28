@@ -1,11 +1,10 @@
 use arrayvec::ArrayVec;
-use ash::extensions::ext;
+#[cfg(feature = "vulkan-debug-utils")]
+use ash::extensions::ext::DebugUtils;
 use ash::{vk, Entry};
 use core::ffi::c_char;
 use core::ffi::CStr;
 use raw_window_handle::HasRawDisplayHandle;
-
-pub static REQUIRED_VULKAN_VERSION: u32 = vk::API_VERSION_1_2;
 
 #[derive(thiserror::Error, Debug)]
 pub enum InstanceCreationError {
@@ -31,10 +30,13 @@ impl Instance {
         profiling::scope!("vulkan instance creation");
         let version = make_api_version(0, major_version, minor_version, patch_version);
         let entry = Entry::linked();
+        // NOTE: The API version given to VkApplicationInfo is a maximum, not a
+        // minimum. UNASSIGNED-BestPractices-vkCreateDevice-API-version-mismatch
+        // is expected.
         let app_info = vk::ApplicationInfo::default()
             .application_name(app_name)
             .application_version(version)
-            .api_version(REQUIRED_VULKAN_VERSION);
+            .api_version(vk::API_VERSION_1_3);
         let app_name = app_name.to_str().unwrap_or("<invalid utf-8>");
         log::debug!("Creating Vulkan instance with application name: \"{app_name}\", version: {major_version}.{minor_version}.{patch_version} (0x{version:X})");
 
@@ -56,6 +58,7 @@ impl Instance {
             }
         }
 
+        #[allow(unused_mut)]
         let mut extensions = ash_window::enumerate_required_extensions(display.raw_display_handle())
             .map_err(InstanceCreationError::WindowExtensionEnumeration)?
             .iter()
@@ -66,11 +69,13 @@ impl Instance {
                 cs
             })
             .collect::<ArrayVec<*const c_char, 4>>();
-        let debug_utils_name = ext::DebugUtils::NAME.to_str().unwrap();
-        let debug_utils_available = is_extension_supported(&entry, debug_utils_name);
-        if debug_utils_available {
-            extensions.push(ext::DebugUtils::NAME.as_ptr());
-            log::debug!("Instance extension (optional): {debug_utils_name}");
+        #[cfg(feature = "vulkan-debug-utils")]
+        let mut debug_utils_enabled = false;
+        #[cfg(feature = "vulkan-debug-utils")]
+        if is_extension_supported(&entry, DebugUtils::NAME) {
+            extensions.push(DebugUtils::NAME.as_ptr());
+            debug_utils_enabled = true;
+            log::debug!("Instance extension (optional): {}", DebugUtils::NAME.to_str().unwrap());
         }
 
         let mut create_info = vk::InstanceCreateInfo::default()
@@ -98,8 +103,10 @@ impl Instance {
             );
         }
 
+        #[cfg(feature = "vulkan-debug-utils")]
         let mut debug_utils_messenger_create_info = crate::create_debug_utils_messenger_info();
-        if debug_utils_available {
+        #[cfg(feature = "vulkan-debug-utils")]
+        if debug_utils_enabled {
             create_info = create_info.push_next(&mut debug_utils_messenger_create_info);
         }
 
@@ -108,10 +115,9 @@ impl Instance {
             unsafe { entry.create_instance(&create_info, None) }.map_err(InstanceCreationError::InstanceCreation)?
         };
 
-        if debug_utils_available {
+        #[cfg(feature = "vulkan-debug-utils")]
+        if debug_utils_enabled {
             crate::init_debug_utils(&entry, &instance);
-            let debug_utils = ash::extensions::ext::DebugUtils::new(&entry, &instance);
-            let _ = unsafe { debug_utils.create_debug_utils_messenger(&debug_utils_messenger_create_info, None) };
         }
 
         Ok(Instance { entry, inner: instance })
@@ -138,7 +144,7 @@ fn is_layer_supported(entry: &Entry, target_layer_name: &str) -> bool {
 }
 
 #[profiling::function]
-fn is_extension_supported(entry: &Entry, target_extension_name: &str) -> bool {
+fn is_extension_supported(entry: &Entry, target_extension_name: &CStr) -> bool {
     match {
         profiling::scope!("vk::enumerate_instance_extension_properties");
         entry.enumerate_instance_extension_properties(None)
@@ -146,7 +152,7 @@ fn is_extension_supported(entry: &Entry, target_extension_name: &str) -> bool {
         Err(_) => false,
         Ok(extensions) => extensions.iter().any(|extension_properties| {
             let extension_name_slice = &extension_properties.extension_name[..];
-            let extension_name = unsafe { CStr::from_ptr(extension_name_slice.as_ptr()) }.to_string_lossy();
+            let extension_name = unsafe { CStr::from_ptr(extension_name_slice.as_ptr()) };
             extension_name == target_extension_name
         }),
     }

@@ -7,27 +7,27 @@ use bytemuck::{Pod, Zeroable};
 use core::hash::{Hash, Hasher};
 use glam::Vec4;
 
-// TODO: Add the rest of the gltf factors
-
+/// Rust-side representation of the std430-layout `PbrFactorsSoa` struct in
+/// main.frag.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct PbrFactorsSoa {
     /// (r, g, b, a).
     pub base_color: [Vec4; MAX_TEXTURE_COUNT as usize],
-    /// (r, g, b, _). Vec4 to make sure there's no padding/alignment issues.
-    pub emissive: [Vec4; MAX_TEXTURE_COUNT as usize],
-    /// (metallic, roughness, alpha_cutoff, _). Vec4 to make sure there's no padding.
-    pub metallic_roughness_alpha_cutoff: [Vec4; MAX_TEXTURE_COUNT as usize],
+    /// (emissive r, .. g, .. b, occlusion strength)
+    pub emissive_and_occlusion: [Vec4; MAX_TEXTURE_COUNT as usize],
+    /// (alpha cutoff, roughness, metallic, normal scale)
+    pub alpha_rgh_mtl_normal: [Vec4; MAX_TEXTURE_COUNT as usize],
 }
 
 #[derive(Clone, Copy, Zeroable)]
 pub struct PbrFactors {
     /// (r, g, b, a).
     pub base_color: Vec4,
-    /// (r, g, b, _). Vec4 to make sure there's no padding/alignment issues.
-    pub emissive: Vec4,
-    /// (metallic, roughness, alpha_cutoff, _). Vec4 to make sure there's no padding.
-    pub metallic_roughness_alpha_cutoff: Vec4,
+    /// (emissive r, .. g, .. b, occlusion strength)
+    pub emissive_and_occlusion: Vec4,
+    /// (alpha cutoff, roughness, metallic, normal scale)
+    pub alpha_rgh_mtl_normal: Vec4,
 }
 
 #[derive(Clone, Copy)]
