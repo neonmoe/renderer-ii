@@ -126,43 +126,24 @@ fn main() {
         )
     };
 
-    let triangle_material = {
-        use renderer::vk;
-
-        let pbr_factors = [renderer::PbrFactors {
-            base_color: Vec4::new(0.2, 0.8, 0.2, 1.0),
-            emissive: Vec4::ZERO,
-            metallic_roughness_alpha_cutoff: Vec4::ONE * 0.5,
-        }];
-        let pbr_factors = cast_slice(&pbr_factors);
-        let staging_arena = Some(&mut staging_arena);
-        let uploader = Some(&mut uploader);
-        let info = vk::BufferCreateInfo {
-            size: pbr_factors.len() as vk::DeviceSize,
-            usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            ..Default::default()
-        };
-        let buf = buffer_arena
-            .create_buffer(info, pbr_factors, staging_arena, uploader, format_args!("triangle pbr factors"))
-            .unwrap();
-        let buf = Rc::new(buf);
-
-        renderer::Material::new(
-            &mut descriptors,
-            renderer::PipelineSpecificData::Pbr {
-                base_color: None,
-                metallic_roughness: None,
-                normal: None,
-                occlusion: None,
-                emissive: None,
-                factors: (buf, 0, info.size),
-                alpha_mode: renderer::AlphaMode::Opaque,
+    let triangle_material = renderer::Material::new(
+        &mut descriptors,
+        renderer::PipelineSpecificData::Pbr {
+            base_color: None,
+            metallic_roughness: None,
+            normal: None,
+            occlusion: None,
+            emissive: None,
+            factors: renderer::PbrFactors {
+                base_color: Vec4::new(0.2, 0.8, 0.2, 1.0),
+                emissive: Vec4::ZERO,
+                metallic_roughness_alpha_cutoff: Vec4::ONE * 0.5,
             },
-            ArrayString::from("triangle material").unwrap(),
-        )
-        .unwrap()
-    };
+            alpha_mode: renderer::AlphaMode::Opaque,
+        },
+        ArrayString::from("triangle material").unwrap(),
+    )
+    .unwrap();
 
     uploader.wait(None).unwrap();
     drop(uploader);

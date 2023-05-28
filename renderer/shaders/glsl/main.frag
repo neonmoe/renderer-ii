@@ -16,11 +16,11 @@ layout(set = 1, binding = 3) uniform texture2D normal[MAX_TEXTURE_COUNT];
 layout(set = 1, binding = 4) uniform texture2D occlusion[MAX_TEXTURE_COUNT];
 layout(set = 1, binding = 5) uniform texture2D emissive[MAX_TEXTURE_COUNT];
 layout(set = 1, binding = 6) uniform GltfFactors {
-    vec4 base_color;
-    vec4 emissive;
-    vec4 metallic_roughness_alpha_cutoff;
+    vec4 base_color[MAX_TEXTURE_COUNT];
+    vec4 emissive[MAX_TEXTURE_COUNT];
+    vec4 metallic_roughness_alpha_cutoff[MAX_TEXTURE_COUNT];
 }
-factors[MAX_TEXTURE_COUNT];
+factors;
 
 layout(push_constant) uniform PushConstantStruct { uint texture_index; }
 push_constant;
@@ -39,9 +39,9 @@ void main() {
     vec3 emissive =
         texture(sampler2D(emissive[push_constant.texture_index], tex_sampler), in_uv).xyz;
 
-    vec4 base_color_factor = factors[push_constant.texture_index].base_color;
-    vec3 emissive_factor = factors[push_constant.texture_index].emissive.xyz;
-    vec3 mtl_rgh_alpha = factors[push_constant.texture_index].metallic_roughness_alpha_cutoff.xyz;
+    vec4 base_color_factor = factors.base_color[push_constant.texture_index];
+    vec3 emissive_factor = factors.emissive[push_constant.texture_index].xyz;
+    vec3 mtl_rgh_alpha = factors.metallic_roughness_alpha_cutoff[push_constant.texture_index].xyz;
     float metallic_factor = mtl_rgh_alpha.x;
     float roughness_factor = mtl_rgh_alpha.y;
     float alpha_cutoff = mtl_rgh_alpha.z;
@@ -84,7 +84,7 @@ void main() {
         out_color = vec4(normal, 1.0);
         break;
     case 4:
-        out_color = occlusion;
+        out_color = vec4(0.0, roughness, metallic, 1.0);
         break;
     case 5:
         out_color = vec4(emissive, 1.0);

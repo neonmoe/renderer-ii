@@ -471,25 +471,8 @@ fn create_gltf(
         ));
     }
 
-    let factors_buffer = {
-        profiling::scope!("uploading material factors");
-        let material_factors = get_material_factors(&gltf)?;
-        let factors_slice = bytemuck::cast_slice(&material_factors);
-        let buffer_create_info = get_material_factors_buffer_create_info(factors_slice.len() as vk::DeviceSize);
-        let factors_buffer = buffer_arena
-            .create_buffer(
-                buffer_create_info,
-                factors_slice,
-                Some(staging_arena),
-                Some(uploader),
-                format_args!("material parameters ({})", gltf_path.display()),
-            )
-            .map_err(GltfLoadingError::BufferCreationFromMaterialParameters)?;
-        Rc::new(factors_buffer)
-    };
-
     let mut materials = Vec::with_capacity(gltf.materials.len());
-    for (i, mat) in gltf.materials.iter().enumerate() {
+    for mat in &gltf.materials {
         profiling::scope!("reading material");
         let mktex = |images: &[Rc<ImageView>], texture_info: &gltf_json::TextureInfo| {
             if texture_info.texcoord.is_some() && texture_info.texcoord != Some(0) {
@@ -524,8 +507,27 @@ fn create_gltf(
         let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex)));
         let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
 
-        let factors_size = mem::size_of::<PbrFactors>() as u64;
-        let factors = (factors_buffer.clone(), factors_size * i as u64, factors_size);
+        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
+        let metallic_factor = pbr.metallic_factor.unwrap_or(1.0);
+        let roughness_factor = pbr.roughness_factor.unwrap_or(1.0);
+        let alpha_cutoff = if mat.alpha_mode == gltf_json::AlphaMode::Mask {
+            mat.alpha_cutoff.unwrap_or(0.5)
+        } else {
+            0.0
+        };
+        let factors = PbrFactors {
+            base_color: pbr
+                .base_color_factor
+                .as_ref()
+                .map(|&[r, g, b, a]| Vec4::new(r, g, b, a))
+                .unwrap_or(Vec4::ONE),
+            emissive: mat
+                .emissive_factor
+                .as_ref()
+                .map(|&[r, g, b]| Vec4::new(r, g, b, 0.0))
+                .unwrap_or(Vec4::ZERO),
+            metallic_roughness_alpha_cutoff: Vec4::new(metallic_factor, roughness_factor, alpha_cutoff, 0.0),
+        };
 
         let pipeline_specific_data = PipelineSpecificData::Pbr {
             base_color,
@@ -974,13 +976,6 @@ pub(crate) fn get_mesh_buffer_create_info(size: vk::DeviceSize) -> vk::BufferCre
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
 }
 
-pub(crate) fn get_material_factors_buffer_create_info(size: vk::DeviceSize) -> vk::BufferCreateInfo<'static> {
-    vk::BufferCreateInfo::default()
-        .size(size)
-        .usage(vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-}
-
 pub(crate) fn get_gltf_texture_kinds(gltf: &gltf_json::GltfJson) -> Result<HashMap<usize, TextureKind>, GltfLoadingError> {
     profiling::scope!("image kind map creation");
     let mut image_texture_kinds = HashMap::new();
@@ -1022,34 +1017,6 @@ pub(crate) fn get_gltf_texture_kinds(gltf: &gltf_json::GltfJson) -> Result<HashM
         }
     }
     Ok(image_texture_kinds)
-}
-
-pub(crate) fn get_material_factors(gltf: &gltf_json::GltfJson) -> Result<Vec<PbrFactors>, GltfLoadingError> {
-    let mut material_factors = Vec::with_capacity(gltf.materials.len());
-    for mat in &gltf.materials {
-        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
-        let metallic_factor = pbr.metallic_factor.unwrap_or(1.0);
-        let roughness_factor = pbr.roughness_factor.unwrap_or(1.0);
-        let alpha_cutoff = if mat.alpha_mode == gltf_json::AlphaMode::Mask {
-            mat.alpha_cutoff.unwrap_or(0.5)
-        } else {
-            0.0
-        };
-        material_factors.push(PbrFactors {
-            base_color: pbr
-                .base_color_factor
-                .as_ref()
-                .map(|&[r, g, b, a]| Vec4::new(r, g, b, a))
-                .unwrap_or(Vec4::ONE),
-            emissive: mat
-                .emissive_factor
-                .as_ref()
-                .map(|&[r, g, b]| Vec4::new(r, g, b, 0.0))
-                .unwrap_or(Vec4::ZERO),
-            metallic_roughness_alpha_cutoff: Vec4::new(metallic_factor, roughness_factor, alpha_cutoff, 0.0),
-        });
-    }
-    Ok(material_factors)
 }
 
 fn parse_float(ctype: i32, x: &[u8]) -> Result<f32, GltfLoadingError> {

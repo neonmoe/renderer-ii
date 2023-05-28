@@ -33,7 +33,9 @@ impl PhysicalDevice {
         }
         add_extension!("VK_KHR_swapchain");
         add_extension!("VK_KHR_synchronization2");
-        add_extension!("VK_KHR_portability_subset");
+        if self.extension_supported("VK_KHR_portability_subset") {
+            add_extension!("VK_KHR_portability_subset");
+        }
         if self.extension_supported("VK_EXT_memory_budget") {
             add_extension!("VK_EXT_memory_budget");
         }

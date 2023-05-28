@@ -1,4 +1,4 @@
-use crate::renderer::descriptors::material::PbrFactors;
+use crate::renderer::descriptors::material::PbrFactorsSoa;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use core::mem::{self, MaybeUninit};
@@ -30,35 +30,44 @@ pub struct MaterialPushConstants {
 }
 
 pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
-    PipelineIndex::Opaque,
-    PipelineIndex::SkinnedOpaque,
-    PipelineIndex::AlphaToCoverage,
-    PipelineIndex::SkinnedAlphaToCoverage,
-    PipelineIndex::Blended,
-    PipelineIndex::SkinnedBlended,
+    PipelineIndex::PbrOpaque,
+    PipelineIndex::PbrSkinnedOpaque,
+    PipelineIndex::PbrAlphaToCoverage,
+    PipelineIndex::PbrSkinnedAlphaToCoverage,
+    PipelineIndex::PbrBlended,
+    PipelineIndex::PbrSkinnedBlended,
     PipelineIndex::RenderResolutionPostProcess,
 ];
 
 pub const SKINNED_PIPELINES: [PipelineIndex; 3] = [
-    PipelineIndex::SkinnedOpaque,
-    PipelineIndex::SkinnedAlphaToCoverage,
-    PipelineIndex::SkinnedBlended,
+    PipelineIndex::PbrSkinnedOpaque,
+    PipelineIndex::PbrSkinnedAlphaToCoverage,
+    PipelineIndex::PbrSkinnedBlended,
+];
+
+pub const PBR_PIPELINES: [PipelineIndex; 6] = [
+    PipelineIndex::PbrOpaque,
+    PipelineIndex::PbrAlphaToCoverage,
+    PipelineIndex::PbrBlended,
+    PipelineIndex::PbrSkinnedOpaque,
+    PipelineIndex::PbrSkinnedAlphaToCoverage,
+    PipelineIndex::PbrSkinnedBlended,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PipelineIndex {
     /// Opaque geometry pass.
-    Opaque,
+    PbrOpaque,
     /// Skinned opaque geometry pass.
-    SkinnedOpaque,
+    PbrSkinnedOpaque,
     /// Alpha-to-coverage "fake transparent" geometry pass.
-    AlphaToCoverage,
+    PbrAlphaToCoverage,
     /// Skinned alpha-to-coverage "fake transparent" geometry pass.
-    SkinnedAlphaToCoverage,
+    PbrSkinnedAlphaToCoverage,
     /// Transparent geomtry pass.
-    Blended,
+    PbrBlended,
     /// Skinned transparent geomtry pass.
-    SkinnedBlended,
+    PbrSkinnedBlended,
     /// Post-processing pass before MSAA resolve and up/downsampling.
     RenderResolutionPostProcess,
     #[doc(hidden)]
@@ -68,11 +77,11 @@ pub enum PipelineIndex {
 impl PipelineIndex {
     /// A pipeline whose first descriptor set is written to and read
     /// from, where the shared descriptor set is concerned.
-    pub const SHARED_DESCRIPTOR_PIPELINE: PipelineIndex = PipelineIndex::Opaque;
+    pub const SHARED_DESCRIPTOR_PIPELINE: PipelineIndex = PipelineIndex::PbrOpaque;
 
     pub(crate) fn skinned(&self) -> bool {
         use PipelineIndex::*;
-        [SkinnedOpaque, SkinnedAlphaToCoverage, SkinnedBlended].contains(self)
+        [PbrSkinnedOpaque, PbrSkinnedAlphaToCoverage, PbrSkinnedBlended].contains(self)
     }
 }
 
@@ -360,10 +369,10 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
     DescriptorSetLayoutParams {
         binding: 6,
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-        descriptor_count: MAX_TEXTURE_COUNT,
+        descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-        descriptor_size: Some(mem::size_of::<PbrFactors>() as vk::DeviceSize),
+        descriptor_size: Some(mem::size_of::<PbrFactorsSoa>() as vk::DeviceSize),
     },
 ];
 

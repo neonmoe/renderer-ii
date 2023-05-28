@@ -1,7 +1,7 @@
 use crate::{gltf_json, GltfLoadingError};
 use renderer::image_loading::{self, ntex, ImageLoadingError, TextureKind};
 use renderer::vk;
-use renderer::{ForBuffers, ForImages, PbrFactors, VulkanArenaMeasurementError, VulkanArenaMeasurer};
+use renderer::{ForBuffers, ForImages, VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use std::fs;
 use std::path::Path;
 
@@ -89,15 +89,6 @@ fn measure(
             image_loading::get_image_data_create_info(&image_data, kind).map_err(GltfMemoryMeasurementError::ImageLoading)?;
         image_measurer
             .add_image(image_create_info)
-            .map_err(GltfMemoryMeasurementError::VulkanArenaMeasurement)?;
-    }
-
-    {
-        profiling::scope!("measure material parameters mem reqs");
-        let material_factors = crate::get_material_factors(&gltf).map_err(GltfMemoryMeasurementError::GltfLoading)?;
-        let factors_size = bytemuck::cast_slice::<PbrFactors, u8>(&material_factors).len() as vk::DeviceSize;
-        buffer_measurer
-            .add_buffer(crate::get_material_factors_buffer_create_info(factors_size))
             .map_err(GltfMemoryMeasurementError::VulkanArenaMeasurement)?;
     }
 

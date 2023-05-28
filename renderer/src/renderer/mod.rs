@@ -49,6 +49,8 @@ pub enum RendererError {
     RenderSettingsUniformCreation(#[source] VulkanArenaError),
     #[error("failed to create uniform buffer for skinned meshes' joint transforms")]
     JointTransformUniformCreation(#[source] VulkanArenaError),
+    #[error("failed to create per-frame material uniforms")]
+    MaterialsUniformCreation(#[source] DescriptorError),
     #[error("failed to submit rendering command buffers to the graphics queue (device lost or out of memory?)")]
     RenderQueueSubmit(#[source] vk::Result),
     #[error("present was successful, but may display oddly; swapchain is out of date")]
@@ -232,10 +234,14 @@ impl Renderer {
         let skinned_mesh_joints_buffer = create_uniform_buffer(&mut self.temp_arena, &skinned_mesh_joints, "joint transforms")
             .map_err(RendererError::JointTransformUniformCreation)?;
 
+        let materials_temp_uniform = descriptors
+            .create_materials_temp_uniform(&mut self.temp_arena)
+            .map_err(RendererError::MaterialsUniformCreation)?;
         descriptors.write_descriptors(
             &global_transforms_buffer,
             &render_settings_buffer,
             &skinned_mesh_joints_buffer,
+            &materials_temp_uniform,
             &framebuffers.inner[frame_index.index],
         );
 
@@ -373,9 +379,9 @@ impl Renderer {
 
         use PipelineIndex::*;
         for (static_pl, skinned_pl) in [
-            (Opaque, SkinnedOpaque),
-            (AlphaToCoverage, SkinnedAlphaToCoverage),
-            (Blended, SkinnedBlended),
+            (PbrOpaque, PbrSkinnedOpaque),
+            (PbrAlphaToCoverage, PbrSkinnedAlphaToCoverage),
+            (PbrBlended, PbrSkinnedBlended),
         ] {
             profiling::scope!("pipeline");
             let static_meshes = &static_meshes[static_pl];

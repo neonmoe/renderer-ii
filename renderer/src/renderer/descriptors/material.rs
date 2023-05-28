@@ -1,15 +1,26 @@
 use crate::renderer::descriptors::MAX_PIPELINES_PER_MATERIAL;
-use crate::renderer::pipelines::pipeline_parameters::PipelineIndex;
-use crate::vulkan_raii::{Buffer, ImageView};
+use crate::renderer::pipelines::pipeline_parameters::{PipelineIndex, MAX_TEXTURE_COUNT};
+use crate::vulkan_raii::ImageView;
 use alloc::rc::Rc;
 use arrayvec::{ArrayString, ArrayVec};
-use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use core::hash::{Hash, Hasher};
 use glam::Vec4;
 
+// TODO: Add the rest of the gltf factors
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+pub struct PbrFactorsSoa {
+    /// (r, g, b, a).
+    pub base_color: [Vec4; MAX_TEXTURE_COUNT as usize],
+    /// (r, g, b, _). Vec4 to make sure there's no padding/alignment issues.
+    pub emissive: [Vec4; MAX_TEXTURE_COUNT as usize],
+    /// (metallic, roughness, alpha_cutoff, _). Vec4 to make sure there's no padding.
+    pub metallic_roughness_alpha_cutoff: [Vec4; MAX_TEXTURE_COUNT as usize],
+}
+
+#[derive(Clone, Copy, Zeroable)]
 pub struct PbrFactors {
     /// (r, g, b, a).
     pub base_color: Vec4,
@@ -34,8 +45,7 @@ pub enum PipelineSpecificData {
         normal: Option<Rc<ImageView>>,
         occlusion: Option<Rc<ImageView>>,
         emissive: Option<Rc<ImageView>>,
-        /// (Buffer, offset, size) that contains a [PbrFactors].
-        factors: (Rc<Buffer>, vk::DeviceSize, vk::DeviceSize),
+        factors: PbrFactors,
         alpha_mode: AlphaMode,
     },
 }

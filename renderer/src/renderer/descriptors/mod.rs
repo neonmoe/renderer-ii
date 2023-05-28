@@ -1,7 +1,8 @@
+use crate::arena::{ForBuffers, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::pipelines::pipeline_parameters::{
-    DescriptorSetLayoutParams, MaterialPushConstants, PipelineIndex, PipelineMap, PipelineParameters, MAX_BONE_COUNT, MAX_TEXTURE_COUNT,
-    PIPELINE_PARAMETERS, SKINNED_PIPELINES,
+    DescriptorSetLayoutParams, MaterialPushConstants, PipelineIndex, PipelineMap, PipelineParameters, ALL_PIPELINES, MAX_BONE_COUNT,
+    MAX_TEXTURE_COUNT, PBR_PIPELINES, PIPELINE_PARAMETERS, SKINNED_PIPELINES,
 };
 use crate::vulkan_raii::{
     Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, Framebuffer, ImageView, PipelineLayout, Sampler,
@@ -9,11 +10,12 @@ use crate::vulkan_raii::{
 use alloc::rc::{Rc, Weak};
 use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
+use bytemuck::Zeroable;
 use core::mem;
 
 pub(crate) mod material;
 
-use material::{AlphaMode, Material, PipelineSpecificData};
+use material::{AlphaMode, Material, PbrFactors, PbrFactorsSoa, PipelineSpecificData};
 
 #[derive(thiserror::Error, Debug)]
 pub enum DescriptorError {
@@ -29,6 +31,8 @@ pub enum DescriptorError {
     DescriptorPoolCreation(#[source] vk::Result),
     #[error("failed to allocate descriptor sets")]
     AllocateDescriptorSets(#[source] vk::Result),
+    #[error("failed to create buffer for per-frame material data")]
+    CreateMaterialBuffer(#[source] VulkanArenaError),
 }
 
 pub(crate) const MAX_PIPELINES_PER_MATERIAL: usize = 2;
@@ -36,9 +40,9 @@ fn get_pipelines(data: &PipelineSpecificData) -> ArrayVec<PipelineIndex, MAX_PIP
     use PipelineIndex::*;
     match data {
         PipelineSpecificData::Pbr { alpha_mode, .. } => match alpha_mode {
-            AlphaMode::Opaque => [Opaque, SkinnedOpaque].into(),
-            AlphaMode::AlphaToCoverage => [AlphaToCoverage, SkinnedAlphaToCoverage].into(),
-            AlphaMode::Blend => [Blended, SkinnedBlended].into(),
+            AlphaMode::Opaque => [PbrOpaque, PbrSkinnedOpaque].into(),
+            AlphaMode::AlphaToCoverage => [PbrAlphaToCoverage, PbrSkinnedAlphaToCoverage].into(),
+            AlphaMode::Blend => [PbrBlended, PbrSkinnedBlended].into(),
         },
     }
 }
@@ -60,6 +64,11 @@ struct PendingWrite<'a> {
     _image_info: Option<Box<vk::DescriptorImageInfo>>,
 }
 
+pub(crate) struct MaterialTempUniforms {
+    buffer: Buffer,
+    pbr_factors_offsets_and_sizes: PipelineMap<(vk::DeviceSize, vk::DeviceSize)>,
+}
+
 const MATERIAL_UPDATES: usize = PipelineIndex::Count as usize * MAX_TEXTURE_COUNT as usize;
 /// Descriptor writes:
 /// - HDR framebuffer attachment (one post-process descriptor set)
@@ -78,6 +87,7 @@ pub struct Descriptors {
     // TODO: Use a shared array of materials instead of one array for each descriptor set?
     material_slots_per_pipeline: PipelineMap<ArrayVec<MaterialSlot, { MAX_TEXTURE_COUNT as usize }>>,
     material_updated_per_pipeline: PipelineMap<ArrayVec<bool, { MAX_TEXTURE_COUNT as usize }>>,
+    uniform_buffer_offset_alignment: vk::DeviceSize,
 }
 
 impl Material {
@@ -240,6 +250,8 @@ impl Descriptors {
         })?;
         let material_updated_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| Ok([true; MAX_TEXTURE_COUNT as usize].into()))?;
 
+        let uniform_buffer_offset_alignment = physical_device.properties.limits.min_uniform_buffer_offset_alignment;
+
         Ok(Descriptors {
             pipeline_layouts,
             descriptor_sets,
@@ -247,6 +259,64 @@ impl Descriptors {
             material_slots_per_pipeline,
             material_updated_per_pipeline,
             pbr_defaults,
+            uniform_buffer_offset_alignment,
+        })
+    }
+
+    pub(crate) fn create_materials_temp_uniform(
+        &mut self,
+        temp_arena: &mut VulkanArena<ForBuffers>,
+    ) -> Result<MaterialTempUniforms, DescriptorError> {
+        let mut factors_bytes = Vec::with_capacity(PBR_PIPELINES.len() * mem::size_of::<PbrFactorsSoa>());
+        let mut pbr_factors_offsets_and_sizes = PipelineMap::new::<(), _>(|_| Ok((0, 0))).unwrap();
+        for pipeline in PBR_PIPELINES {
+            let factors = self.material_slots_per_pipeline[pipeline]
+                .iter()
+                .map(|slot| {
+                    if let Some(slot) = slot.as_ref().and_then(Weak::upgrade) {
+                        let PipelineSpecificData::Pbr { factors, .. } = slot.data;
+                        factors
+                    } else {
+                        PbrFactors::zeroed()
+                    }
+                })
+                .collect::<ArrayVec<_, { MAX_TEXTURE_COUNT as usize }>>();
+            if factors.is_empty() {
+                continue;
+            }
+
+            let mut factors_soa = PbrFactorsSoa::zeroed();
+            for (i, factors) in factors.iter().enumerate() {
+                factors_soa.base_color[i] = factors.base_color;
+                factors_soa.emissive[i] = factors.emissive;
+                factors_soa.metallic_roughness_alpha_cutoff[i] = factors.metallic_roughness_alpha_cutoff;
+            }
+            let factors_soa = [factors_soa];
+            let factors_soa = bytemuck::cast_slice(&factors_soa);
+
+            let offset = (factors_bytes.len() as vk::DeviceSize).next_multiple_of(self.uniform_buffer_offset_alignment);
+            pbr_factors_offsets_and_sizes[pipeline] = (offset, factors_soa.len() as vk::DeviceSize);
+            factors_bytes.resize(offset as usize, 0);
+            factors_bytes.extend_from_slice(factors_soa);
+        }
+
+        let buffer_create_info = vk::BufferCreateInfo::default()
+            .size(factors_bytes.len() as u64)
+            .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let buffer = temp_arena
+            .create_buffer(
+                buffer_create_info,
+                &factors_bytes,
+                None,
+                None,
+                format_args!("uniform (temp material buffer)"),
+            )
+            .map_err(DescriptorError::CreateMaterialBuffer)?;
+
+        Ok(MaterialTempUniforms {
+            buffer,
+            pbr_factors_offsets_and_sizes,
         })
     }
 
@@ -255,6 +325,7 @@ impl Descriptors {
         global_transforms_buffer: &Buffer,
         render_settings_buffer: &Buffer,
         skinned_mesh_joints_buffer: &Buffer,
+        material_buffers: &MaterialTempUniforms,
         framebuffer: &Framebuffer,
     ) {
         profiling::scope!("updating descriptors");
@@ -297,6 +368,15 @@ impl Descriptors {
             self.set_uniform_buffer(pipeline, &mut pending_writes, (2, 0, 0), skinned_mesh_joints_buffer);
         }
 
+        for pipeline in ALL_PIPELINES {
+            let pbr_factors_offset_and_size = material_buffers.pbr_factors_offsets_and_sizes[pipeline];
+            if pbr_factors_offset_and_size != (0, 0) {
+                let (offset, size) = pbr_factors_offset_and_size;
+                let buffer = (material_buffers.buffer.inner, offset, size);
+                self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 6, 0), buffer);
+            }
+        }
+
         for (pipeline, i, material) in &materials_needing_update {
             self.write_material(*pipeline, *i, material, &mut pending_writes);
             self.material_updated_per_pipeline[*pipeline][*i as usize] = true;
@@ -325,7 +405,6 @@ impl Descriptors {
                 normal,
                 occlusion,
                 emissive,
-                factors,
                 ..
             } => {
                 let images = [
@@ -339,9 +418,7 @@ impl Descriptors {
                     occlusion.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.occlusion).inner,
                     emissive.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.emissive).inner,
                 ];
-                let factors = (factors.0.inner, factors.1, factors.2);
                 self.set_uniform_images(pipeline, pending_writes, (1, 1, index), &images);
-                self.set_uniform_buffer(pipeline, pending_writes, (1, 6, index), factors);
             }
         }
     }
