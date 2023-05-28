@@ -18,7 +18,7 @@ use core::sync::atomic::Ordering;
 /// It's safe to clone to share, until destruction time, as the only function
 /// where it must be externally synchronized according to the
 /// [spec](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/chap3.html#fundamentals-threadingbehavior)
-/// is vkDestroyDevice.
+/// is `vkDestroyDevice`.
 ///
 /// The reason Device isn't shared via borrows or Rcs is that it is pretty much
 /// as global as a structure as it gets, and the ergonomics of just copying it
@@ -50,7 +50,7 @@ impl Device {
     /// resources are in use before destroying anything.
     #[profiling::function]
     pub fn wait_idle(&self) {
-        unsafe { self.inner.device_wait_idle() }.unwrap()
+        unsafe { self.inner.device_wait_idle() }.unwrap();
     }
 }
 

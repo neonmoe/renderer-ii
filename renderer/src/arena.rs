@@ -91,7 +91,7 @@ impl<T: ArenaType> VulkanArena<T> {
         debug_identifier_args: Arguments,
     ) -> Result<VulkanArena<T>, VulkanArenaError> {
         profiling::scope!("gpu memory arena creation");
-        let debug_identifier = format!("{}", debug_identifier_args);
+        let debug_identifier = format!("{debug_identifier_args}");
         let (memory_type_index, memory_flags) =
             get_memory_type_index(instance, physical_device, memory_properties, size, &debug_identifier)?;
         let alloc_info = vk::MemoryAllocateInfo::default()
@@ -107,8 +107,9 @@ impl<T: ArenaType> VulkanArena<T> {
 
         let mapped_memory_ptr =
             if T::MAPPABLE && memory_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT) {
-                unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }
-                    .map_err(|err| VulkanArenaError::Map(err, debug_identifier.clone(), crate::Bytes(size)))? as *mut u8
+                (unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty()) }
+                    .map_err(|err| VulkanArenaError::Map(err, debug_identifier.clone(), crate::Bytes(size)))?)
+                .cast::<u8>()
             } else {
                 ptr::null_mut()
             };
@@ -208,7 +209,7 @@ impl VulkanArena<ForBuffers> {
                     .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                     .sharing_mode(vk::SharingMode::EXCLUSIVE);
                 let staging_buffer =
-                    staging_arena.create_buffer(staging_info, src, None, None, format_args!("staging buffer for {}", name))?;
+                    staging_arena.create_buffer(staging_info, src, None, None, format_args!("staging buffer for {name}"))?;
                 let &mut Uploader {
                     graphics_queue_family,
                     transfer_queue_family,
@@ -322,6 +323,7 @@ impl VulkanArena<ForImages> {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn get_memory_type_index(
     instance: &Instance,
     physical_device: &PhysicalDevice,

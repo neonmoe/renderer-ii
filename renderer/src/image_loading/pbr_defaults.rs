@@ -113,8 +113,9 @@ pub fn emissive(
 /// [measure](crate::VulkanArenaMeasurer::add_image) the amount of memory this
 /// module allocates.
 ///
-/// The image creation infos describe the images created by [base_color],
-/// [metallic_roughness], [normal], [occlusion], and [emissive], in that order.
+/// The image creation infos describe the images created by [`base_color`],
+/// [`metallic_roughness`], [`normal`], [`occlusion`], and [`emissive`], in that
+/// order.
 pub fn all_defaults_create_infos() -> [vk::ImageCreateInfo<'static>; 5] {
     let image_kinds: [TextureKind; 5] = [
         TextureKind::SrgbColor,   // Base color

@@ -16,14 +16,14 @@ pub(crate) mod pipelines;
 pub(crate) mod scene;
 pub(crate) mod swapchain;
 
-use camera::*;
-use descriptors::*;
-use framebuffers::*;
-use mesh::*;
-use pipelines::pipeline_parameters::*;
-use pipelines::*;
-use scene::*;
-use swapchain::*;
+use camera::Camera;
+use descriptors::{DescriptorError, Descriptors};
+use framebuffers::Framebuffers;
+use mesh::Mesh;
+use pipelines::pipeline_parameters::{MaterialPushConstants, PipelineIndex, PipelineMap, RenderSettings, MAX_BONE_COUNT};
+use pipelines::Pipelines;
+use scene::{Scene, SkinnedModel, StaticMeshMap};
+use swapchain::Swapchain;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RendererError {
@@ -69,7 +69,7 @@ pub enum RendererError {
     CommandBufferEnd(#[source] vk::Result),
 }
 
-/// Get from [Renderer::wait_frame].
+/// Get from [`Renderer::wait_frame`].
 pub struct FrameIndex {
     index: usize,
 }
@@ -200,8 +200,6 @@ impl Renderer {
         scene: Scene,
         debug_value: u32,
     ) -> Result<(), RendererError> {
-        let vk::Extent2D { width, height } = framebuffers.extent;
-
         fn create_uniform_buffer<T: bytemuck::Pod>(
             temp_arena: &mut VulkanArena<ForBuffers>,
             buffer: &[T],
@@ -214,6 +212,8 @@ impl Renderer {
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
             temp_arena.create_buffer(buffer_create_info, buffer_bytes, None, None, format_args!("uniform ({name})"))
         }
+
+        let vk::Extent2D { width, height } = framebuffers.extent;
 
         let global_transforms = &[scene
             .camera
@@ -377,11 +377,10 @@ impl Renderer {
             }
         }
 
-        use PipelineIndex::*;
         for (static_pl, skinned_pl) in [
-            (PbrOpaque, PbrSkinnedOpaque),
-            (PbrAlphaToCoverage, PbrSkinnedAlphaToCoverage),
-            (PbrBlended, PbrSkinnedBlended),
+            (PipelineIndex::PbrOpaque, PipelineIndex::PbrSkinnedOpaque),
+            (PipelineIndex::PbrAlphaToCoverage, PipelineIndex::PbrSkinnedAlphaToCoverage),
+            (PipelineIndex::PbrBlended, PipelineIndex::PbrSkinnedBlended),
         ] {
             profiling::scope!("pipeline");
             let static_meshes = &static_meshes[static_pl];
@@ -425,14 +424,14 @@ impl Renderer {
             let bind_point = vk::PipelineBindPoint::GRAPHICS;
             unsafe {
                 self.device
-                    .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines[pl_index].inner)
-            };
+                    .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines[pl_index].inner);
+            }
             let layout = descriptors.pipeline_layouts[pl_index].inner;
             let descriptor_sets = descriptors.descriptor_sets(pl_index);
             unsafe {
                 self.device
-                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[])
-            };
+                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[]);
+            }
             unsafe { self.device.cmd_draw(command_buffer, 3, 1, 0, 0) };
         }
 

@@ -42,8 +42,7 @@ impl TextureKind {
     pub fn convert_format(self, format: vk::Format) -> vk::Format {
         match self {
             TextureKind::SrgbColor => to_srgb(format),
-            TextureKind::NormalMap => format,
-            TextureKind::LinearColor => format,
+            TextureKind::NormalMap | TextureKind::LinearColor => format,
         }
     }
 }
@@ -129,7 +128,7 @@ pub fn load_image(
                 pixels,
                 None,
                 None,
-                format_args!("staging buffer for {}", debug_identifier),
+                format_args!("staging buffer for {debug_identifier}"),
             )
             .map_err(ImageLoadingError::StagingBufferCreation)?
     };
@@ -138,14 +137,14 @@ pub fn load_image(
         profiling::scope!("allocate gpu texture");
         let image_info = get_image_create_info(extent, mip_ranges.len() as u32, format);
         arena
-            .create_image(image_info, format_args!("{}", debug_identifier))
+            .create_image(image_info, format_args!("{debug_identifier}"))
             .map_err(ImageLoadingError::ImageCreation)?
     };
 
     uploader
         .start_upload(
             staging_buffer,
-            format_args!("{}", debug_identifier),
+            format_args!("{debug_identifier}"),
             |device, staging_buffer, command_buffer| {
                 let mut current_mip_level_extent = extent;
                 for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
@@ -256,7 +255,7 @@ pub fn load_image(
             image: Rc::new(image_allocation.into()),
         }
     };
-    crate::name_vulkan_object(device, image_view.inner, format_args!("{}", debug_identifier));
+    crate::name_vulkan_object(device, image_view.inner, format_args!("{debug_identifier}"));
 
     Ok(image_view)
 }

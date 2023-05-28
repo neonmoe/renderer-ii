@@ -90,9 +90,7 @@ impl Swapchain {
         profiling::scope!("swapchain re-creation");
 
         self.images.clear();
-        let swapchain_holder = if let Some(swapchain) = Rc::get_mut(&mut self.swapchain) {
-            swapchain
-        } else {
+        let Some(swapchain_holder) = Rc::get_mut(&mut self.swapchain) else {
             return Err(SwapchainError::OldSwapchainInUse);
         };
         let queue_family_indices = [
@@ -185,14 +183,14 @@ fn create_swapchain(
         width: u32::MAX,
         height: u32::MAX,
     };
-    let image_extent = if surface_capabilities.current_extent != unset_extent {
-        surface_capabilities.current_extent
-    } else {
+    let image_extent = if surface_capabilities.current_extent == unset_extent {
         settings.extent
+    } else {
+        surface_capabilities.current_extent
     };
     let mut min_image_count = 2.max(surface_capabilities.min_image_count);
     if surface_capabilities.max_image_count > 0 {
-        min_image_count = min_image_count.min(surface_capabilities.max_image_count)
+        min_image_count = min_image_count.min(surface_capabilities.max_image_count);
     }
 
     let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
@@ -207,12 +205,12 @@ fn create_swapchain(
         .present_mode(present_mode)
         .clipped(true)
         .image_extent(image_extent);
-    if queue_family_indices[0] != queue_family_indices[1] {
+    if queue_family_indices[0] == queue_family_indices[1] {
+        swapchain_create_info = swapchain_create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
+    } else {
         swapchain_create_info = swapchain_create_info
             .image_sharing_mode(vk::SharingMode::CONCURRENT)
             .queue_family_indices(queue_family_indices);
-    } else {
-        swapchain_create_info = swapchain_create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
     }
     if let Some(old_swapchain) = old_swapchain {
         swapchain_create_info = swapchain_create_info.old_swapchain(old_swapchain);

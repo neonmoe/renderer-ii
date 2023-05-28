@@ -6,8 +6,21 @@
 //! Vulkan Profile.
 
 #![feature(int_roundings)] // seems like this will get merged soon enough
-
-// TODO: #![warn(clippy::pedantic)]
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::module_name_repetitions,
+    clippy::struct_excessive_bools,
+    clippy::from_iter_instead_of_collect,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_lossless,
+    clippy::too_many_lines
+)]
 // TODO: #![no_std]
 
 extern crate alloc;
@@ -22,7 +35,7 @@ macro_rules! cstr {
 
 mod debug_utils;
 
-use debug_utils::*;
+use debug_utils::{create_debug_utils_messenger_info, init_debug_utils, name_vulkan_object};
 
 // public-facing modules:
 

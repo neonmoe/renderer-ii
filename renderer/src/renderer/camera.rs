@@ -18,13 +18,13 @@ fn create_proj(width: f32, height: f32, near: f32, far: Option<f32>) -> Mat4 {
 // right-handed (Vulkan clip space: +X right, +Y down, +Z forward), yet the
 // projection matrix is called left-handed (negative determinant, I guess?).
 
-/// M_I * P_LH from: https://iolite-engine.com/blog_posts/reverse_z_cheatsheet
+/// `M_I` * `P_LH` from: <https://iolite-engine.com/blog_posts/reverse_z_cheatsheet>
 fn projection_reverse_z(fov: f32, aspect_ratio: f32, near: f32, far: f32) -> Mat4 {
     let flip_z = Mat4::from_scale_rotation_translation(Vec3::new(1.0, 1.0, -1.0), Quat::IDENTITY, Vec3::new(0.0, 0.0, 1.0));
     flip_z * proj(fov, aspect_ratio, far / (far - near), 1.0, -(far * near) / (far - near))
 }
 
-/// P_RevLH as z_f approaches inf from: https://iolite-engine.com/blog_posts/reverse_z_cheatsheet
+/// `P_RevLH` as `z_f` approaches inf from: <https://iolite-engine.com/blog_posts/reverse_z_cheatsheet>
 fn projection_reverse_z_with_inf_far(fov: f32, aspect_ratio: f32, near: f32) -> Mat4 {
     proj(fov, aspect_ratio, 0.0, 1.0, near)
 }

@@ -37,12 +37,11 @@ pub enum DescriptorError {
 
 pub(crate) const MAX_PIPELINES_PER_MATERIAL: usize = 2;
 fn get_pipelines(data: &PipelineSpecificData) -> ArrayVec<PipelineIndex, MAX_PIPELINES_PER_MATERIAL> {
-    use PipelineIndex::*;
     match data {
         PipelineSpecificData::Pbr { alpha_mode, .. } => match alpha_mode {
-            AlphaMode::Opaque => [PbrOpaque, PbrSkinnedOpaque].into(),
-            AlphaMode::AlphaToCoverage => [PbrAlphaToCoverage, PbrSkinnedAlphaToCoverage].into(),
-            AlphaMode::Blend => [PbrBlended, PbrSkinnedBlended].into(),
+            AlphaMode::Opaque => [PipelineIndex::PbrOpaque, PipelineIndex::PbrSkinnedOpaque].into(),
+            AlphaMode::AlphaToCoverage => [PipelineIndex::PbrAlphaToCoverage, PipelineIndex::PbrSkinnedAlphaToCoverage].into(),
+            AlphaMode::Blend => [PipelineIndex::PbrBlended, PipelineIndex::PbrSkinnedBlended].into(),
         },
     }
 }
@@ -84,7 +83,7 @@ pub struct Descriptors {
     descriptor_sets: PipelineMap<DescriptorSets>,
     device: Device,
     pbr_defaults: PbrDefaults,
-    // TODO: Use a shared array of materials instead of one array for each descriptor set?
+    // TODO(next?): Use a shared array of materials instead of one array for each descriptor set?
     material_slots_per_pipeline: PipelineMap<ArrayVec<MaterialSlot, { MAX_TEXTURE_COUNT as usize }>>,
     material_updated_per_pipeline: PipelineMap<ArrayVec<bool, { MAX_TEXTURE_COUNT as usize }>>,
     uniform_buffer_offset_alignment: vk::DeviceSize,
@@ -408,15 +407,14 @@ impl Descriptors {
                 ..
             } => {
                 let images = [
-                    base_color.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.base_color).inner,
+                    base_color.as_ref().map_or(&self.pbr_defaults.base_color, Rc::as_ref).inner,
                     metallic_roughness
                         .as_ref()
-                        .map(Rc::as_ref)
-                        .unwrap_or(&self.pbr_defaults.metallic_roughness)
+                        .map_or(&self.pbr_defaults.metallic_roughness, Rc::as_ref)
                         .inner,
-                    normal.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.normal).inner,
-                    occlusion.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.occlusion).inner,
-                    emissive.as_ref().map(Rc::as_ref).unwrap_or(&self.pbr_defaults.emissive).inner,
+                    normal.as_ref().map_or(&self.pbr_defaults.normal, Rc::as_ref).inner,
+                    occlusion.as_ref().map_or(&self.pbr_defaults.occlusion, Rc::as_ref).inner,
+                    emissive.as_ref().map_or(&self.pbr_defaults.emissive, Rc::as_ref).inner,
                 ];
                 self.set_uniform_images(pipeline, pending_writes, (1, 1, index), &images);
             }

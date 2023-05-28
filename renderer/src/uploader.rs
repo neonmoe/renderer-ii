@@ -5,7 +5,7 @@ use core::fmt::Arguments;
 use core::time::Duration;
 
 /// General errors related to the creation and usage of [Uploader]. The actual
-/// uploads have their own error type, [UploadError].
+/// uploads have their own error type, [`UploadError`].
 #[derive(thiserror::Error, Debug)]
 pub enum UploaderError {
     #[error("failed to wait for uploader's vulkan fences")]
@@ -82,7 +82,7 @@ impl Uploader {
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
                 .map_err(UploaderError::TransferCommandPoolCreation)?;
-            crate::name_vulkan_object(device, command_pool, format_args!("upload cmds (T) for {}", debug_identifier));
+            crate::name_vulkan_object(device, command_pool, format_args!("upload cmds (T) for {debug_identifier}"));
             CommandPool {
                 inner: command_pool,
                 device: device.clone(),
@@ -96,7 +96,7 @@ impl Uploader {
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
                 .map_err(UploaderError::GraphicsCommandPoolCreation)?;
-            crate::name_vulkan_object(device, command_pool, format_args!("upload cmds (G) for {}", debug_identifier));
+            crate::name_vulkan_object(device, command_pool, format_args!("upload cmds (G) for {debug_identifier}"));
             CommandPool {
                 inner: command_pool,
                 device: device.clone(),
@@ -133,7 +133,7 @@ impl Uploader {
     ///
     /// A zero duration can be passed in to simply check the status of the
     /// uploads as a whole, as opposed to the status of every individual upload
-    /// operation with [Uploader::get_upload_statuses], which may be more
+    /// operation with [`Uploader::get_upload_statuses`], which may be more
     /// inefficient.
     pub fn wait(&self, timeout: Option<Duration>) -> Result<bool, UploaderError> {
         let timeout = if let Some(timeout) = timeout {

@@ -10,6 +10,7 @@ pub(crate) const unsafe fn include_bytes_as_u32s(bytes: &[u8]) -> &[u32] {
         "include_words just assumes that the input is the correct endianness, which is definitely not the case on big-endian systems"
     );
     // Safety: U32AlignedBytes has align(4) and the ptr is at offset 0.
+    #[allow(clippy::transmute_ptr_to_ptr)]
     let u32_ptr: *const u32 = core::mem::transmute(bytes.as_ptr());
     // There are 4x as many elements in the u8 slice as the u32 slice.
     let u32_slice_len = bytes.len() / 4;

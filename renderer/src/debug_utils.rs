@@ -15,13 +15,13 @@ pub(crate) fn init_debug_utils(entry: &Entry, instance: &Instance) {
 
 #[profiling::function]
 pub(crate) fn name_vulkan_object<H: vk::Handle>(device: &Device, object: H, name: Arguments) {
-    name_vulkan_object_impl(device, H::TYPE, object.as_raw(), name)
+    name_vulkan_object_impl(device, H::TYPE, object.as_raw(), name);
 }
 
 fn name_vulkan_object_impl(device: &Device, object_type: vk::ObjectType, object_handle: u64, name: Arguments) {
     if let Some(debug_utils) = unsafe { DEBUG_UTILS.as_ref() } {
-        let object_name = format_object_name(format!("{:?}", object_type));
-        let name = CString::from_vec_with_nul(format!("{}: {}\0", object_name, name).into_bytes()).unwrap();
+        let object_name = format_object_name(format!("{object_type:?}"));
+        let name = CString::from_vec_with_nul(format!("{object_name}: {name}\0").into_bytes()).unwrap();
         let name_info = vk::DebugUtilsObjectNameInfoEXT {
             object_type,
             object_handle,
@@ -119,31 +119,32 @@ fn vulkan_debug(
     cmdbuf_label: Option<&str>,
     object_name: Option<&str>,
 ) {
+    use vk::DebugUtilsMessageSeverityFlagsEXT as Severity;
+    use vk::DebugUtilsMessageTypeFlagsEXT as Type;
+
     let formatted_message = {
         use core::fmt::Write;
         let mut msg = String::with_capacity(256);
-        let _ = write!(&mut msg, "[{}] {}", message_id, message);
+        let _ = write!(&mut msg, "[{message_id}] {message}");
         if let Some(object_name) = object_name {
-            let _ = write!(&mut msg, "\n  Object: {}", object_name);
+            let _ = write!(&mut msg, "\n  Object: {object_name}");
         }
         if let Some(cmdbuf_label) = cmdbuf_label {
-            let _ = write!(&mut msg, "\n  Cmdbuf: {}", cmdbuf_label);
+            let _ = write!(&mut msg, "\n  Cmdbuf: {cmdbuf_label}");
         }
         if let Some(queue_label) = queue_label {
-            let _ = write!(&mut msg, "\n  Queue: {}", queue_label);
+            let _ = write!(&mut msg, "\n  Queue: {queue_label}");
         }
         msg
     };
 
-    use vk::DebugUtilsMessageSeverityFlagsEXT as Severity;
-    use vk::DebugUtilsMessageTypeFlagsEXT as Type;
     match (message_severity, message_types) {
         (Severity::ERROR, _) => {
             log::error!("{}", formatted_message);
             core::hint::black_box(0); // Place a breakpoint here to debug validation errors
         }
-        (Severity::WARNING, _) | (Severity::INFO, _) | (_, Type::VALIDATION) | (_, Type::PERFORMANCE) => {
-            log::debug!("{}", formatted_message)
+        (Severity::WARNING | Severity::INFO, _) | (_, Type::VALIDATION | Type::PERFORMANCE) => {
+            log::debug!("{}", formatted_message);
         }
         (Severity::VERBOSE, _) => log::trace!("{}", formatted_message),
         (severity, _) => log::error!("[unknown severity: {:?}] {}", severity, formatted_message),

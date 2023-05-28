@@ -26,7 +26,7 @@ impl CoordinateSystem {
     };
 
     /// Creates a transformation matrix which will transform vectors from this
-    /// coordinate system to the target_space coordinate system.
+    /// coordinate system to the `target_space` coordinate system.
     pub fn create_transform_to(&self, target_space: &CoordinateSystem) -> Mat4 {
         let self_from_ruf = Mat4::from_cols(
             Vec4::from((self.right, 0.0)),

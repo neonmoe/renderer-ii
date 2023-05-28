@@ -31,7 +31,7 @@ pub struct Scene<'a> {
 impl<'a> Scene<'a> {
     /// Creates a new scene for queueing meshes to render.
     ///
-    /// Needs the PhysicalDevice which is currently being used for rendering to
+    /// Needs the `PhysicalDevice` which is currently being used for rendering to
     /// prepare the mesh data with proper alignment.
     pub fn new(physical_device: &PhysicalDevice) -> Self {
         Scene {

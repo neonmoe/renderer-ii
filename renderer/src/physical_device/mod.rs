@@ -135,10 +135,10 @@ pub fn get_physical_devices(
         let b_score;
         if let (Ok(a), Ok(b)) = (a, b) {
             let type_score = |properties: &vk::PhysicalDeviceProperties| match properties.device_type {
-                vk::PhysicalDeviceType::DISCRETE_GPU => 30,
-                vk::PhysicalDeviceType::INTEGRATED_GPU => 20,
-                vk::PhysicalDeviceType::VIRTUAL_GPU => 10,
-                vk::PhysicalDeviceType::CPU => 0,
+                vk::PhysicalDeviceType::DISCRETE_GPU => 40,
+                vk::PhysicalDeviceType::INTEGRATED_GPU => 30,
+                vk::PhysicalDeviceType::VIRTUAL_GPU => 20,
+                vk::PhysicalDeviceType::CPU => 10,
                 _ => 0,
             };
             let queue_score = |gfx, surf| if gfx == surf { 2 } else { 0 };
@@ -249,11 +249,11 @@ fn filter_capable_device(
         format_properties.optimal_tiling_features.contains(flags)
     };
     let mut require_format = |format: vk::Format, flags: vk::FormatFeatureFlags| -> bool {
-        if !format_supported(format, flags) {
+        if format_supported(format, flags) {
+            true
+        } else {
             reject(PhysicalDeviceRejectionReason::TextureFormatSupport(format, flags));
             false
-        } else {
-            true
         }
     };
 
@@ -295,7 +295,6 @@ fn filter_capable_device(
     };
 
     {
-        use limits::*;
         use vk::DescriptorType as D;
 
         let limits = &props.limits;
@@ -305,18 +304,18 @@ fn filter_capable_device(
                 reject(reason.into());
             }
         };
-        check_limit_break(uniform_buffer_range(limits.max_uniform_buffer_range));
-        check_limit_break(storage_buffer_range(limits.max_storage_buffer_range));
-        check_limit_break(push_constants_size(limits.max_push_constants_size));
-        check_limit_break(bound_descriptor_sets(limits.max_bound_descriptor_sets));
-        check_limit_break(per_stage_resources(limits.max_per_stage_resources));
-        check_limit_break(vertex_input_attributes(limits.max_vertex_input_attributes));
-        check_limit_break(vertex_input_bindings(limits.max_vertex_input_bindings));
-        check_limit_break(vertex_input_attribute_offset(limits.max_vertex_input_attribute_offset));
-        check_limit_break(vertex_input_binding_stride(limits.max_vertex_input_binding_stride));
+        check_limit_break(limits::uniform_buffer_range(limits.max_uniform_buffer_range));
+        check_limit_break(limits::storage_buffer_range(limits.max_storage_buffer_range));
+        check_limit_break(limits::push_constants_size(limits.max_push_constants_size));
+        check_limit_break(limits::bound_descriptor_sets(limits.max_bound_descriptor_sets));
+        check_limit_break(limits::per_stage_resources(limits.max_per_stage_resources));
+        check_limit_break(limits::vertex_input_attributes(limits.max_vertex_input_attributes));
+        check_limit_break(limits::vertex_input_bindings(limits.max_vertex_input_bindings));
+        check_limit_break(limits::vertex_input_attribute_offset(limits.max_vertex_input_attribute_offset));
+        check_limit_break(limits::vertex_input_binding_stride(limits.max_vertex_input_binding_stride));
 
         let mut check_per_stage_descs = |dt: vk::DescriptorType, limit: u32| {
-            if let Err(reason) = per_stage_descriptors(dt, limit) {
+            if let Err(reason) = limits::per_stage_descriptors(dt, limit) {
                 reject(reason.into());
             }
         };
@@ -328,7 +327,7 @@ fn filter_capable_device(
         check_per_stage_descs(D::INPUT_ATTACHMENT, limits.max_per_stage_descriptor_input_attachments);
 
         let mut check_per_set_descs = |dt: vk::DescriptorType, limit: u32| {
-            if let Err(reason) = per_set_descriptors(dt, limit) {
+            if let Err(reason) = limits::per_set_descriptors(dt, limit) {
                 reject(reason.into());
             }
         };
@@ -353,7 +352,7 @@ fn filter_capable_device(
             vk::PhysicalDeviceType::CPU => " (CPU)",
             _ => "",
         };
-        let name = format!("{}{}", name, pd_type);
+        let name = format!("{name}{pd_type}");
         let uuid = GpuId(props.pipeline_cache_uuid);
 
         if rejection_reasons.is_empty() {

@@ -14,7 +14,7 @@ pub enum DeviceError {
 }
 
 impl PhysicalDevice {
-    /// Creates a new VkDevice. It only needs to be destroyed if creating a new one.
+    /// Creates a new `VkDevice`. It only needs to be destroyed if creating a new one.
     pub fn create_device(&self, entry: &Entry, instance: &Instance) -> Result<Device, DeviceError> {
         profiling::scope!("vulkan device creation");
 

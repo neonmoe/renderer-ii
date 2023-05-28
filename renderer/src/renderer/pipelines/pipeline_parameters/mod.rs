@@ -79,13 +79,13 @@ impl PipelineIndex {
     /// from, where the shared descriptor set is concerned.
     pub const SHARED_DESCRIPTOR_PIPELINE: PipelineIndex = PipelineIndex::PbrOpaque;
 
-    pub(crate) fn skinned(&self) -> bool {
-        use PipelineIndex::*;
-        [PbrSkinnedOpaque, PbrSkinnedAlphaToCoverage, PbrSkinnedBlended].contains(self)
+    pub(crate) fn skinned(self) -> bool {
+        use PipelineIndex::{PbrSkinnedAlphaToCoverage, PbrSkinnedBlended, PbrSkinnedOpaque};
+        [PbrSkinnedOpaque, PbrSkinnedAlphaToCoverage, PbrSkinnedBlended].contains(&self)
     }
 }
 
-/// Maps every PipelineIndex to a T.
+/// Maps every `PipelineIndex` to a T.
 pub struct PipelineMap<T> {
     buffer: [MaybeUninit<T>; PipelineIndex::Count as usize],
 }
@@ -114,6 +114,7 @@ impl<T> PipelineMap<T> {
         }
         Ok(PipelineMap { buffer })
     }
+    #[allow(clippy::unused_self)]
     pub const fn len(&self) -> usize {
         PipelineIndex::Count as usize
     }

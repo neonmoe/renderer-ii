@@ -8,7 +8,7 @@ use hashbrown::HashMap;
 
 pub mod pipeline_parameters;
 
-use pipeline_parameters::*;
+use pipeline_parameters::{PipelineIndex, PipelineMap, Shader, ALL_PIPELINES, PIPELINE_PARAMETERS};
 
 pub enum AttachmentLayout {
     /// Attachments:
@@ -240,7 +240,8 @@ fn create_pipelines(
     let mut all_shader_modules = HashMap::with_capacity(PIPELINE_PARAMETERS.len() * 2);
     let mut create_shader_module = |(filename, spirv): (&'static str, &'static [u32])| -> Result<vk::ShaderModule, PipelineCreationError> {
         *all_shader_modules.entry((filename, spirv)).or_insert_with(|| {
-            // TODO: What to do with big-endian systems? Re: spirv consists of u32s.
+            #[cfg(target_endian = "big")]
+            let spirv = &ash::util::read_spv(&mut std::io::Cursor::new(bytemuck::cast_slice(spirv))).unwrap();
             let create_info = vk::ShaderModuleCreateInfo::default().code(spirv);
             let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(PipelineCreationError::ShaderModule)?;
             crate::name_vulkan_object(device, shader_module, format_args!("{}", filename));
@@ -252,9 +253,8 @@ fn create_pipelines(
         let params = &PIPELINE_PARAMETERS[pipeline];
         let multisampled = attachment_sample_count != vk::SampleCountFlags::TYPE_1;
         let mut create_from_shader_variant = |shader| match shader {
-            Shader::SingleVariant(shader) => create_shader_module(shader),
             Shader::MsaaVariants { multi_sample: shader, .. } if multisampled => create_shader_module(shader),
-            Shader::MsaaVariants { single_sample: shader, .. } => create_shader_module(shader),
+            Shader::SingleVariant(shader) | Shader::MsaaVariants { single_sample: shader, .. } => create_shader_module(shader),
         };
         let vertex_module = create_from_shader_variant(params.vertex_shader)?;
         let fragment_module = create_from_shader_variant(params.fragment_shader)?;
@@ -377,7 +377,7 @@ fn create_pipelines(
     let pipelines = unsafe {
         device
             .create_graphics_pipelines(
-                pipeline_cache.as_ref().map(|pc| pc.inner).unwrap_or_else(vk::PipelineCache::null),
+                pipeline_cache.as_ref().map_or_else(vk::PipelineCache::null, |pc| pc.inner),
                 &pipeline_create_infos,
                 None,
             )
