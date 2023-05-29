@@ -29,6 +29,7 @@ pub struct Device {
     pub sync2: khr::Synchronization2,
     pub surface: khr::Surface,
     pub swapchain: khr::Swapchain,
+    pub dynamic_rendering: khr::DynamicRendering,
     pub graphics_queue: vk::Queue,
     pub surface_queue: vk::Queue,
     pub transfer_queue: vk::Queue,
@@ -185,24 +186,9 @@ trivial_drop_impl!(ImageView, destroy_image_view);
 inner_and_device_based_eq_impl!(ImageView);
 inner_and_device_based_hash_impl!(ImageView);
 
-pub struct RenderPass {
-    pub inner: vk::RenderPass,
-    pub device: Device,
-}
-trivial_drop_impl!(RenderPass, destroy_render_pass);
-
-pub struct Framebuffer {
-    pub inner: vk::Framebuffer,
-    pub device: Device,
-    pub render_pass: Rc<RenderPass>,
-    pub attachments: ArrayVec<Rc<ImageView>, 4>,
-}
-trivial_drop_impl!(Framebuffer, destroy_framebuffer);
-
 pub struct Pipeline {
     pub inner: vk::Pipeline,
     pub device: Device,
-    pub render_pass: Rc<RenderPass>,
 }
 trivial_drop_impl!(Pipeline, destroy_pipeline);
 

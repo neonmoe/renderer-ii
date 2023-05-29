@@ -2,6 +2,7 @@ use crate::physical_device::{physical_device_features, PhysicalDevice, QueueFami
 use crate::vulkan_raii::Device;
 use alloc::boxed::Box;
 use arrayvec::ArrayVec;
+use ash::extensions::khr;
 use ash::{vk, Entry, Instance};
 use core::ffi::c_char;
 
@@ -23,12 +24,12 @@ impl PhysicalDevice {
         let queue_families = [self.graphics_queue_family, self.transfer_queue_family, self.surface_queue_family];
         let queue_create_infos = create_device_queue_create_infos(&queue_families, &ones);
 
-        let mut extensions: ArrayVec<*const c_char, 4> = ArrayVec::new();
-        for name in physical_device_features::REQUIRED_DEVICE_FEATURES {
+        let mut extensions: ArrayVec<*const c_char, { physical_device_features::TOTAL_DEVICE_EXTENSIONS }> = ArrayVec::new();
+        for name in physical_device_features::REQUIRED_DEVICE_EXTENSIONS {
             extensions.push(name.as_ptr());
             log::debug!("Device extension: {}", name.to_str().unwrap());
         }
-        for name in physical_device_features::OPTIONAL_DEVICE_FEATURES {
+        for name in physical_device_features::OPTIONAL_DEVICE_EXTENSIONS {
             let name_str = name.to_str().unwrap();
             if self.extension_supported(name_str) {
                 extensions.push(name.as_ptr());
@@ -60,9 +61,10 @@ impl PhysicalDevice {
         }
 
         let device = Device {
-            sync2: ash::extensions::khr::Synchronization2::new(instance, &device),
-            surface: ash::extensions::khr::Surface::new(entry, instance),
-            swapchain: ash::extensions::khr::Swapchain::new(instance, &device),
+            sync2: khr::Synchronization2::new(instance, &device),
+            surface: khr::Surface::new(entry, instance),
+            swapchain: khr::Swapchain::new(instance, &device),
+            dynamic_rendering: khr::DynamicRendering::new(instance, &device),
             inner: Box::leak(Box::new(device)),
             graphics_queue,
             surface_queue,

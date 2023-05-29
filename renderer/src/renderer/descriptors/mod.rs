@@ -5,7 +5,7 @@ use crate::renderer::pipelines::pipeline_parameters::{
     MAX_TEXTURE_COUNT, PBR_PIPELINES, PIPELINE_PARAMETERS, SKINNED_PIPELINES,
 };
 use crate::vulkan_raii::{
-    Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, Framebuffer, ImageView, PipelineLayout, Sampler,
+    Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler,
 };
 use alloc::rc::{Rc, Weak};
 use arrayvec::{ArrayString, ArrayVec};
@@ -325,7 +325,7 @@ impl Descriptors {
         render_settings_buffer: &Buffer,
         skinned_mesh_joints_buffer: &Buffer,
         material_buffers: &MaterialTempUniforms,
-        framebuffer: &Framebuffer,
+        hdr_attachment: &ImageView,
     ) {
         profiling::scope!("updating descriptors");
 
@@ -345,12 +345,11 @@ impl Descriptors {
         let mut pending_writes = PendingWritesVec::new();
 
         // 0 is the index of the HDR attachment.
-        let framebuffer_hdr_view = [framebuffer.attachments[0].inner];
         self.set_uniform_images(
             PipelineIndex::RenderResolutionPostProcess,
             &mut pending_writes,
             (1, 0, 0),
-            &framebuffer_hdr_view,
+            &[hdr_attachment.inner],
         );
 
         let shared_pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;

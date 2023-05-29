@@ -12,7 +12,6 @@ use glam::Mat4;
 pub(crate) mod camera;
 pub(crate) mod coordinate_system;
 pub(crate) mod descriptors;
-pub(crate) mod framebuffers;
 pub(crate) mod mesh;
 pub(crate) mod pipelines;
 pub(crate) mod scene;
@@ -20,8 +19,8 @@ pub(crate) mod swapchain;
 
 use camera::Camera;
 use descriptors::{DescriptorError, Descriptors};
-use framebuffers::Framebuffers;
 use mesh::Mesh;
+use pipelines::framebuffers::Framebuffers;
 use pipelines::pipeline_parameters::{MaterialPushConstants, PipelineIndex, PipelineMap, RenderSettings, MAX_BONE_COUNT};
 use pipelines::Pipelines;
 use scene::{Scene, SkinnedModel, StaticMeshMap};
@@ -244,7 +243,7 @@ impl Renderer {
             &render_settings_buffer,
             &skinned_mesh_joints_buffer,
             &materials_temp_uniform,
-            &framebuffers.inner[frame_index.index],
+            framebuffers.hdr_attachment(frame_index.index),
         );
 
         self.temp_arena.add_buffer(global_transforms_buffer);
@@ -310,8 +309,6 @@ impl Renderer {
         static_meshes: &PipelineMap<StaticMeshMap>,
         skinned_meshes: &PipelineMap<Vec<SkinnedModel>>,
     ) -> Result<vk::CommandBuffer, RendererError> {
-        let framebuffer = &framebuffers.inner[frame_index.index];
-
         let command_pool = self.command_pool.inner;
         unsafe {
             profiling::scope!("reset command pool");
@@ -347,20 +344,18 @@ impl Renderer {
                 .map_err(RendererError::CommandBufferBegin)?;
         }
 
+        framebuffers.insert_initial_barriers(&self.device, command_buffer, frame_index.index);
+        let color_attachments = framebuffers.first_pass_color_attachments(frame_index.index);
+        let depth_attachment = framebuffers.first_pass_depth_attachment(frame_index.index);
         let render_area = vk::Rect2D::default().extent(framebuffers.extent);
-        let mut depth_clear_value = vk::ClearValue::default();
-        depth_clear_value.depth_stencil.depth = 0.0;
-        let clear_colors = [vk::ClearValue::default(), depth_clear_value, vk::ClearValue::default()];
-        let render_pass_begin_info = vk::RenderPassBeginInfo::default()
-            .render_pass(pipelines.render_pass.inner)
-            .framebuffer(framebuffer.inner)
+        let rendering_info = vk::RenderingInfoKHR::default()
             .render_area(render_area)
-            .clear_values(&clear_colors);
-        let subpass_begin_info = vk::SubpassBeginInfo::default().contents(vk::SubpassContents::INLINE);
+            .layer_count(1)
+            .color_attachments(&color_attachments)
+            .depth_attachment(&depth_attachment);
         unsafe {
-            profiling::scope!("begin render pass");
-            self.device
-                .cmd_begin_render_pass2(command_buffer, &render_pass_begin_info, &subpass_begin_info);
+            profiling::scope!("begin main rendering");
+            self.device.dynamic_rendering.cmd_begin_rendering(command_buffer, &rendering_info);
         }
 
         // Bind the shared descriptor set
@@ -417,8 +412,20 @@ impl Renderer {
         }
 
         unsafe {
-            profiling::scope!("vk::cmd_next_subpass");
-            self.device.cmd_next_subpass(command_buffer, vk::SubpassContents::INLINE);
+            profiling::scope!("end main rendering");
+            self.device.dynamic_rendering.cmd_end_rendering(command_buffer);
+        }
+
+        framebuffers.insert_post_processing_barriers(&self.device, command_buffer, frame_index.index);
+        let color_attachments = framebuffers.second_pass_color_attachments(frame_index.index);
+        let render_area = vk::Rect2D::default().extent(framebuffers.extent);
+        let rendering_info = vk::RenderingInfoKHR::default()
+            .render_area(render_area)
+            .layer_count(1)
+            .color_attachments(&color_attachments);
+        unsafe {
+            profiling::scope!("begin post-processing rendering");
+            self.device.dynamic_rendering.cmd_begin_rendering(command_buffer, &rendering_info);
         }
 
         {
@@ -439,9 +446,11 @@ impl Renderer {
         }
 
         unsafe {
-            profiling::scope!("end render pass");
-            self.device.cmd_end_render_pass2(command_buffer, &vk::SubpassEndInfo::default());
+            profiling::scope!("end rendering");
+            self.device.dynamic_rendering.cmd_end_rendering(command_buffer);
         }
+
+        framebuffers.insert_end_of_frame_barriers(&self.device, command_buffer, frame_index.index);
 
         unsafe {
             profiling::scope!("end command buffer");

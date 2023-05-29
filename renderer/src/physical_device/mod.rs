@@ -13,7 +13,13 @@ mod physical_device_features;
 use limits::PhysicalDeviceLimitBreak;
 use physical_device_features::SupportedFeatures;
 
-pub const HDR_COLOR_ATTACHMENT_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
+pub const HDR_COLOR_ATTACHMENT_FORMAT: vk::Format = vk::Format::B10G11R11_UFLOAT_PACK32;
+pub const TEXTURE_FORMATS: &[vk::Format] = &[
+    vk::Format::R8G8B8A8_SRGB,
+    vk::Format::R8G8B8A8_UNORM,
+    vk::Format::BC7_SRGB_BLOCK,
+    vk::Format::BC7_UNORM_BLOCK,
+];
 
 #[derive(thiserror::Error, Debug)]
 pub enum PhysicalDeviceRejectionReason {
@@ -180,7 +186,7 @@ fn filter_capable_device(
     };
 
     let extensions = get_extensions(instance, physical_device);
-    for c_name in physical_device_features::REQUIRED_DEVICE_FEATURES {
+    for c_name in physical_device_features::REQUIRED_DEVICE_EXTENSIONS {
         let ext_name = c_name.to_str().unwrap();
         if extensions.iter().all(|s| s != ext_name) {
             reject(PhysicalDeviceRejectionReason::Extension(ext_name));
@@ -259,10 +265,9 @@ fn filter_capable_device(
 
     let texture_usage_features =
         vk::FormatFeatureFlags::SAMPLED_IMAGE | vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR | vk::FormatFeatureFlags::TRANSFER_DST;
-    require_format(vk::Format::R8G8B8A8_SRGB, texture_usage_features); // Uncompressed textures
-    require_format(vk::Format::R8G8B8A8_UNORM, texture_usage_features); // Uncompressed textures
-    require_format(vk::Format::BC7_SRGB_BLOCK, texture_usage_features); // Compressed textures
-    require_format(vk::Format::BC7_UNORM_BLOCK, texture_usage_features); // Compressed textures
+    for tex_format in TEXTURE_FORMATS {
+        require_format(*tex_format, texture_usage_features); // Compressed textures
+    }
     require_format(HDR_COLOR_ATTACHMENT_FORMAT, vk::FormatFeatureFlags::COLOR_ATTACHMENT); // HDR color attachments
 
     // From the spec:

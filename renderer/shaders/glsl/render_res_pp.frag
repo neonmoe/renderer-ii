@@ -1,10 +1,14 @@
 // This file is included in some variants in the "variants" directory.
 
+#extension GL_EXT_samplerless_texture_functions : require
+
 layout(location = 0) out vec4 out_color;
+layout(origin_upper_left) in vec4 gl_FragCoord;
+
 #ifdef MULTISAMPLED
-layout(input_attachment_index = 0, set = 1, binding = 0) uniform subpassInputMS in_color;
+layout(set = 1, binding = 0) uniform texture2DMS in_color_tex;
 #else
-layout(input_attachment_index = 0, set = 1, binding = 0) uniform subpassInput in_color;
+layout(set = 1, binding = 0) uniform texture2D in_color_tex;
 #endif
 
 layout(set = 0, binding = 1) uniform RenderSettings { uint debug_value; }
@@ -31,11 +35,12 @@ void main() {
     // Handles post-processing effects that are done before MSAA resolve and down/upsampling passes:
     // - Tonemapping
 
+    ivec2 texcoord = ivec2(gl_FragCoord.xy);
 #ifdef MULTISAMPLED
-    vec3 linear = subpassLoad(in_color, gl_SampleID).rgb;
+    vec4 linear = texelFetch(in_color_tex, texcoord, gl_SampleID);
 #else
-    vec3 linear = subpassLoad(in_color).rgb;
+    vec4 linear = texelFetch(in_color_tex, texcoord, 0);
 #endif
     float exposure = 0.8;
-    out_color = vec4(aces(linear * exposure), 1.0);
+    out_color = vec4(aces(linear.rgb * exposure), 1.0);
 }

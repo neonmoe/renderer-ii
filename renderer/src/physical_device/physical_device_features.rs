@@ -1,8 +1,13 @@
 use ash::{vk, Instance};
 use core::ffi::CStr;
 
-pub static REQUIRED_DEVICE_FEATURES: &[&CStr] = &[cstr!("VK_KHR_swapchain"), cstr!("VK_KHR_synchronization2")];
-pub static OPTIONAL_DEVICE_FEATURES: &[&CStr] = &[cstr!("VK_KHR_portability_subset"), cstr!("VK_EXT_memory_budget")];
+pub const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] = &[
+    cstr!("VK_KHR_swapchain"),
+    cstr!("VK_KHR_synchronization2"),
+    cstr!("VK_KHR_dynamic_rendering"),
+];
+pub const OPTIONAL_DEVICE_EXTENSIONS: &[&CStr] = &[cstr!("VK_KHR_portability_subset"), cstr!("VK_EXT_memory_budget")];
+pub const TOTAL_DEVICE_EXTENSIONS: usize = REQUIRED_DEVICE_EXTENSIONS.len() + OPTIONAL_DEVICE_EXTENSIONS.len();
 
 #[derive(Debug)]
 pub struct SupportedFeatures {
@@ -14,6 +19,7 @@ pub struct SupportedFeatures {
     pipeline_creation_cache_control: bool,
     synchronization2: bool,
     uniform_buffer_standard_layout: bool,
+    dynamic_rendering: bool,
 }
 
 pub fn create_with_features(
@@ -31,11 +37,16 @@ pub fn create_with_features(
     let mut pipeline_creation_cache_control_features =
         vk::PhysicalDevicePipelineCreationCacheControlFeatures::default().pipeline_creation_cache_control(true);
     let mut synchronization2_features = vk::PhysicalDeviceSynchronization2FeaturesKHR::default().synchronization2(true);
+    let mut uniform_buffer_standard_layout_features =
+        vk::PhysicalDeviceUniformBufferStandardLayoutFeatures::default().uniform_buffer_standard_layout(true);
+    let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default().dynamic_rendering(true);
     let device_create_info = device_create_info
         .push_next(&mut descriptor_indexing_features)
         .push_next(&mut extended_dynamic_state_features)
         .push_next(&mut pipeline_creation_cache_control_features)
         .push_next(&mut synchronization2_features)
+        .push_next(&mut uniform_buffer_standard_layout_features)
+        .push_next(&mut dynamic_rendering_features)
         .enabled_features(&features);
     {
         profiling::scope!("vk::create_device");
@@ -50,12 +61,14 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
     let mut pipeline_creation_cache_control_features = vk::PhysicalDevicePipelineCreationCacheControlFeatures::default();
     let mut synchronization2_features = vk::PhysicalDeviceSynchronization2FeaturesKHR::default();
     let mut uniform_buffer_standard_layout_features = vk::PhysicalDeviceUniformBufferStandardLayoutFeatures::default();
+    let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default();
     let mut features = vk::PhysicalDeviceFeatures2::default()
         .push_next(&mut descriptor_indexing_features)
         .push_next(&mut extended_dynamic_state_features)
         .push_next(&mut pipeline_creation_cache_control_features)
         .push_next(&mut synchronization2_features)
-        .push_next(&mut uniform_buffer_standard_layout_features);
+        .push_next(&mut uniform_buffer_standard_layout_features)
+        .push_next(&mut dynamic_rendering_features);
     unsafe { instance.get_physical_device_features2(physical_device, &mut features) };
     // Note: requirements should match what is requested in create_device_with_feature_requirements
     let features = SupportedFeatures {
@@ -67,6 +80,7 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
         pipeline_creation_cache_control: pipeline_creation_cache_control_features.pipeline_creation_cache_control == vk::TRUE,
         synchronization2: synchronization2_features.synchronization2 == vk::TRUE,
         uniform_buffer_standard_layout: uniform_buffer_standard_layout_features.uniform_buffer_standard_layout == vk::TRUE,
+        dynamic_rendering: dynamic_rendering_features.dynamic_rendering == vk::TRUE,
     };
     if features.sampler_anisotropy
         && features.sample_rate_shading
@@ -76,6 +90,7 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
         && features.pipeline_creation_cache_control
         && features.synchronization2
         && features.uniform_buffer_standard_layout
+        && features.dynamic_rendering
     {
         Ok(())
     } else {

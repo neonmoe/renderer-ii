@@ -122,6 +122,10 @@ impl<T> PipelineMap<T> {
         // Safety: initialized in PipelineMap::new
         self.buffer.iter().map(|o| unsafe { o.assume_init_ref() })
     }
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        // Safety: initialized in PipelineMap::new
+        self.buffer.iter_mut().map(|o| unsafe { o.assume_init_mut() })
+    }
     pub fn iter_with_pipeline(&self) -> impl Iterator<Item = (PipelineIndex, &T)> {
         self.buffer
             .iter()
@@ -186,7 +190,9 @@ pub(crate) struct PipelineParameters {
     pub depth_write: bool,
     pub sample_shading: bool,
     pub min_sample_shading_factor: f32,
-    pub subpass: u32,
+    pub writes_hdr: bool,
+    pub writes_depth: bool,
+    pub writes_ldr: bool,
     pub vertex_shader: Shader,
     pub fragment_shader: Shader,
     pub bindings: &'static [vk::VertexInputBindingDescription],
@@ -384,7 +390,9 @@ static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     depth_write: true,
     sample_shading: false,
     min_sample_shading_factor: 0.0,
-    subpass: 0,
+    writes_hdr: true,
+    writes_depth: true,
+    writes_ldr: false,
     vertex_shader: Shader::SingleVariant(shader!("variants/main-static.vert")),
     fragment_shader: Shader::SingleVariant(shader!("main.frag")),
     bindings: &[
@@ -414,7 +422,9 @@ static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     depth_write: true,
     sample_shading: false,
     min_sample_shading_factor: 0.0,
-    subpass: 0,
+    writes_hdr: true,
+    writes_depth: true,
+    writes_ldr: false,
     vertex_shader: Shader::SingleVariant(shader!("variants/main-skinned.vert")),
     fragment_shader: Shader::SingleVariant(shader!("main.frag")),
     bindings: &[
@@ -479,7 +489,9 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     depth_write: false,
     sample_shading: true,
     min_sample_shading_factor: 1.0,
-    subpass: 1,
+    writes_hdr: false,
+    writes_depth: false,
+    writes_ldr: true,
     vertex_shader: Shader::SingleVariant(shader!("fullscreen.vert")),
     fragment_shader: Shader::MsaaVariants {
         single_sample: shader!("variants/render_res_pp-singlesample.frag"),
@@ -491,7 +503,7 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
         SHARED_DESCRIPTOR_SET_0,
         &[DescriptorSetLayoutParams {
             binding: 0,
-            descriptor_type: vk::DescriptorType::INPUT_ATTACHMENT,
+            descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
             binding_flags: vk::DescriptorBindingFlags::empty(),

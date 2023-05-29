@@ -118,6 +118,8 @@ impl Instance {
         #[cfg(feature = "vulkan-debug-utils")]
         if debug_utils_enabled {
             crate::init_debug_utils(&entry, &instance);
+            let debug_utils = DebugUtils::new(&entry, &instance);
+            let _ = unsafe { debug_utils.create_debug_utils_messenger(&debug_utils_messenger_create_info, None) };
         }
 
         Ok(Instance { entry, inner: instance })
