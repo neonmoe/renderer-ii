@@ -1,4 +1,5 @@
 use crate::renderer::descriptors::material::PbrFactorsSoa;
+use crate::renderer::pipelines::render_passes::RenderPass;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use core::mem::{self, MaybeUninit};
@@ -190,9 +191,7 @@ pub(crate) struct PipelineParameters {
     pub depth_write: bool,
     pub sample_shading: bool,
     pub min_sample_shading_factor: f32,
-    pub writes_hdr: bool,
-    pub writes_depth: bool,
-    pub writes_ldr: bool,
+    pub render_pass: RenderPass,
     pub vertex_shader: Shader,
     pub fragment_shader: Shader,
     pub bindings: &'static [vk::VertexInputBindingDescription],
@@ -390,9 +389,7 @@ static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     depth_write: true,
     sample_shading: false,
     min_sample_shading_factor: 0.0,
-    writes_hdr: true,
-    writes_depth: true,
-    writes_ldr: false,
+    render_pass: RenderPass::Geometry,
     vertex_shader: Shader::SingleVariant(shader!("variants/main-static.vert")),
     fragment_shader: Shader::SingleVariant(shader!("main.frag")),
     bindings: &[
@@ -422,9 +419,7 @@ static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     depth_write: true,
     sample_shading: false,
     min_sample_shading_factor: 0.0,
-    writes_hdr: true,
-    writes_depth: true,
-    writes_ldr: false,
+    render_pass: RenderPass::Geometry,
     vertex_shader: Shader::SingleVariant(shader!("variants/main-skinned.vert")),
     fragment_shader: Shader::SingleVariant(shader!("main.frag")),
     bindings: &[
@@ -489,9 +484,7 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     depth_write: false,
     sample_shading: true,
     min_sample_shading_factor: 1.0,
-    writes_hdr: false,
-    writes_depth: false,
-    writes_ldr: true,
+    render_pass: RenderPass::PostProcess,
     vertex_shader: Shader::SingleVariant(shader!("fullscreen.vert")),
     fragment_shader: Shader::MsaaVariants {
         single_sample: shader!("variants/render_res_pp-singlesample.frag"),
