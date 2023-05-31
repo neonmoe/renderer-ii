@@ -22,7 +22,8 @@
     clippy::cast_sign_loss,
     clippy::cast_possible_wrap,
     clippy::cast_lossless,
-    clippy::too_many_lines
+    clippy::too_many_lines,
+    clippy::similar_names
 )]
 // TODO: #![no_std]
 
@@ -118,12 +119,13 @@ mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 
 mod renderer;
-pub use renderer::coordinate_system::CoordinateSystem;
 pub use renderer::descriptors::material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
 pub use renderer::descriptors::{DescriptorError, Descriptors, PbrDefaults};
-pub use renderer::mesh::Mesh;
-pub use renderer::pipelines::framebuffers::{FramebufferCreationError, Framebuffers};
+pub use renderer::framebuffers::{FramebufferCreationError, Framebuffers};
 pub use renderer::pipelines::{PipelineCreationError, Pipelines};
+pub use renderer::scene::camera::Camera;
+pub use renderer::scene::coordinate_system::CoordinateSystem;
+pub use renderer::scene::mesh::Mesh;
 pub use renderer::scene::{JointOffset, Scene, SkinnedModel, StaticMeshMap};
 pub use renderer::swapchain::{Swapchain, SwapchainBase, SwapchainError, SwapchainSettings};
 pub use renderer::{Renderer, RendererError};

@@ -1,4 +1,3 @@
-use crate::physical_device::{PhysicalDevice, HDR_COLOR_ATTACHMENT_FORMAT};
 use arrayvec::ArrayVec;
 use ash::vk;
 
@@ -46,11 +45,11 @@ impl RenderPass {
 
     /// Returns the formats of the clor attachments of this render pass (used at
     /// pipeline creation time).
-    pub fn color_attachment_formats(self, physical_device: &PhysicalDevice) -> AttachmentVec<vk::Format> {
+    pub fn color_attachment_formats(self, attachment_formats: &AttachmentFormats) -> AttachmentVec<vk::Format> {
         let mut formats = ArrayVec::new();
         match self {
-            RenderPass::Geometry => formats.push(HDR_COLOR_ATTACHMENT_FORMAT),
-            RenderPass::PostProcess => formats.push(physical_device.swapchain_format),
+            RenderPass::Geometry => formats.push(Attachment::Hdr.format(attachment_formats)),
+            RenderPass::PostProcess => formats.push(Attachment::PostProcess.format(attachment_formats)),
         }
         formats
     }
@@ -58,19 +57,24 @@ impl RenderPass {
     /// Returns the rendering information for the depth attachment of this
     /// render pass (used at render time).
     pub fn depth_attachment_info(self, attachment_images: &[vk::ImageView; Attachment::COUNT]) -> vk::RenderingAttachmentInfoKHR<'static> {
-        match self {
-            RenderPass::Geometry => Attachment::Depth.attachment_info(attachment_images),
-            RenderPass::PostProcess => vk::RenderingAttachmentInfoKHR::default(),
-        }
+        self.depth_attachment()
+            .map_or_else(vk::RenderingAttachmentInfoKHR::default, |attachment| {
+                attachment.attachment_info(attachment_images)
+            })
     }
 
     /// Returns the format of the depth attachment of this render pass (used at
     /// pipeline creation time). This is [`vk::Format::UNDEFINED`] if the render
     /// pass does not use depth.
-    pub fn depth_attachment_format(self, physical_device: &PhysicalDevice) -> vk::Format {
+    pub fn depth_attachment_format(self, formats: &AttachmentFormats) -> vk::Format {
+        self.depth_attachment()
+            .map_or(vk::Format::UNDEFINED, |attachment| attachment.format(formats))
+    }
+
+    fn depth_attachment(self) -> Option<Attachment> {
         match self {
-            RenderPass::Geometry => physical_device.depth_format,
-            RenderPass::PostProcess => vk::Format::UNDEFINED,
+            RenderPass::Geometry => Some(Attachment::Depth),
+            RenderPass::PostProcess => None,
         }
     }
 
@@ -141,6 +145,11 @@ impl RenderPass {
 }
 
 pub type AttachmentVec<T> = ArrayVec<T, { Attachment::COUNT }>;
+pub struct AttachmentFormats {
+    pub hdr: vk::Format,
+    pub swapchain: vk::Format,
+    pub depth: vk::Format,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
@@ -168,11 +177,11 @@ impl Attachment {
         }
     }
 
-    pub fn format(self, physical_device: &PhysicalDevice) -> vk::Format {
+    pub fn format(self, formats: &AttachmentFormats) -> vk::Format {
         match self {
-            Attachment::Hdr => HDR_COLOR_ATTACHMENT_FORMAT,
-            Attachment::Depth => physical_device.depth_format,
-            Attachment::PostProcess => physical_device.swapchain_format,
+            Attachment::Hdr => formats.hdr,
+            Attachment::Depth => formats.depth,
+            Attachment::PostProcess => formats.swapchain,
         }
     }
 

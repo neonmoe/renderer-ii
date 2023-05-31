@@ -1,6 +1,8 @@
 use crate::arena::{ForBuffers, MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
-use crate::renderer::pipelines::pipeline_parameters::DrawCallParametersSoa;
+use crate::renderer::pipeline_parameters::constants::MAX_BONE_COUNT;
+use crate::renderer::pipeline_parameters::render_passes::{Attachment, RenderPass};
+use crate::renderer::pipeline_parameters::{DrawCallParametersSoa, PipelineIndex, PipelineMap, RenderSettings, ALL_PIPELINES};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use alloc::rc::Rc;
 use arrayvec::ArrayVec;
@@ -9,20 +11,15 @@ use bytemuck::Zeroable;
 use core::fmt::Arguments;
 use glam::Mat4;
 
-pub(crate) mod camera;
-pub(crate) mod coordinate_system;
 pub(crate) mod descriptors;
-pub(crate) mod mesh;
+pub(crate) mod framebuffers;
+pub(crate) mod pipeline_parameters;
 pub(crate) mod pipelines;
 pub(crate) mod scene;
 pub(crate) mod swapchain;
 
-use camera::Camera;
 use descriptors::{DescriptorError, Descriptors};
-use mesh::Mesh;
-use pipelines::framebuffers::Framebuffers;
-use pipelines::pipeline_parameters::{PipelineIndex, PipelineMap, RenderSettings, MAX_BONE_COUNT};
-use pipelines::render_passes::{Attachment, RenderPass};
+use framebuffers::Framebuffers;
 use pipelines::Pipelines;
 use scene::{Scene, SkinnedModel, StaticMeshMap};
 use swapchain::Swapchain;
@@ -249,7 +246,7 @@ impl Renderer {
 
         let global_transforms = &[scene
             .camera
-            .create_global_transforms(width as f32, height as f32, scene.world_space)];
+            .create_proj_view_transforms(width as f32, height as f32, scene.world_space)];
         let global_transforms_buffer = create_uniform_buffer(&mut self.temp_arena, global_transforms, "view+proj matrices")
             .map_err(RendererError::CameraTransformUniformCreation)?;
 
@@ -271,7 +268,7 @@ impl Renderer {
             .map_err(RendererError::MaterialsUniformCreation)?;
 
         let mut draw_call_params_buffers = ArrayVec::<Buffer, { PipelineIndex::Count as usize }>::new();
-        for pipeline in pipelines::pipeline_parameters::ALL_PIPELINES {
+        for pipeline in ALL_PIPELINES {
             let draw_call_parameters = &[draw_call_params[pipeline].data];
             let buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")
                 .map_err(RendererError::RenderSettingsUniformCreation)?;
@@ -573,12 +570,12 @@ impl Renderer {
 
             let texture_index = material.array_index(pl_index).unwrap();
 
-            let mut vertex_buffers = ArrayVec::<vk::Buffer, { mesh::VERTEX_BUFFERS + 1 }>::new();
+            let mut vertex_buffers = ArrayVec::<vk::Buffer, 8>::new();
             vertex_buffers.push(transform_buffer.inner);
             for vertex_buffer in &mesh.vertex_buffers {
                 vertex_buffers.push(vertex_buffer.inner);
             }
-            let mut vertex_offsets = ArrayVec::<vk::DeviceSize, { mesh::VERTEX_BUFFERS + 1 }>::new();
+            let mut vertex_offsets = ArrayVec::<vk::DeviceSize, 8>::new();
             vertex_offsets.push(0);
             vertex_offsets.try_extend_from_slice(&mesh.vertices_offsets).unwrap();
 
@@ -644,12 +641,12 @@ impl Renderer {
 
                 let texture_index = material.array_index(pl_index).unwrap();
 
-                let mut vertex_buffers = ArrayVec::<vk::Buffer, { mesh::VERTEX_BUFFERS + 1 }>::new();
+                let mut vertex_buffers = ArrayVec::<vk::Buffer, 8>::new();
                 vertex_buffers.push(transform_buffer.inner);
                 for vertex_buffer in &mesh.vertex_buffers {
                     vertex_buffers.push(vertex_buffer.inner);
                 }
-                let mut vertex_offsets = ArrayVec::<vk::DeviceSize, { mesh::VERTEX_BUFFERS + 1 }>::new();
+                let mut vertex_offsets = ArrayVec::<vk::DeviceSize, 8>::new();
                 vertex_offsets.push(0);
                 vertex_offsets.try_extend_from_slice(&mesh.vertices_offsets).unwrap();
 

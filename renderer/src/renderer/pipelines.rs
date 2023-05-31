@@ -1,16 +1,10 @@
-use crate::physical_device::PhysicalDevice;
 use crate::renderer::descriptors::Descriptors;
+use crate::renderer::pipeline_parameters::render_passes::{AttachmentFormats, AttachmentVec};
+use crate::renderer::pipeline_parameters::{PipelineIndex, PipelineMap, Shader, ALL_PIPELINES, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout};
 use arrayvec::ArrayVec;
 use ash::vk;
 use hashbrown::HashMap;
-
-pub(crate) mod framebuffers;
-pub mod pipeline_parameters;
-pub(crate) mod render_passes;
-
-use pipeline_parameters::{PipelineIndex, PipelineMap, Shader, ALL_PIPELINES, PIPELINE_PARAMETERS};
-use render_passes::AttachmentVec;
 
 #[derive(thiserror::Error, Debug, Clone, Copy)]
 pub enum PipelineCreationError {
@@ -31,17 +25,17 @@ pub struct Pipelines {
 impl Pipelines {
     pub fn new(
         device: &Device,
-        physical_device: &PhysicalDevice,
         descriptors: &Descriptors,
         extent: vk::Extent2D,
         attachment_sample_count: vk::SampleCountFlags,
+        attachment_formats: &AttachmentFormats,
         old_pipelines: Option<Pipelines>,
     ) -> Result<Pipelines, PipelineCreationError> {
         let (vk_pipelines, pipeline_cache) = create_pipelines(
             device,
-            physical_device,
             &descriptors.pipeline_layouts,
             attachment_sample_count,
+            attachment_formats,
             extent,
             old_pipelines.and_then(|pipelines| pipelines.pipeline_cache),
         )?;
@@ -66,9 +60,9 @@ impl Pipelines {
 #[profiling::function]
 fn create_pipelines(
     device: &Device,
-    physical_device: &PhysicalDevice,
     pipeline_layouts: &PipelineMap<PipelineLayout>,
     attachment_sample_count: vk::SampleCountFlags,
+    attachment_formats: &AttachmentFormats,
     extent: vk::Extent2D,
     mut pipeline_cache: Option<PipelineCache>,
 ) -> Result<(Vec<vk::Pipeline>, Option<PipelineCache>), PipelineCreationError> {
@@ -122,11 +116,11 @@ fn create_pipelines(
 
     let color_attachment_formats = PipelineMap::new(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
-        Ok(params.render_pass.color_attachment_formats(physical_device))
+        Ok(params.render_pass.color_attachment_formats(attachment_formats))
     })?;
     let depth_attachment_formats = PipelineMap::new(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
-        Ok(params.render_pass.depth_attachment_format(physical_device))
+        Ok(params.render_pass.depth_attachment_format(attachment_formats))
     })?;
     let mut pipeline_rendering_create_infos = PipelineMap::new(|pipeline| {
         Ok(vk::PipelineRenderingCreateInfoKHR::default()

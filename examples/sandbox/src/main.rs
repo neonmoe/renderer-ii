@@ -376,6 +376,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
     let physical_device = physical_devices.remove(0)?;
     let device = physical_device.create_device(&instance.entry, &instance.inner)?;
 
+    let attachment_formats = physical_device.attachment_formats();
     let msaa_samples = renderer::vk::SampleCountFlags::TYPE_4;
     if !physical_device
         .properties
@@ -518,7 +519,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
 
     let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings)?;
     print_memory_usage("after swapchain creation");
-    let mut pipelines = renderer::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, msaa_samples, None)?;
+    let mut pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None)?;
     print_memory_usage("after pipelines creation");
     let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
     print_memory_usage("after framebuffers creation");
@@ -594,10 +595,10 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
             swapchain.recreate(&device, &physical_device, &swapchain_settings)?;
             pipelines = renderer::Pipelines::new(
                 &device,
-                &physical_device,
                 &descriptors,
                 swapchain.extent,
                 msaa_samples,
+                attachment_formats,
                 Some(pipelines),
             )?;
             framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;

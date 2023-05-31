@@ -1,3 +1,4 @@
+use crate::renderer::pipeline_parameters::render_passes::AttachmentFormats;
 use arrayvec::ArrayVec;
 use ash::extensions::khr;
 use ash::vk;
@@ -6,14 +7,13 @@ use core::ffi::CStr;
 use core::fmt::{self, Display, Formatter};
 use std::error::Error;
 
-mod device_creation;
-pub mod limits;
-mod physical_device_features;
+pub(crate) mod device_creation;
+pub(crate) mod limits;
+pub(crate) mod physical_device_features;
 
 use limits::PhysicalDeviceLimitBreak;
 use physical_device_features::SupportedFeatures;
 
-pub const HDR_COLOR_ATTACHMENT_FORMAT: vk::Format = vk::Format::B10G11R11_UFLOAT_PACK32;
 pub const TEXTURE_FORMATS: &[vk::Format] = &[
     vk::Format::R8G8B8A8_SRGB,
     vk::Format::R8G8B8A8_UNORM,
@@ -91,13 +91,17 @@ pub struct PhysicalDevice {
     pub transfer_queue_family: QueueFamily,
     pub swapchain_format: vk::Format,
     pub swapchain_color_space: vk::ColorSpaceKHR,
-    pub depth_format: vk::Format,
+    pub attachment_formats: AttachmentFormats,
     pub extensions: Vec<String>,
 }
 
 impl PhysicalDevice {
     pub fn extension_supported(&self, extension: &str) -> bool {
         self.extensions.iter().any(|e| e == extension)
+    }
+
+    pub fn attachment_formats(&self) -> &AttachmentFormats {
+        &self.attachment_formats
     }
 
     /// Returns how many bytes of memorythis process is using from the physical
@@ -268,7 +272,9 @@ fn filter_capable_device(
     for tex_format in TEXTURE_FORMATS {
         require_format(*tex_format, texture_usage_features); // Compressed textures
     }
-    require_format(HDR_COLOR_ATTACHMENT_FORMAT, vk::FormatFeatureFlags::COLOR_ATTACHMENT); // HDR color attachments
+
+    let hdr_format = vk::Format::B10G11R11_UFLOAT_PACK32;
+    require_format(hdr_format, vk::FormatFeatureFlags::COLOR_ATTACHMENT);
 
     // From the spec:
     // VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT feature...
@@ -370,7 +376,11 @@ fn filter_capable_device(
                 transfer_queue_family,
                 swapchain_format,
                 swapchain_color_space,
-                depth_format,
+                attachment_formats: AttachmentFormats {
+                    hdr: hdr_format,
+                    swapchain: swapchain_format,
+                    depth: depth_format,
+                },
                 extensions,
             });
         }

@@ -1,5 +1,5 @@
 use crate::arena::{ForBuffers, ForImages, VulkanArena, VulkanArenaError};
-use crate::physical_device;
+use crate::physical_device::TEXTURE_FORMATS;
 use crate::uploader::{UploadError, Uploader};
 use crate::vulkan_raii::{Device, ImageView};
 use alloc::rc::Rc;
@@ -109,7 +109,7 @@ pub fn load_image(
     let mip_ranges = &image_data.mip_ranges;
 
     if cfg!(debug_assertions) {
-        debug_assert!(physical_device::TEXTURE_FORMATS.contains(&format));
+        debug_assert!(TEXTURE_FORMATS.contains(&format));
     }
 
     let format = kind.convert_format(format);

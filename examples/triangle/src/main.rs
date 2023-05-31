@@ -1,12 +1,11 @@
-use core::ffi::CStr;
-use core::mem::size_of;
-use std::rc::Rc;
-
 use arrayvec::{ArrayString, ArrayVec};
 use bytemuck::cast_slice;
+use core::ffi::CStr;
+use core::mem::size_of;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
+use std::rc::Rc;
 
 fn main() {
     use logger::Logger;
@@ -33,6 +32,7 @@ fn main() {
     let physical_device = physical_devices.remove(0).unwrap();
     let device = physical_device.create_device(&instance.entry, &instance.inner).unwrap();
 
+    let attachment_formats = physical_device.attachment_formats();
     let msaa_samples = renderer::vk::SampleCountFlags::TYPE_1;
 
     let mut texture_arena = renderer::VulkanArena::<renderer::ForImages>::new(
@@ -82,7 +82,7 @@ fn main() {
     };
 
     let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings).unwrap();
-    let mut pipelines = renderer::Pipelines::new(&device, &physical_device, &descriptors, swapchain.extent, msaa_samples, None).unwrap();
+    let mut pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None).unwrap();
     let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain).unwrap();
     let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device).unwrap();
 
@@ -186,10 +186,10 @@ fn main() {
                 swapchain.recreate(&device, &physical_device, &swapchain_settings).unwrap();
                 pipelines = renderer::Pipelines::new(
                     &device,
-                    &physical_device,
                     &descriptors,
                     swapchain.extent,
                     msaa_samples,
+                    attachment_formats,
                     Some(pipelines),
                 )
                 .unwrap();

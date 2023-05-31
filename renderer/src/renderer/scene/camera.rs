@@ -1,5 +1,5 @@
-use crate::renderer::coordinate_system::CoordinateSystem;
-use crate::renderer::pipelines::pipeline_parameters::ProjViewTransforms;
+use crate::renderer::pipeline_parameters::ProjViewTransforms;
+use crate::renderer::scene::coordinate_system::CoordinateSystem;
 use glam::{Mat4, Quat, Vec3};
 
 /// Creates the projection matrix, with an infinite far plane if `far` is
@@ -56,7 +56,7 @@ impl Default for Camera {
 
 impl Camera {
     #[profiling::function]
-    pub(crate) fn create_global_transforms(&self, width: f32, height: f32, world_space: CoordinateSystem) -> ProjViewTransforms {
+    pub(crate) fn create_proj_view_transforms(&self, width: f32, height: f32, world_space: CoordinateSystem) -> ProjViewTransforms {
         let view = Mat4::from_rotation_translation(self.orientation, self.position).inverse();
         let vk_space_from_world_space = world_space.create_transform_to(&CoordinateSystem::VULKAN);
         let projection = create_proj(width, height, self.near, self.far) * vk_space_from_world_space;

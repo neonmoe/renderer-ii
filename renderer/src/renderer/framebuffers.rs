@@ -2,8 +2,9 @@ use std::fmt::Arguments;
 
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
-use crate::renderer::pipelines::render_passes::{Attachment, AttachmentVec};
-use crate::renderer::{Pipelines, Swapchain};
+use crate::renderer::pipeline_parameters::render_passes::{Attachment, AttachmentVec};
+use crate::renderer::pipelines::Pipelines;
+use crate::renderer::swapchain::Swapchain;
 use crate::vulkan_raii::{AnyImage, Device, ImageView};
 use alloc::rc::Rc;
 use arrayvec::ArrayVec;
@@ -43,11 +44,12 @@ impl Framebuffers {
 
         let vk::Extent2D { width, height } = swapchain.extent;
         let multisampled = pipelines.attachment_sample_count != vk::SampleCountFlags::TYPE_1;
+        let pd_formats = physical_device.attachment_formats();
 
         let image_info = |attachment: Attachment| {
             vk::ImageCreateInfo::default()
                 .image_type(vk::ImageType::TYPE_2D)
-                .format(attachment.format(physical_device))
+                .format(attachment.format(pd_formats))
                 .extent(vk::Extent3D { width, height, depth: 1 })
                 .mip_levels(1)
                 .array_layers(1)
@@ -119,7 +121,7 @@ impl Framebuffers {
             let image_view = create_image_view(
                 Rc::new(AnyImage::Regular(image)),
                 attachment.aspect(),
-                attachment.format(physical_device),
+                attachment.format(pd_formats),
                 format_args!("{attachment:?} render target"),
             )?;
             Ok(image_view)

@@ -1,8 +1,9 @@
 use crate::arena::{ForBuffers, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
-use crate::renderer::pipelines::pipeline_parameters::{
-    DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, MAX_BONE_COUNT,
-    MAX_TEXTURE_COUNT, PBR_PIPELINES, PIPELINE_PARAMETERS, SKINNED_PIPELINES,
+use crate::renderer::pipeline_parameters::constants::{MAX_BONE_COUNT, MAX_TEXTURE_COUNT};
+use crate::renderer::pipeline_parameters::{
+    DescriptorSetLayoutParams, PbrFactorsSoa, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_PARAMETERS,
+    SKINNED_PIPELINES,
 };
 use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 use alloc::rc::{Rc, Weak};
@@ -13,7 +14,7 @@ use core::mem;
 
 pub(crate) mod material;
 
-use material::{AlphaMode, Material, PbrFactors, PbrFactorsSoa, PipelineSpecificData};
+use material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
 
 #[derive(thiserror::Error, Debug)]
 pub enum DescriptorError {

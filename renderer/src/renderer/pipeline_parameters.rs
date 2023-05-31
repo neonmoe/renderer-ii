@@ -1,13 +1,13 @@
-use crate::renderer::descriptors::material::PbrFactorsSoa;
-use crate::renderer::pipelines::render_passes::RenderPass;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use core::mem::{self, MaybeUninit};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
-mod constants;
+pub(crate) mod constants;
+pub(crate) mod render_passes;
 
-pub use constants::*;
+use constants::{MAX_BONE_COUNT, MAX_DRAW_CALLS, MAX_TEXTURE_COUNT};
+use render_passes::RenderPass;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -32,6 +32,19 @@ pub struct RenderSettings {
 #[repr(C)]
 pub struct DrawCallParametersSoa {
     pub material_index: [u32; MAX_DRAW_CALLS as usize],
+}
+
+/// Rust-side representation of the std430-layout `PbrFactorsSoa` struct in
+/// main.frag.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct PbrFactorsSoa {
+    /// (r, g, b, a).
+    pub base_color: [Vec4; MAX_TEXTURE_COUNT as usize],
+    /// (emissive r, .. g, .. b, occlusion strength)
+    pub emissive_and_occlusion: [Vec4; MAX_TEXTURE_COUNT as usize],
+    /// (alpha cutoff, roughness, metallic, normal scale)
+    pub alpha_rgh_mtl_normal: [Vec4; MAX_TEXTURE_COUNT as usize],
 }
 
 pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
@@ -185,7 +198,7 @@ pub(crate) enum Shader {
 macro_rules! shader {
     ($shader_name:literal) => {{
         use crate::include_words;
-        static SPIRV: &[u32] = include_words!(concat!("../../../shaders/spirv/", $shader_name, ".spv"));
+        static SPIRV: &[u32] = include_words!(concat!("../../shaders/spirv/", $shader_name, ".spv"));
         ($shader_name, SPIRV)
     }};
 }
