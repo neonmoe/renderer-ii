@@ -221,15 +221,9 @@ fn create_pipelines(
         pipeline_create_infos.push(pipeline_create_info);
     }
 
-    let pipelines = unsafe {
-        device
-            .create_graphics_pipelines(
-                pipeline_cache.as_ref().map_or_else(vk::PipelineCache::null, |pc| pc.inner),
-                &pipeline_create_infos,
-                None,
-            )
-            .map_err(|(_, err)| PipelineCreationError::Object(err))
-    }?;
+    let vk_pipeline_cache = pipeline_cache.as_ref().map_or_else(vk::PipelineCache::null, |pc| pc.inner);
+    let pipelines = unsafe { device.create_graphics_pipelines(vk_pipeline_cache, &pipeline_create_infos, None) }
+        .map_err(|(_, err)| PipelineCreationError::Object(err))?;
 
     for shader_module in all_shader_modules.values().flatten() {
         unsafe { device.destroy_shader_module(*shader_module, None) };

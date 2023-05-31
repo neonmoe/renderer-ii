@@ -1,6 +1,6 @@
 //! `VkPhysicalDeviceLimits` checks that can be made against `PipelinesParameters`.
 
-use crate::renderer::pipelines::pipeline_parameters::{MaterialPushConstants, PipelineParameters, PIPELINE_PARAMETERS};
+use crate::renderer::pipelines::pipeline_parameters::{PipelineParameters, PIPELINE_PARAMETERS};
 use ash::vk;
 
 #[derive(Debug, thiserror::Error)]
@@ -48,15 +48,6 @@ pub fn storage_buffer_range(max_storage_buffer_range: u32) -> Result<(), Physica
         Ok(())
     } else {
         Err(PhysicalDeviceLimitBreak::StorageBufferRange(max_storage_buffer_range, req))
-    }
-}
-
-pub fn push_constants_size(max_push_constants_size: u32) -> Result<(), PhysicalDeviceLimitBreak> {
-    let req = core::mem::size_of::<MaterialPushConstants>() as u32;
-    if max_push_constants_size >= req {
-        Ok(())
-    } else {
-        Err(PhysicalDeviceLimitBreak::PushConstantsSize(max_push_constants_size, req))
     }
 }
 

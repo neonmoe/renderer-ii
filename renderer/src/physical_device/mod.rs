@@ -311,7 +311,6 @@ fn filter_capable_device(
         };
         check_limit_break(limits::uniform_buffer_range(limits.max_uniform_buffer_range));
         check_limit_break(limits::storage_buffer_range(limits.max_storage_buffer_range));
-        check_limit_break(limits::push_constants_size(limits.max_push_constants_size));
         check_limit_break(limits::bound_descriptor_sets(limits.max_bound_descriptor_sets));
         check_limit_break(limits::per_stage_resources(limits.max_per_stage_resources));
         check_limit_break(limits::vertex_input_attributes(limits.max_vertex_input_attributes));

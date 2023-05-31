@@ -20,6 +20,7 @@ pub struct SupportedFeatures {
     synchronization2: bool,
     uniform_buffer_standard_layout: bool,
     dynamic_rendering: bool,
+    shader_draw_parameters: bool,
 }
 
 pub fn create_with_features(
@@ -40,6 +41,7 @@ pub fn create_with_features(
     let mut uniform_buffer_standard_layout_features =
         vk::PhysicalDeviceUniformBufferStandardLayoutFeatures::default().uniform_buffer_standard_layout(true);
     let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default().dynamic_rendering(true);
+    let mut vk11_features = vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
     let device_create_info = device_create_info
         .push_next(&mut descriptor_indexing_features)
         .push_next(&mut extended_dynamic_state_features)
@@ -47,6 +49,7 @@ pub fn create_with_features(
         .push_next(&mut synchronization2_features)
         .push_next(&mut uniform_buffer_standard_layout_features)
         .push_next(&mut dynamic_rendering_features)
+        .push_next(&mut vk11_features)
         .enabled_features(&features);
     {
         profiling::scope!("vk::create_device");
@@ -62,13 +65,15 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
     let mut synchronization2_features = vk::PhysicalDeviceSynchronization2FeaturesKHR::default();
     let mut uniform_buffer_standard_layout_features = vk::PhysicalDeviceUniformBufferStandardLayoutFeatures::default();
     let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default();
+    let mut vk11_features = vk::PhysicalDeviceVulkan11Features::default();
     let mut features = vk::PhysicalDeviceFeatures2::default()
         .push_next(&mut descriptor_indexing_features)
         .push_next(&mut extended_dynamic_state_features)
         .push_next(&mut pipeline_creation_cache_control_features)
         .push_next(&mut synchronization2_features)
         .push_next(&mut uniform_buffer_standard_layout_features)
-        .push_next(&mut dynamic_rendering_features);
+        .push_next(&mut dynamic_rendering_features)
+        .push_next(&mut vk11_features);
     unsafe { instance.get_physical_device_features2(physical_device, &mut features) };
     // Note: requirements should match what is requested in create_device_with_feature_requirements
     let features = SupportedFeatures {
@@ -81,6 +86,7 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
         synchronization2: synchronization2_features.synchronization2 == vk::TRUE,
         uniform_buffer_standard_layout: uniform_buffer_standard_layout_features.uniform_buffer_standard_layout == vk::TRUE,
         dynamic_rendering: dynamic_rendering_features.dynamic_rendering == vk::TRUE,
+        shader_draw_parameters: vk11_features.shader_draw_parameters == vk::TRUE,
     };
     if features.sampler_anisotropy
         && features.sample_rate_shading
@@ -91,6 +97,7 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
         && features.synchronization2
         && features.uniform_buffer_standard_layout
         && features.dynamic_rendering
+        && features.shader_draw_parameters
     {
         Ok(())
     } else {

@@ -1,9 +1,11 @@
 use crate::arena::{ForBuffers, MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
+use crate::renderer::pipelines::pipeline_parameters::DrawCallParametersSoa;
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use alloc::rc::Rc;
 use arrayvec::ArrayVec;
 use ash::{vk, Instance};
+use bytemuck::Zeroable;
 use core::fmt::Arguments;
 use glam::Mat4;
 
@@ -19,7 +21,7 @@ use camera::Camera;
 use descriptors::{DescriptorError, Descriptors};
 use mesh::Mesh;
 use pipelines::framebuffers::Framebuffers;
-use pipelines::pipeline_parameters::{MaterialPushConstants, PipelineIndex, PipelineMap, RenderSettings, MAX_BONE_COUNT};
+use pipelines::pipeline_parameters::{PipelineIndex, PipelineMap, RenderSettings, MAX_BONE_COUNT};
 use pipelines::render_passes::{Attachment, RenderPass};
 use pipelines::Pipelines;
 use scene::{Scene, SkinnedModel, StaticMeshMap};
@@ -77,6 +79,28 @@ pub struct FrameIndex {
 impl FrameIndex {
     fn new(index: usize) -> FrameIndex {
         FrameIndex { index }
+    }
+}
+
+struct DrawCallParameters {
+    data: DrawCallParametersSoa,
+    draw_calls: usize,
+}
+impl DrawCallParameters {
+    /// Returns the value to put in the draw's `firstInstance` which will result
+    /// in the given parameters in the shader, or None if the buffer is full.
+    pub fn draw_call_params_id(&mut self, material_index: u32) -> Option<u32> {
+        if let Some(i) = self.data.material_index.iter().position(|idx| material_index == *idx) {
+            Some(i as u32)
+        } else if self.draw_calls < self.data.material_index.len() {
+            let i = self.draw_calls;
+            self.data.material_index[i] = material_index;
+            self.draw_calls += 1;
+            Some(i as u32)
+        } else {
+            debug_assert!(false, "draw call parameter buffer was filled");
+            None
+        }
     }
 }
 
@@ -213,7 +237,15 @@ impl Renderer {
             temp_arena.create_buffer(buffer_create_info, buffer_bytes, None, None, format_args!("uniform ({name})"))
         }
 
+        // Prepare the data (CPU-side work):
+
         let vk::Extent2D { width, height } = framebuffers.extent;
+        let mut draw_call_params = PipelineMap::from_infallible(|_| DrawCallParameters {
+            data: DrawCallParametersSoa::zeroed(),
+            draw_calls: 0,
+        });
+
+        // Create and update descriptors (buffer allocations and then desc writes):
 
         let global_transforms = &[scene
             .camera
@@ -237,11 +269,21 @@ impl Renderer {
         let materials_temp_uniform = descriptors
             .create_materials_temp_uniform(&mut self.temp_arena)
             .map_err(RendererError::MaterialsUniformCreation)?;
+
+        let mut draw_call_params_buffers = ArrayVec::<Buffer, { PipelineIndex::Count as usize }>::new();
+        for pipeline in pipelines::pipeline_parameters::ALL_PIPELINES {
+            let draw_call_parameters = &[draw_call_params[pipeline].data];
+            let buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")
+                .map_err(RendererError::RenderSettingsUniformCreation)?;
+            draw_call_params_buffers.push(buffer);
+        }
+
         descriptors.write_descriptors(
             &global_transforms_buffer,
             &render_settings_buffer,
             &skinned_mesh_joints_buffer,
             &materials_temp_uniform,
+            &PipelineMap::from_infallible(|pipeline| &draw_call_params_buffers[pipeline as usize]),
             &framebuffers.hdr_image,
         );
 
@@ -249,6 +291,11 @@ impl Renderer {
         self.temp_arena.add_buffer(render_settings_buffer);
         self.temp_arena.add_buffer(skinned_mesh_joints_buffer);
         self.temp_arena.add_buffer(materials_temp_uniform.buffer);
+        for draw_call_params in draw_call_params_buffers {
+            self.temp_arena.add_buffer(draw_call_params);
+        }
+
+        // Draw (record the actual draw calls):
 
         let command_buffer = self.record_command_buffer(
             frame_index,
@@ -387,6 +434,7 @@ impl Renderer {
                 let pipeline = pipelines.pipelines[static_pl].inner;
                 let layout = descriptors.pipeline_layouts[static_pl].inner;
                 let descriptor_sets = descriptors.descriptor_sets(static_pl);
+                // TODO: Instead of "recording" the calls here, "play them back" (execute the indirect calls in one command for this pipeline)
                 self.record_static_pipeline(
                     command_buffer,
                     (pipeline, layout),
@@ -456,10 +504,10 @@ impl Renderer {
                     .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines[pl_index].inner);
             }
             let layout = descriptors.pipeline_layouts[pl_index].inner;
-            let descriptor_sets = descriptors.descriptor_sets(pl_index);
+            let descriptors = &descriptors.descriptor_sets(pl_index)[1..];
             unsafe {
                 self.device
-                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[]);
+                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, descriptors, &[]);
             }
             unsafe { self.device.cmd_draw(command_buffer, 3, 1, 0, 0) };
         }
@@ -494,6 +542,8 @@ impl Renderer {
         pl_index: PipelineIndex,
         pl_name: Arguments,
     ) -> Result<(), RendererError> {
+        // TODO: Make this return a vector of indirect draw call structs or something
+
         let bind_point = vk::PipelineBindPoint::GRAPHICS;
         unsafe { self.device.cmd_bind_pipeline(command_buffer, bind_point, pipeline) };
         unsafe {
@@ -521,16 +571,7 @@ impl Renderer {
                     .map_err(RendererError::TransformBufferCreation)?
             };
 
-            let push_constants = [MaterialPushConstants {
-                // Safety: The material is from a Scene which gets its PipelineIndexes from the materials themselves.
-                texture_index: material.array_index(pl_index).unwrap(),
-            }];
-            let push_constants = bytemuck::bytes_of(&push_constants);
-            unsafe {
-                profiling::scope!("push constants");
-                self.device
-                    .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
-            }
+            let texture_index = material.array_index(pl_index).unwrap();
 
             let mut vertex_buffers = ArrayVec::<vk::Buffer, { mesh::VERTEX_BUFFERS + 1 }>::new();
             vertex_buffers.push(transform_buffer.inner);
@@ -601,16 +642,7 @@ impl Renderer {
             for (mesh, material) in &model.meshes {
                 profiling::scope!("skinned mesh");
 
-                let push_constants = [MaterialPushConstants {
-                    // Safety: The material is from a Scene which gets its PipelineIndexes from the materials themselves.
-                    texture_index: material.array_index(pl_index).unwrap(),
-                }];
-                let push_constants = bytemuck::bytes_of(&push_constants);
-                unsafe {
-                    profiling::scope!("push constants");
-                    self.device
-                        .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
-                }
+                let texture_index = material.array_index(pl_index).unwrap();
 
                 let mut vertex_buffers = ArrayVec::<vk::Buffer, { mesh::VERTEX_BUFFERS + 1 }>::new();
                 vertex_buffers.push(transform_buffer.inner);

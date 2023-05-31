@@ -1,4 +1,5 @@
 // This file is included in some variants in the "variants" directory.
+#extension GL_ARB_shader_draw_parameters : require
 
 #include "constants.glsl"
 
@@ -25,6 +26,7 @@ layout(location = 0) out vec2 out_uv;
 layout(location = 1) out vec3 out_normal;
 layout(location = 2) out vec4 out_tangent;
 layout(location = 3) out vec3 out_debug_color;
+layout(location = 4) out int out_draw_id;
 
 vec3 hsv(float hue, float saturation, float value) {
     float h = mod(hue * 6.0, 6.0);
@@ -70,4 +72,5 @@ void main() {
     out_normal = normalize(normal_transform * in_normal);
     // Ensure 90 degree angle between normal and tangent.
     out_tangent.xyz = normalize(out_tangent.xyz - dot(out_tangent.xyz, out_normal) * out_normal);
+    out_draw_id = gl_BaseInstanceARB;
 }

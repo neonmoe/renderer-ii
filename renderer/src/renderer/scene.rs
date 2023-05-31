@@ -37,8 +37,8 @@ impl<'a> Scene<'a> {
         Scene {
             world_space: CoordinateSystem::VULKAN,
             camera: Camera::default(),
-            static_meshes: PipelineMap::new::<(), _>(|_| Ok(HashMap::with_capacity(0))).unwrap(),
-            skinned_meshes: PipelineMap::new::<(), _>(|_| Ok(Vec::with_capacity(0))).unwrap(),
+            static_meshes: PipelineMap::from_infallible(|_| HashMap::with_capacity(0)),
+            skinned_meshes: PipelineMap::from_infallible(|_| Vec::with_capacity(0)),
             skinned_mesh_joints_buffer: Vec::new(),
             joints_alignment: physical_device.properties.limits.min_uniform_buffer_offset_alignment as u32,
         }

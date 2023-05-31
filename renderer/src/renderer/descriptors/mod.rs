@@ -1,12 +1,10 @@
 use crate::arena::{ForBuffers, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::pipelines::pipeline_parameters::{
-    DescriptorSetLayoutParams, MaterialPushConstants, PipelineIndex, PipelineMap, PipelineParameters, ALL_PIPELINES, MAX_BONE_COUNT,
+    DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, MAX_BONE_COUNT,
     MAX_TEXTURE_COUNT, PBR_PIPELINES, PIPELINE_PARAMETERS, SKINNED_PIPELINES,
 };
-use crate::vulkan_raii::{
-    Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler,
-};
+use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 use alloc::rc::{Rc, Weak};
 use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
@@ -182,13 +180,7 @@ impl Descriptors {
         let pipeline_layouts = PipelineMap::new::<DescriptorError, _>(|pipeline| {
             let PipelineParameters { descriptor_sets, .. } = &PIPELINE_PARAMETERS[pipeline];
             let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline, descriptor_sets)?);
-            let push_constant_ranges = [vk::PushConstantRange::default()
-                .offset(0)
-                .size(mem::size_of::<MaterialPushConstants>() as u32)
-                .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
-            let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default()
-                .set_layouts(&descriptor_set_layouts.inner)
-                .push_constant_ranges(&push_constant_ranges);
+            let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_set_layouts.inner);
             let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
                 .map_err(DescriptorError::PipelineLayoutCreation)?;
             crate::name_vulkan_object(device, pipeline_layout, format_args!("for pipeline {pipeline:?}"));
@@ -266,9 +258,13 @@ impl Descriptors {
         &mut self,
         temp_arena: &mut VulkanArena<ForBuffers>,
     ) -> Result<MaterialTempUniforms, DescriptorError> {
+        profiling::scope!("creating material temp buffer");
+
         let mut factors_bytes = Vec::with_capacity(PBR_PIPELINES.len() * mem::size_of::<PbrFactorsSoa>());
-        let mut pbr_factors_offsets_and_sizes = PipelineMap::new::<(), _>(|_| Ok((0, 0))).unwrap();
+        let mut pbr_factors_offsets_and_sizes = PipelineMap::from_infallible(|_| (0, 0));
         for pipeline in PBR_PIPELINES {
+            profiling::scope!("copying over pbr factors");
+
             let factors = self.material_slots_per_pipeline[pipeline]
                 .iter()
                 .map(|slot| {
@@ -325,6 +321,7 @@ impl Descriptors {
         render_settings_buffer: &Buffer,
         skinned_mesh_joints_buffer: &Buffer,
         material_buffers: &MaterialTempUniforms,
+        draw_call_data: &PipelineMap<&Buffer>,
         hdr_attachment: &ImageView,
     ) {
         profiling::scope!("updating descriptors");
@@ -366,13 +363,14 @@ impl Descriptors {
             self.set_uniform_buffer(pipeline, &mut pending_writes, (2, 0, 0), skinned_mesh_joints_buffer);
         }
 
-        for pipeline in ALL_PIPELINES {
+        for pipeline in PBR_PIPELINES {
             let pbr_factors_offset_and_size = material_buffers.pbr_factors_offsets_and_sizes[pipeline];
-            if pbr_factors_offset_and_size != (0, 0) {
-                let (offset, size) = pbr_factors_offset_and_size;
-                let buffer = (material_buffers.buffer.inner, offset, size);
-                self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 6, 0), buffer);
-            }
+            let (offset, size) = pbr_factors_offset_and_size;
+            let buffer = (material_buffers.buffer.inner, offset, size);
+            self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 6, 0), buffer);
+
+            let buffer = (draw_call_data[pipeline].inner, 0, draw_call_data[pipeline].size);
+            self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 7, 0), buffer);
         }
 
         for (pipeline, i, material) in &materials_needing_update {

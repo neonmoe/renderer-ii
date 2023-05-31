@@ -23,11 +23,15 @@ pub struct RenderSettings {
     pub debug_value: u32,
 }
 
-/// The per-material uniform buffer.
-#[repr(C)]
+/// The per-draw-call uniform buffer.
+///
+/// This is the most "dynamic" data accessible in the shader which is still
+/// dynamically uniform. Stored in a structure-of-arrays layout, indexed via the
+/// `gl_BaseInstanceARB` variable which can be included in indirect draws.
 #[derive(Clone, Copy, Pod, Zeroable)]
-pub struct MaterialPushConstants {
-    pub texture_index: u32,
+#[repr(C)]
+pub struct DrawCallParametersSoa {
+    pub material_index: [u32; MAX_DRAW_CALLS as usize],
 }
 
 pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
@@ -100,6 +104,9 @@ impl<T> Drop for PipelineMap<T> {
 }
 
 impl<T> PipelineMap<T> {
+    pub fn from_infallible<F: FnMut(PipelineIndex) -> T>(mut f: F) -> PipelineMap<T> {
+        PipelineMap::new::<(), _>(|pipeline| Ok(f(pipeline))).unwrap()
+    }
     pub fn new<E, F: FnMut(PipelineIndex) -> Result<T, E>>(mut f: F) -> Result<PipelineMap<T>, E> {
         let mut buffer = [
             MaybeUninit::uninit(),
@@ -377,8 +384,16 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+        binding_flags: vk::DescriptorBindingFlags::empty(),
         descriptor_size: Some(mem::size_of::<PbrFactorsSoa>() as vk::DeviceSize),
+    },
+    DescriptorSetLayoutParams {
+        binding: 7,
+        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        descriptor_count: 1,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::empty(),
+        descriptor_size: Some(mem::size_of::<DrawCallParametersSoa>() as vk::DeviceSize),
     },
 ];
 

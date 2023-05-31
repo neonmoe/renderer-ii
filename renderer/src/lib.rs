@@ -2,8 +2,11 @@
 //! down over time.
 //!
 //! Currently targeting the
-//! [VP_LUNARG_desktop_baseline_2022](https://vulkan.lunarg.com/doc/sdk/1.3.246.1/windows/profiles_definitions.html)
+//! [VP_LUNARG_desktop_baseline_2023](https://vulkan.lunarg.com/doc/sdk/latest/windows/profiles_definitions.html)
 //! Vulkan Profile.
+
+// TODO: Replace map_err()?'s with unwraps where the error is not special and it isn't plausible to ignore
+// Unwraps are just less code and they still allow locating the line where it crashed.
 
 #![feature(int_roundings)] // seems like this will get merged soon enough
 #![warn(clippy::pedantic)]
