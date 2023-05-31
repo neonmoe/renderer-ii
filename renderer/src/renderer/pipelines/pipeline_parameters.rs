@@ -185,7 +185,7 @@ pub(crate) enum Shader {
 macro_rules! shader {
     ($shader_name:literal) => {{
         use crate::include_words;
-        static SPIRV: &[u32] = include_words!(concat!("../../../../shaders/spirv/", $shader_name, ".spv"));
+        static SPIRV: &[u32] = include_words!(concat!("../../../shaders/spirv/", $shader_name, ".spv"));
         ($shader_name, SPIRV)
     }};
 }
