@@ -28,23 +28,29 @@ layout(set = 1, binding = 7, std430) uniform DrawCallParametersSoa {
 }
 draw_call_parameters;
 
+// TODO: Remove this once draw_call_parameters is working
+layout(push_constant) uniform PushConstantStruct { uint material_index; }
+push_constant;
+
 layout(set = 0, binding = 1) uniform RenderSettings { uint debug_value; }
 uf_render_settings;
 
 void main() {
-    uint texture_index = draw_call_parameters.material_index[in_draw_id];
+    // TODO: Use draw_call_parameters here
+    uint material_index = push_constant.material_index + in_draw_id /* always 0 for now, just don't optimize it out */;
 
-    vec4 base_color = texture(sampler2D(base_color[texture_index], tex_sampler), in_uv);
+    vec4 base_color = texture(sampler2D(base_color[material_index], tex_sampler), in_uv);
     vec4 metallic_roughness_tex =
-        texture(sampler2D(metallic_roughness[texture_index], tex_sampler), in_uv);
-    vec3 normal_tex = texture(sampler2D(normal[texture_index], tex_sampler), in_uv).xyz * 2.0 - 1.0;
-    vec4 occlusion_tex = texture(sampler2D(occlusion[texture_index], tex_sampler), in_uv);
-    vec3 emissive = texture(sampler2D(emissive[texture_index], tex_sampler), in_uv).xyz;
+        texture(sampler2D(metallic_roughness[material_index], tex_sampler), in_uv);
+    vec3 normal_tex =
+        texture(sampler2D(normal[material_index], tex_sampler), in_uv).xyz * 2.0 - 1.0;
+    vec4 occlusion_tex = texture(sampler2D(occlusion[material_index], tex_sampler), in_uv);
+    vec3 emissive = texture(sampler2D(emissive[material_index], tex_sampler), in_uv).xyz;
 
-    vec4 base_color_factor = factors.base_color[texture_index];
-    vec3 emissive_factor = factors.emissive_and_occlusion[texture_index].rgb;
-    float occlusion_strength = factors.emissive_and_occlusion[texture_index].a;
-    vec4 alpha_rgh_mtl_normal = factors.alpha_rgh_mtl_normal[texture_index];
+    vec4 base_color_factor = factors.base_color[material_index];
+    vec3 emissive_factor = factors.emissive_and_occlusion[material_index].rgb;
+    float occlusion_strength = factors.emissive_and_occlusion[material_index].a;
+    vec4 alpha_rgh_mtl_normal = factors.alpha_rgh_mtl_normal[material_index];
     float alpha_cutoff = alpha_rgh_mtl_normal.r;
     float roughness_factor = alpha_rgh_mtl_normal.g;
     float metallic_factor = alpha_rgh_mtl_normal.b;

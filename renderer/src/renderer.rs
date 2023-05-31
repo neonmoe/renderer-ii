@@ -570,6 +570,15 @@ impl Renderer {
 
             let texture_index = material.array_index(pl_index).unwrap();
 
+            // TODO: Remove this push constant once the BaseInstance-based draw call params are working
+            let push_constants = [texture_index];
+            let push_constants = bytemuck::bytes_of(&push_constants);
+            unsafe {
+                profiling::scope!("push constants");
+                self.device
+                    .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
+            }
+
             let mut vertex_buffers = ArrayVec::<vk::Buffer, 8>::new();
             vertex_buffers.push(transform_buffer.inner);
             for vertex_buffer in &mesh.vertex_buffers {
@@ -640,6 +649,15 @@ impl Renderer {
                 profiling::scope!("skinned mesh");
 
                 let texture_index = material.array_index(pl_index).unwrap();
+
+                // TODO: Remove this push constant once the BaseInstance-based draw call params are working
+                let push_constants = [texture_index];
+                let push_constants = bytemuck::bytes_of(&push_constants);
+                unsafe {
+                    profiling::scope!("push constants");
+                    self.device
+                        .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
+                }
 
                 let mut vertex_buffers = ArrayVec::<vk::Buffer, 8>::new();
                 vertex_buffers.push(transform_buffer.inner);

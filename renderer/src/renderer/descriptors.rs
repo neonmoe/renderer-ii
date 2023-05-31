@@ -181,7 +181,13 @@ impl Descriptors {
         let pipeline_layouts = PipelineMap::new::<DescriptorError, _>(|pipeline| {
             let PipelineParameters { descriptor_sets, .. } = &PIPELINE_PARAMETERS[pipeline];
             let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline, descriptor_sets)?);
-            let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_set_layouts.inner);
+            // TODO: Remove this push constant once the BaseInstance-based draw call params are working
+            let push_constant_ranges = [vk::PushConstantRange::default()
+                .size(mem::size_of::<[u32; 1]>() as u32)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+            let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default()
+                .set_layouts(&descriptor_set_layouts.inner)
+                .push_constant_ranges(&push_constant_ranges);
             let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
                 .map_err(DescriptorError::PipelineLayoutCreation)?;
             crate::name_vulkan_object(device, pipeline_layout, format_args!("for pipeline {pipeline:?}"));
