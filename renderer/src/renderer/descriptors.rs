@@ -1,4 +1,5 @@
-use crate::arena::{ForBuffers, VulkanArena, VulkanArenaError};
+use crate::arena::buffers::ForBuffers;
+use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::pipeline_parameters::constants::{MAX_BONE_COUNT, MAX_TEXTURE_COUNT};
 use crate::renderer::pipeline_parameters::{

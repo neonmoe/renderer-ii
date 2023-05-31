@@ -1,4 +1,6 @@
-use crate::arena::{ForBuffers, ForImages, VulkanArena, VulkanArenaError};
+use crate::arena::buffers::ForBuffers;
+use crate::arena::images::ForImages;
+use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::TEXTURE_FORMATS;
 use crate::uploader::{UploadError, Uploader};
 use crate::vulkan_raii::{Device, ImageView};

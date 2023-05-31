@@ -1,4 +1,5 @@
-use crate::arena::{ForBuffers, MemoryProps, VulkanArena, VulkanArenaError};
+use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
+use crate::arena::buffers::ForBuffers;
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::pipeline_parameters::constants::MAX_BONE_COUNT;
 use crate::renderer::pipeline_parameters::render_passes::{Attachment, RenderPass};

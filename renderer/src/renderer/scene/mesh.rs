@@ -3,7 +3,7 @@ use alloc::rc::Rc;
 use arrayvec::ArrayVec;
 use ash::vk;
 
-pub(crate) const VERTEX_BUFFERS: usize = 6;
+const VERTEX_BUFFERS: usize = 6;
 
 #[derive(PartialEq, Eq, Hash)]
 pub struct Mesh {

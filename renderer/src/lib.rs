@@ -72,7 +72,10 @@ mod vram_usage {
 pub use vram_usage::{get_allocated_vram, get_allocated_vram_in_use, get_allocated_vram_peak};
 
 mod arena;
-pub use arena::{ForBuffers, ForImages, MemoryProps, VulkanArena, VulkanArenaError};
+pub use arena::buffers::ForBuffers;
+pub use arena::images::ForImages;
+pub use arena::memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
+pub use arena::{MemoryProps, VulkanArena, VulkanArenaError};
 
 pub use ash::vk;
 
@@ -108,12 +111,6 @@ pub mod include_words;
 
 mod instance;
 pub use instance::Instance;
-
-mod memory_measurement {
-    mod arena;
-    pub use arena::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
-}
-pub use memory_measurement::*;
 
 mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
