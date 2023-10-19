@@ -12,10 +12,6 @@ use core::sync::atomic::Ordering;
 
 pub(crate) mod buffers;
 pub(crate) mod images;
-pub(crate) mod memory_measurement;
-
-use buffers::ForBuffers;
-use images::ForImages;
 
 #[derive(thiserror::Error, Debug)]
 pub enum VulkanArenaError {
@@ -132,6 +128,11 @@ impl<T: ArenaType> VulkanArena<T> {
 
     pub fn memory_in_use(&self) -> vk::DeviceSize {
         self.offset
+    }
+
+    /// The size of the backing memory in bytes.
+    pub fn size(&self) -> vk::DeviceSize {
+        self.total_size
     }
 
     /// Attempts to reset the arena, marking all graphics memory owned by it as

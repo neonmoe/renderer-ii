@@ -1,4 +1,6 @@
-use crate::arena::{ArenaType, ForBuffers, ForImages};
+use crate::arena::buffers::ForBuffers;
+use crate::arena::images::ForImages;
+use crate::arena::ArenaType;
 use crate::vulkan_raii::Device;
 use ash::vk;
 use core::marker::PhantomData;

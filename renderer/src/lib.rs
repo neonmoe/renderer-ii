@@ -8,7 +8,6 @@
 // TODO: Replace map_err()?'s with unwraps where the error is not special and it isn't plausible to ignore
 // Unwraps are just less code and they still allow locating the line where it crashed.
 
-#![feature(int_roundings)] // seems like this will get merged soon enough
 #![warn(clippy::pedantic)]
 #![allow(
     clippy::cast_possible_truncation,
@@ -74,7 +73,6 @@ pub use vram_usage::{get_allocated_vram, get_allocated_vram_in_use, get_allocate
 mod arena;
 pub use arena::buffers::ForBuffers;
 pub use arena::images::ForImages;
-pub use arena::memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 pub use arena::{MemoryProps, VulkanArena, VulkanArenaError};
 
 pub use ash::vk;
@@ -89,16 +87,16 @@ mod display_utils {
 
     impl Display for Bytes {
         fn fmt(&self, fmt: &mut Formatter) -> Result {
-            const KIBI: u64 = 1_024;
-            const MEBI: u64 = KIBI * KIBI;
-            const GIBI: u64 = MEBI * KIBI;
-            const TIBI: u64 = GIBI * KIBI;
+            const KILO: u64 = 1000;
+            const MEGA: u64 = KILO * KILO;
+            const GIGA: u64 = MEGA * KILO;
+            const TERA: u64 = GIGA * KILO;
             match self.0 {
-                bytes if bytes < KIBI => write!(fmt, "{:.0} bytes", bytes as f32),
-                bytes if bytes < MEBI => write!(fmt, "{:.2} KiB", bytes as f32 / KIBI as f32),
-                bytes if bytes < GIBI => write!(fmt, "{:.2} MiB", bytes as f32 / MEBI as f32),
-                bytes if bytes < TIBI => write!(fmt, "{:.2} GiB", bytes as f32 / GIBI as f32),
-                bytes => write!(fmt, "{:.3} TiB", bytes as f32 / TIBI as f32),
+                bytes if bytes < KILO => write!(fmt, "{:.0} bytes", bytes as f32),
+                bytes if bytes < MEGA => write!(fmt, "{:.2} KB", bytes as f32 / KILO as f32),
+                bytes if bytes < GIGA => write!(fmt, "{:.2} MB", bytes as f32 / MEGA as f32),
+                bytes if bytes < TERA => write!(fmt, "{:.2} GB", bytes as f32 / GIGA as f32),
+                bytes => write!(fmt, "{:.3} TiB", bytes as f32 / TERA as f32),
             }
         }
     }
@@ -111,6 +109,9 @@ pub mod include_words;
 
 mod instance;
 pub use instance::Instance;
+
+mod memory_measurement;
+pub use memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 
 mod physical_device;
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
@@ -154,6 +155,9 @@ pub use surface::{create_surface, Surface};
 
 mod uploader;
 pub use uploader::Uploader;
+
+mod vertex_library;
+pub use vertex_library::VertexLibrary;
 
 mod vulkan_raii;
 pub use vulkan_raii::{Buffer, Device, ImageView};

@@ -5,6 +5,15 @@ use ash::vk;
 
 const VERTEX_BUFFERS: usize = 6;
 
+// TODO: Differentiate meshes by vertex attribute binding layout?
+
+// Previously they were differentiated by pipelines, but then they were
+// generalized and pipelines were moved to the material. But really, the
+// pipeline choice is a combination of both: vertex bindings change for meshes,
+// uniforms change for both. So maybe meshes should have some identifier that
+// can be compared against a PipelineIndex to see if it's compatible, when
+// trying to render with a specific material?
+
 #[derive(PartialEq, Eq, Hash)]
 pub struct Mesh {
     pub(crate) vertex_buffers: ArrayVec<Rc<Buffer>, VERTEX_BUFFERS>,

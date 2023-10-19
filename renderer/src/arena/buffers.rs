@@ -6,7 +6,10 @@ use core::fmt::Arguments;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
+// TODO: Allow making buffers from staging buffers, and making empty staging buffers that can be written to?
+
 pub struct ForBuffers;
+
 impl ArenaType for ForBuffers {
     const MAPPABLE: bool = true;
 }
@@ -16,6 +19,7 @@ impl VulkanArena<ForBuffers> {
     /// arena is reset. Ideal for temporary arenas whose buffers just have to
     /// live until the arena is reset.
     pub fn add_buffer(&mut self, buffer: Buffer) {
+        // TODO: This should not exist, temporary buffers should be stored in per-frame-storage, which should be cleaned when they're no longer in use, only after which clearing should be possible
         self.pinned_buffers.push(buffer);
     }
 
