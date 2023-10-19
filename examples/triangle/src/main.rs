@@ -206,7 +206,7 @@ fn main() {
             .unwrap();
         match { renderer.present_frame(frame_index, &swapchain) } {
             Ok(_) => {}
-            Err(renderer::RendererError::SwapchainOutOfDate(_)) => {}
+            Err(renderer::RendererError::SwapchainOutOfDate) => swapchain_recreation_requested = Some(time.ticks()),
             Err(err) => panic!("{err}"),
         }
 

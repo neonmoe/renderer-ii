@@ -1,5 +1,5 @@
-use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::arena::buffers::ForBuffers;
+use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::pipeline_parameters::constants::MAX_BONE_COUNT;
 use crate::renderer::pipeline_parameters::render_passes::{Attachment, RenderPass};
@@ -54,7 +54,7 @@ pub enum RendererError {
     #[error("failed to submit rendering command buffers to the graphics queue (device lost or out of memory?)")]
     RenderQueueSubmit(#[source] vk::Result),
     #[error("present was successful, but may display oddly; swapchain is out of date")]
-    SwapchainOutOfDate(#[source] vk::Result),
+    SwapchainOutOfDate,
     #[error("failed to present to the surface queue (window issues?)")]
     RenderQueuePresent(#[source] vk::Result),
     #[error("failed to reset command pools for rendering")]
@@ -194,7 +194,7 @@ impl Renderer {
                 .device()
                 .acquire_next_image(swapchain.inner(), u64::MAX, vk::Semaphore::null(), fence)
                 .map_err(|err| match err {
-                    err @ vk::Result::ERROR_OUT_OF_DATE_KHR => RendererError::SwapchainOutOfDate(err),
+                    vk::Result::ERROR_OUT_OF_DATE_KHR => RendererError::SwapchainOutOfDate,
                     err => RendererError::AcquireImage(err),
                 })
         }?;
@@ -337,9 +337,9 @@ impl Renderer {
         };
 
         match present_result {
-            Err(err @ vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(RendererError::SwapchainOutOfDate(err)),
+            Ok(false) => Ok(()),
+            Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(RendererError::SwapchainOutOfDate),
             Err(err) => Err(RendererError::RenderQueuePresent(err)),
-            _ => Ok(()),
         }
     }
 

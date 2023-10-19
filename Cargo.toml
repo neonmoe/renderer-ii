@@ -6,3 +6,4 @@ members = [
     "examples/sandbox",
     "examples/triangle",
 ]
+resolver = "2"

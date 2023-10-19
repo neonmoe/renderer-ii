@@ -526,11 +526,11 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
     let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device)?;
     print_memory_usage("after renderer creation");
 
+    let mut recreate_swapchain = false;
     'running: loop {
         // Rendering preparation, which needs the SharedState:
         let mut scene;
         let debug_value;
-        let mut recreate_swapchain = false;
         {
             let mut state = {
                 profiling::scope!("waiting for the next update");
@@ -602,21 +602,37 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
                 Some(pipelines),
             )?;
             framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
+            recreate_swapchain = false;
         }
 
         {
             profiling::scope!("rendering (vulkan calls)");
-            let frame_index = renderer.wait_frame(&swapchain)?;
+            let frame_index = match renderer.wait_frame(&swapchain) {
+                Ok(i) => i,
+                Err(renderer::RendererError::SwapchainOutOfDate) => {
+                    recreate_swapchain = true;
+                    continue;
+                }
+                Err(err) => {
+                    log::error!("Error during regular frame wait: {}", err);
+                    std::thread::sleep(Duration::from_millis(30));
+                    continue;
+                }
+            };
             match renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, scene, debug_value) {
                 Ok(_) => {}
-                Err(err) => log::warn!("Error during regular frame rendering: {}", err),
+                Err(err) => {
+                    log::warn!("Error during regular frame rendering: {}", err);
+                    std::thread::sleep(Duration::from_millis(30));
+                }
             }
             match { renderer.present_frame(frame_index, &swapchain) } {
                 Ok(_) => {}
-                Err(renderer::RendererError::SwapchainOutOfDate(_)) => {}
+                Err(renderer::RendererError::SwapchainOutOfDate) => recreate_swapchain = true,
                 Err(err) => {
                     log::error!("Error during regular frame present: {}", err);
-                    return Err(err.into());
+                    std::thread::sleep(Duration::from_millis(30));
+                    continue;
                 }
             }
 

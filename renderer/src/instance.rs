@@ -134,7 +134,7 @@ fn make_api_version(variant: u32, major: u32, minor: u32, patch: u32) -> u32 {
 fn is_layer_supported(entry: &Entry, target_layer_name: &str) -> bool {
     match {
         profiling::scope!("vk::enumerate_instance_layer_properties");
-        entry.enumerate_instance_layer_properties()
+        unsafe { entry.enumerate_instance_layer_properties() }
     } {
         Err(_) => false,
         Ok(layers) => layers.iter().any(|layer_properties| {
@@ -149,7 +149,7 @@ fn is_layer_supported(entry: &Entry, target_layer_name: &str) -> bool {
 fn is_extension_supported(entry: &Entry, target_extension_name: &CStr) -> bool {
     match {
         profiling::scope!("vk::enumerate_instance_extension_properties");
-        entry.enumerate_instance_extension_properties(None)
+        unsafe { entry.enumerate_instance_extension_properties(None) }
     } {
         Err(_) => false,
         Ok(extensions) => extensions.iter().any(|extension_properties| {

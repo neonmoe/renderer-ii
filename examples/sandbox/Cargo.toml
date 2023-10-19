@@ -12,7 +12,7 @@ profiling = { version = "1.0" }
 renderer = { path = "../../renderer" }
 sdl2 = { git = "https://github.com/Rust-SDL2/rust-sdl2", features = ["raw-window-handle"] }
 thiserror = { version = "1.0" }
-tracy-client = { version = "0.15.2", optional = true }
+tracy-client = { version = "0.16.3", optional = true }
 
 [features]
 profile-with-tracy = ["renderer/profile-with-tracy", "tracy-client"]
