@@ -1,16 +1,24 @@
-use crate::arena::buffers::ForBuffers;
+use alloc::rc::Rc;
+use core::fmt::Arguments;
+
+use arrayvec::ArrayVec;
+use ash::{Instance, vk};
+use bytemuck::Zeroable;
+use glam::Mat4;
+
+use descriptors::{DescriptorError, Descriptors};
+use framebuffers::Framebuffers;
+use pipelines::Pipelines;
+use scene::{Scene, SkinnedModel, StaticMeshMap};
+use swapchain::Swapchain;
+
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
+use crate::arena::buffers::ForBuffers;
 use crate::physical_device::PhysicalDevice;
+use crate::renderer::pipeline_parameters::{ALL_PIPELINES, DrawCallParametersSoa, PIPELINE_COUNT, PipelineIndex, PipelineMap, RenderSettings};
 use crate::renderer::pipeline_parameters::constants::MAX_BONE_COUNT;
 use crate::renderer::pipeline_parameters::render_passes::{Attachment, RenderPass};
-use crate::renderer::pipeline_parameters::{DrawCallParametersSoa, PipelineIndex, PipelineMap, RenderSettings, ALL_PIPELINES};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
-use alloc::rc::Rc;
-use arrayvec::ArrayVec;
-use ash::{vk, Instance};
-use bytemuck::Zeroable;
-use core::fmt::Arguments;
-use glam::Mat4;
 
 pub(crate) mod descriptors;
 pub(crate) mod framebuffers;
@@ -18,12 +26,6 @@ pub(crate) mod pipeline_parameters;
 pub(crate) mod pipelines;
 pub(crate) mod scene;
 pub(crate) mod swapchain;
-
-use descriptors::{DescriptorError, Descriptors};
-use framebuffers::Framebuffers;
-use pipelines::Pipelines;
-use scene::{Scene, SkinnedModel, StaticMeshMap};
-use swapchain::Swapchain;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RendererError {
@@ -84,6 +86,7 @@ struct DrawCallParameters {
     data: DrawCallParametersSoa,
     draw_calls: usize,
 }
+
 impl DrawCallParameters {
     /// Returns the value to put in the draw's `firstInstance` which will result
     /// in the given parameters in the shader, or None if the buffer is full.
@@ -157,7 +160,7 @@ impl Renderer {
             MemoryProps::for_buffers(),
             format_args!("frame local arena"),
         )
-        .map_err(RendererError::FrameLocalArenaCreation)?;
+            .map_err(RendererError::FrameLocalArenaCreation)?;
 
         let frame_start_fence = unsafe {
             device
@@ -268,7 +271,7 @@ impl Renderer {
             .create_materials_temp_uniform(&mut self.temp_arena)
             .map_err(RendererError::MaterialsUniformCreation)?;
 
-        let mut draw_call_params_buffers = ArrayVec::<Buffer, { PipelineIndex::Count as usize }>::new();
+        let mut draw_call_params_buffers = ArrayVec::<Buffer, PIPELINE_COUNT>::new();
         for pipeline in ALL_PIPELINES {
             let draw_call_parameters = &[draw_call_params[pipeline].data];
             let buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")

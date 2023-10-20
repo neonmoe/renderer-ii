@@ -2,13 +2,17 @@
 
 #extension GL_EXT_samplerless_texture_functions : require
 
+#include "constants.glsl"
+
 layout(location = 0) out vec4 out_color;
 layout(origin_upper_left) in vec4 gl_FragCoord;
 
 #ifdef MULTISAMPLED
-layout(set = 1, binding = 0) uniform texture2DMS in_color_tex;
+layout(set = 1, binding = UF_HDR_FRAMEBUFFER_BINDING)
+uniform texture2DMS uf_hdr_framebuffer;
 #else
-layout(set = 1, binding = 0) uniform texture2D in_color_tex;
+layout(set = 1, binding = UF_HDR_FRAMEBUFFER_BINDING)
+uniform texture2D uf_hdr_framebuffer;
 #endif
 
 layout(set = 0, binding = 1) uniform RenderSettings { uint debug_value; }
@@ -36,11 +40,11 @@ void main() {
     // - Tonemapping
 
     ivec2 texcoord = ivec2(gl_FragCoord.xy);
-#ifdef MULTISAMPLED
-    vec4 linear = texelFetch(in_color_tex, texcoord, gl_SampleID);
-#else
-    vec4 linear = texelFetch(in_color_tex, texcoord, 0);
-#endif
+    #ifdef MULTISAMPLED
+    vec4 linear = texelFetch(uf_hdr_framebuffer, texcoord, gl_SampleID);
+    #else
+    vec4 linear = texelFetch(uf_hdr_framebuffer, texcoord, 0);
+    #endif
     float exposure = 0.8;
     out_color = vec4(aces(linear.rgb * exposure), 1.0);
 }

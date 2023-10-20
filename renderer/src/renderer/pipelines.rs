@@ -1,10 +1,11 @@
-use crate::renderer::descriptors::Descriptors;
-use crate::renderer::pipeline_parameters::render_passes::{AttachmentFormats, AttachmentVec};
-use crate::renderer::pipeline_parameters::{PipelineIndex, PipelineMap, Shader, ALL_PIPELINES, PIPELINE_PARAMETERS};
-use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout};
 use arrayvec::ArrayVec;
 use ash::vk;
 use hashbrown::HashMap;
+
+use crate::renderer::descriptors::Descriptors;
+use crate::renderer::pipeline_parameters::{ALL_PIPELINES, PIPELINE_COUNT, PIPELINE_PARAMETERS, PipelineMap, Shader};
+use crate::renderer::pipeline_parameters::render_passes::{AttachmentFormats, AttachmentVec};
+use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout};
 
 #[derive(thiserror::Error, Debug, Clone, Copy)]
 pub enum PipelineCreationError {
@@ -70,7 +71,7 @@ fn create_pipelines(
     let mut create_shader_module = |(filename, spirv): (&'static str, &'static [u32])| -> Result<vk::ShaderModule, PipelineCreationError> {
         *all_shader_modules.entry((filename, spirv)).or_insert_with(|| {
             #[cfg(target_endian = "big")]
-            let spirv = &ash::util::read_spv(&mut std::io::Cursor::new(bytemuck::cast_slice(spirv))).unwrap();
+                let spirv = &ash::util::read_spv(&mut std::io::Cursor::new(bytemuck::cast_slice(spirv))).unwrap();
             let create_info = vk::ShaderModuleCreateInfo::default().code(spirv);
             let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(PipelineCreationError::ShaderModule)?;
             crate::name_vulkan_object(device, shader_module, format_args!("{}", filename));
@@ -199,7 +200,7 @@ fn create_pipelines(
             device: device.clone(),
         })
     });
-    let mut pipeline_create_infos = ArrayVec::<_, { PipelineIndex::Count as usize }>::new();
+    let mut pipeline_create_infos = ArrayVec::<_, PIPELINE_COUNT>::new();
     for (&i, pipeline_rendering_create_info) in ALL_PIPELINES.iter().zip(pipeline_rendering_create_infos.iter_mut()) {
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
             .stages(&shader_stages_per_pipeline[i][..])

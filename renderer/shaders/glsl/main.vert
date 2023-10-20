@@ -3,23 +3,27 @@
 
 #include "constants.glsl"
 
-layout(set = 0, binding = 0) uniform GlobalTransforms {
+layout(set = 0, binding = UF_TRANSFORMS_BINDING)
+uniform GlobalTransforms {
     mat4 proj;
     mat4 view;
-}
-uf_transforms;
+} uf_transforms;
 
-layout(location = 0) in mat4 in_transform;
-layout(location = 4) in vec3 in_position;
-layout(location = 5) in vec2 in_uv;
-layout(location = 6) in vec3 in_normal;
-layout(location = 7) in vec4 in_tangent;
 #ifdef SKINNED
-layout(location = 8) in uvec4 in_joints;
-layout(location = 9) in vec4 in_weights;
+layout(set = 2, binding = UF_SKELETON_BINDING)
+uniform Bone {
+    mat4 bones[MAX_BONE_COUNT];
+} uf_skeleton;
+#endif
 
-layout(set = 2, binding = 0) uniform Bone { mat4 bones[MAX_BONE_COUNT]; }
-skeleton;
+layout(location = IN_TRANSFORM_LOCATION) in mat4 in_transform;
+layout(location = IN_POSITION_LOCATION) in vec3 in_position;
+layout(location = IN_TEXCOORD_0_LOCATION) in vec2 in_uv;
+layout(location = IN_NORMAL_LOCATION) in vec3 in_normal;
+layout(location = IN_TANGENT_LOCATION) in vec4 in_tangent;
+#ifdef SKINNED
+layout(location = IN_JOINTS_0_LOCATION) in uvec4 in_joints;
+layout(location = IN_WEIGHTS_0_LOCATION) in vec4 in_weights;
 #endif
 
 layout(location = 0) out vec2 out_uv;
@@ -51,15 +55,17 @@ vec3 hsv(float hue, float saturation, float value) {
 
 void main() {
     out_debug_color = vec3(0.0, 0.0, 0.0);
-#ifdef SKINNED
+    #ifdef SKINNED
     mat4 transform = in_transform;
     transform *=
-        skeleton.bones[in_joints.x] * in_weights.x + skeleton.bones[in_joints.y] * in_weights.y +
-        skeleton.bones[in_joints.z] * in_weights.z + skeleton.bones[in_joints.w] * in_weights.w;
+    uf_skeleton.bones[in_joints.x] * in_weights.x +
+    uf_skeleton.bones[in_joints.y] * in_weights.y +
+    uf_skeleton.bones[in_joints.z] * in_weights.z +
+    uf_skeleton.bones[in_joints.w] * in_weights.w;
     out_debug_color = hsv(in_joints.x / 256.0 * 37.0, 0.8, in_weights.x);
-#else
+    #else
     mat4 transform = in_transform;
-#endif
+    #endif
     gl_Position = uf_transforms.proj * uf_transforms.view * transform * vec4(in_position, 1.0);
     out_uv = in_uv;
     // Normals and tangents should not be translated, and the translation is

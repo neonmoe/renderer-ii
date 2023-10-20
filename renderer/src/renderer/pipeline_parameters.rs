@@ -1,13 +1,52 @@
+use core::mem::{self, MaybeUninit};
+
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
-use core::mem::{self, MaybeUninit};
 use glam::{Mat4, Vec2, Vec3, Vec4};
+
+use constants::{MAX_BONE_COUNT, MAX_DRAW_CALLS, MAX_TEXTURE_COUNT};
+use render_passes::RenderPass;
+
+use crate::renderer::pipeline_parameters::constants::*;
 
 pub(crate) mod constants;
 pub(crate) mod render_passes;
 
-use constants::{MAX_BONE_COUNT, MAX_DRAW_CALLS, MAX_TEXTURE_COUNT};
-use render_passes::RenderPass;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PipelineIndex {
+    /// Opaque geometry pass.
+    PbrOpaque,
+    /// Skinned opaque geometry pass.
+    PbrSkinnedOpaque,
+    /// Alpha-to-coverage "fake transparent" geometry pass.
+    PbrAlphaToCoverage,
+    /// Skinned alpha-to-coverage "fake transparent" geometry pass.
+    PbrSkinnedAlphaToCoverage,
+    /// Transparent geomtry pass.
+    PbrBlended,
+    /// Skinned transparent geomtry pass.
+    PbrSkinnedBlended,
+    /// Post-processing pass before MSAA resolve and up/downsampling.
+    RenderResolutionPostProcess,
+    #[doc(hidden)]
+    Count,
+}
+
+pub const PIPELINE_COUNT: usize = PipelineIndex::Count as usize;
+
+pub enum VertexBinding {
+    Transform,
+    Position,
+    Texcoord0,
+    Normal,
+    Tangent,
+    Joints0,
+    Weights0,
+    #[doc(hidden)]
+    Count,
+}
+
+pub const MAX_VERTEX_INPUT_BINDINGS: usize = VertexBinding::Count as usize;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -47,7 +86,7 @@ pub struct PbrFactorsSoa {
     pub alpha_rgh_mtl_normal: [Vec4; MAX_TEXTURE_COUNT as usize],
 }
 
-pub const ALL_PIPELINES: [PipelineIndex; PipelineIndex::Count as usize] = [
+pub const ALL_PIPELINES: [PipelineIndex; PIPELINE_COUNT] = [
     PipelineIndex::PbrOpaque,
     PipelineIndex::PbrSkinnedOpaque,
     PipelineIndex::PbrAlphaToCoverage,
@@ -72,26 +111,6 @@ pub const PBR_PIPELINES: [PipelineIndex; 6] = [
     PipelineIndex::PbrSkinnedBlended,
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PipelineIndex {
-    /// Opaque geometry pass.
-    PbrOpaque,
-    /// Skinned opaque geometry pass.
-    PbrSkinnedOpaque,
-    /// Alpha-to-coverage "fake transparent" geometry pass.
-    PbrAlphaToCoverage,
-    /// Skinned alpha-to-coverage "fake transparent" geometry pass.
-    PbrSkinnedAlphaToCoverage,
-    /// Transparent geomtry pass.
-    PbrBlended,
-    /// Skinned transparent geomtry pass.
-    PbrSkinnedBlended,
-    /// Post-processing pass before MSAA resolve and up/downsampling.
-    RenderResolutionPostProcess,
-    #[doc(hidden)]
-    Count,
-}
-
 impl PipelineIndex {
     /// A pipeline whose first descriptor set is written to and read
     /// from, where the shared descriptor set is concerned.
@@ -105,7 +124,7 @@ impl PipelineIndex {
 
 /// Maps every `PipelineIndex` to a T.
 pub struct PipelineMap<T> {
-    buffer: [MaybeUninit<T>; PipelineIndex::Count as usize],
+    buffer: [MaybeUninit<T>; PIPELINE_COUNT],
 }
 
 impl<T> Drop for PipelineMap<T> {
@@ -137,17 +156,17 @@ impl<T> PipelineMap<T> {
     }
     #[allow(clippy::unused_self)]
     pub const fn len(&self) -> usize {
-        PipelineIndex::Count as usize
+        PIPELINE_COUNT
     }
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
+    pub fn iter(&self) -> impl Iterator<Item=&T> {
         // Safety: initialized in PipelineMap::new
         self.buffer.iter().map(|o| unsafe { o.assume_init_ref() })
     }
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item=&mut T> {
         // Safety: initialized in PipelineMap::new
         self.buffer.iter_mut().map(|o| unsafe { o.assume_init_mut() })
     }
-    pub fn iter_with_pipeline(&self) -> impl Iterator<Item = (PipelineIndex, &T)> {
+    pub fn iter_with_pipeline(&self) -> impl Iterator<Item=(PipelineIndex, &T)> {
         self.buffer
             .iter()
             // Safety: initialized in PipelineMap::new
@@ -164,6 +183,7 @@ impl<T> core::ops::Index<PipelineIndex> for PipelineMap<T> {
         unsafe { self.buffer[index as usize].assume_init_ref() }
     }
 }
+
 impl<T> core::ops::IndexMut<PipelineIndex> for PipelineMap<T> {
     fn index_mut(&mut self, index: PipelineIndex) -> &mut Self::Output {
         // Safety: initialized in PipelineMap::new
@@ -220,100 +240,100 @@ pub(crate) struct PipelineParameters {
 }
 
 static INSTANCED_TRANSFORM_BINDING_0: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
-    binding: 0,
+    binding: VertexBinding::Transform as u32,
     stride: mem::size_of::<Mat4>() as u32,
     input_rate: vk::VertexInputRate::INSTANCE,
 };
 static POSITION_BINDING_1: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
-    binding: 1,
+    binding: VertexBinding::Position as u32,
     stride: mem::size_of::<Vec3>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static TEXCOORD0_BINDING_2: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
-    binding: 2,
+    binding: VertexBinding::Texcoord0 as u32,
     stride: mem::size_of::<Vec2>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static NORMAL_BINDING_3: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
-    binding: 3,
+    binding: VertexBinding::Normal as u32,
     stride: mem::size_of::<Vec3>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static TANGENT_BINDING_4: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
-    binding: 4,
+    binding: VertexBinding::Tangent as u32,
     stride: mem::size_of::<Vec4>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static JOINTS0_BINDING_5: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
-    binding: 5,
+    binding: VertexBinding::Joints0 as u32,
     stride: mem::size_of::<[u8; 4]>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static WEIGHTS0_BINDING_6: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
-    binding: 6,
+    binding: VertexBinding::Weights0 as u32,
     stride: mem::size_of::<[f32; 4]>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 
 static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescription; 4] = [
     vk::VertexInputAttributeDescription {
-        binding: 0,
-        location: 0,
+        binding: VertexBinding::Transform as u32,
+        location: IN_TRANSFORM_LOCATION,
         format: vk::Format::R32G32B32A32_SFLOAT,
         offset: 0,
     },
     vk::VertexInputAttributeDescription {
-        binding: 0,
-        location: 1,
+        binding: VertexBinding::Transform as u32,
+        location: IN_TRANSFORM_LOCATION + 1,
         format: vk::Format::R32G32B32A32_SFLOAT,
         offset: mem::size_of::<[Vec4; 1]>() as u32,
     },
     vk::VertexInputAttributeDescription {
-        binding: 0,
-        location: 2,
+        binding: VertexBinding::Transform as u32,
+        location: IN_TRANSFORM_LOCATION + 2,
         format: vk::Format::R32G32B32A32_SFLOAT,
         offset: mem::size_of::<[Vec4; 2]>() as u32,
     },
     vk::VertexInputAttributeDescription {
-        binding: 0,
-        location: 3,
+        binding: VertexBinding::Transform as u32,
+        location: IN_TRANSFORM_LOCATION + 3,
         format: vk::Format::R32G32B32A32_SFLOAT,
         offset: mem::size_of::<[Vec4; 3]>() as u32,
     },
 ];
 static POSITION_BINDING_1_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
-    binding: 1,
-    location: 4,
+    binding: VertexBinding::Position as u32,
+    location: IN_POSITION_LOCATION,
     format: vk::Format::R32G32B32_SFLOAT,
     offset: 0,
 };
 static TEXCOORD0_BINDING_2_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
-    binding: 2,
-    location: 5,
+    binding: VertexBinding::Texcoord0 as u32,
+    location: IN_TEXCOORD_0_LOCATION,
     format: vk::Format::R32G32_SFLOAT,
     offset: 0,
 };
 static NORMAL_BINDING_3_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
-    binding: 3,
-    location: 6,
+    binding: VertexBinding::Normal as u32,
+    location: IN_NORMAL_LOCATION,
     format: vk::Format::R32G32B32_SFLOAT,
     offset: 0,
 };
 static TANGENT_BINDING_4_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
-    binding: 4,
-    location: 7,
+    binding: VertexBinding::Tangent as u32,
+    location: IN_TANGENT_LOCATION,
     format: vk::Format::R32G32B32A32_SFLOAT,
     offset: 0,
 };
 static JOINTS0_BINDING_5_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
-    binding: 5,
-    location: 8,
+    binding: VertexBinding::Joints0 as u32,
+    location: IN_JOINTS_0_LOCATION,
     format: vk::Format::R8G8B8A8_UINT,
     offset: 0,
 };
 static WEIGHTS0_BINDING_6_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
-    binding: 6,
-    location: 9,
+    binding: VertexBinding::Weights0 as u32,
+    location: IN_WEIGHTS_0_LOCATION,
     format: vk::Format::R32G32B32A32_SFLOAT,
     offset: 0,
 };
@@ -326,7 +346,7 @@ static WEIGHTS0_BINDING_6_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::V
 /// layout `set = 0`, and the bindings are in order.
 static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
     DescriptorSetLayoutParams {
-        binding: 0,
+        binding: UF_TRANSFORMS_BINDING,
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::VERTEX,
@@ -334,7 +354,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         descriptor_size: Some(mem::size_of::<ProjViewTransforms>() as vk::DeviceSize),
     },
     DescriptorSetLayoutParams {
-        binding: 1,
+        binding: UF_RENDER_SETTINGS_BINDING,
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -345,7 +365,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
 
 static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
     DescriptorSetLayoutParams {
-        binding: 0,
+        binding: UF_SAMPLER_BINDING,
         descriptor_type: vk::DescriptorType::SAMPLER,
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -353,7 +373,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_size: None,
     },
     DescriptorSetLayoutParams {
-        binding: 1,
+        binding: UF_TEX_BASE_COLOR_BINDING,
         descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -361,7 +381,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_size: None,
     },
     DescriptorSetLayoutParams {
-        binding: 2,
+        binding: UF_TEX_METALLIC_ROUGHNESS_BINDING,
         descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -369,7 +389,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_size: None,
     },
     DescriptorSetLayoutParams {
-        binding: 3,
+        binding: UF_TEX_NORMAL_BINDING,
         descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -377,7 +397,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_size: None,
     },
     DescriptorSetLayoutParams {
-        binding: 4,
+        binding: UF_TEX_OCCLUSION_BINDING,
         descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -385,7 +405,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_size: None,
     },
     DescriptorSetLayoutParams {
-        binding: 5,
+        binding: UF_TEX_EMISSIVE_BINDING,
         descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -393,7 +413,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_size: None,
     },
     DescriptorSetLayoutParams {
-        binding: 6,
+        binding: UF_PBR_FACTORS_BINDING,
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -401,7 +421,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_size: Some(mem::size_of::<PbrFactorsSoa>() as vk::DeviceSize),
     },
     DescriptorSetLayoutParams {
-        binding: 7,
+        binding: UF_DRAW_CALL_PARAMS_BINDING,
         descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -475,7 +495,7 @@ static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
         SHARED_DESCRIPTOR_SET_0,
         PBR_DESCRIPTOR_SET_1,
         &[DescriptorSetLayoutParams {
-            binding: 0,
+            binding: UF_SKELETON_BINDING,
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::VERTEX,
@@ -523,7 +543,7 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     descriptor_sets: &[
         SHARED_DESCRIPTOR_SET_0,
         &[DescriptorSetLayoutParams {
-            binding: 0,
+            binding: UF_HDR_FRAMEBUFFER_BINDING,
             descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,

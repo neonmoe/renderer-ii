@@ -3,15 +3,15 @@
 //! buffer, you'd need 4 or 6 of those to contain each of the buffers of the  different vertex
 //! attributes.
 
-use crate::arena::buffers::ForBuffers;
-use crate::arena::{VulkanArena, VulkanArenaError};
-use crate::renderer::pipeline_parameters::{PipelineIndex, ALL_PIPELINES, PIPELINE_PARAMETERS, PipelineMap};
 use arrayvec::ArrayVec;
 use ash::vk;
 
+use crate::arena::{VulkanArena, VulkanArenaError};
+use crate::arena::buffers::ForBuffers;
+use crate::renderer::pipeline_parameters::{ALL_PIPELINES, PIPELINE_COUNT, PIPELINE_PARAMETERS, PipelineIndex, PipelineMap};
+
 // TODO: figure out how to enforce this limit
 const MAX_BINDINGS_PER_SET: usize = 8;
-const MAX_BINDING_SETS: usize = PipelineIndex::Count as usize;
 
 struct BindingSetOffset {
     offset: usize,
@@ -23,7 +23,7 @@ struct BindingSetOffset {
 pub struct VertexLibrary {
     arena: VulkanArena<ForBuffers>,
     distinct_binding_sets: DistinctBindingSets,
-    offsets_per_distinct_binding_set: ArrayVec<ArrayVec<BindingSetOffset, MAX_BINDINGS_PER_SET>, MAX_BINDING_SETS>,
+    offsets_per_distinct_binding_set: ArrayVec<ArrayVec<BindingSetOffset, MAX_BINDINGS_PER_SET>, PIPELINE_COUNT>,
 }
 
 impl VertexLibrary {
@@ -60,7 +60,7 @@ impl VertexLibrary {
 /// Records how many vertices need to be allocated for each distinct vertex layout.
 pub struct VertexLibraryMeasurements {
     distinct_binding_sets: DistinctBindingSets,
-    vertex_counts_per_binding: ArrayVec<usize, MAX_BINDING_SETS>,
+    vertex_counts_per_binding: ArrayVec<usize, PIPELINE_COUNT>,
 }
 
 impl Default for VertexLibraryMeasurements {
@@ -110,7 +110,7 @@ impl VertexLibraryMeasurements {
 }
 
 struct DistinctBindingSets {
-    binding_sets: ArrayVec<&'static [vk::VertexInputBindingDescription], MAX_BINDING_SETS>,
+    binding_sets: ArrayVec<&'static [vk::VertexInputBindingDescription], PIPELINE_COUNT>,
     binding_set_indices: PipelineMap<usize>,
 }
 

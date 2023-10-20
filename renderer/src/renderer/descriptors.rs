@@ -1,21 +1,20 @@
-use crate::arena::buffers::ForBuffers;
-use crate::arena::{VulkanArena, VulkanArenaError};
-use crate::physical_device::PhysicalDevice;
-use crate::renderer::pipeline_parameters::constants::{MAX_BONE_COUNT, MAX_TEXTURE_COUNT};
-use crate::renderer::pipeline_parameters::{
-    DescriptorSetLayoutParams, PbrFactorsSoa, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_PARAMETERS,
-    SKINNED_PIPELINES,
-};
-use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 use alloc::rc::{Rc, Weak};
+use core::mem;
+
 use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
 use bytemuck::Zeroable;
-use core::mem;
-
-pub(crate) mod material;
 
 use material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
+
+use crate::arena::{VulkanArena, VulkanArenaError};
+use crate::arena::buffers::ForBuffers;
+use crate::physical_device::PhysicalDevice;
+use crate::renderer::pipeline_parameters::{DescriptorSetLayoutParams, PBR_PIPELINES, PbrFactorsSoa, PIPELINE_COUNT, PIPELINE_PARAMETERS, PipelineIndex, PipelineMap, PipelineParameters, SKINNED_PIPELINES};
+use crate::renderer::pipeline_parameters::constants::{MAX_BONE_COUNT, MAX_TEXTURE_COUNT};
+use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
+
+pub(crate) mod material;
 
 #[derive(thiserror::Error, Debug)]
 pub enum DescriptorError {
@@ -36,6 +35,7 @@ pub enum DescriptorError {
 }
 
 pub(crate) const MAX_PIPELINES_PER_MATERIAL: usize = 2;
+
 fn get_pipelines(data: &PipelineSpecificData) -> ArrayVec<PipelineIndex, MAX_PIPELINES_PER_MATERIAL> {
     match data {
         PipelineSpecificData::Pbr { alpha_mode, .. } => match alpha_mode {
@@ -68,7 +68,7 @@ pub(crate) struct MaterialTempUniforms {
     pbr_factors_offsets_and_sizes: PipelineMap<(vk::DeviceSize, vk::DeviceSize)>,
 }
 
-const MATERIAL_UPDATES: usize = PipelineIndex::Count as usize * MAX_TEXTURE_COUNT as usize;
+const MATERIAL_UPDATES: usize = PIPELINE_COUNT * MAX_TEXTURE_COUNT as usize;
 /// Descriptor writes:
 /// - HDR framebuffer attachment (one post-process descriptor set)
 /// - Global transforms (one shared descriptor set)
@@ -76,6 +76,7 @@ const MATERIAL_UPDATES: usize = PipelineIndex::Count as usize * MAX_TEXTURE_COUN
 /// - Joints (one for each of the skinned pipelines)
 /// - Material textures and buffers (two for each slot of each pipeline)
 const MAX_DESCRIPTOR_WRITES: usize = 3 + SKINNED_PIPELINES.len() + 2 * MATERIAL_UPDATES;
+
 type PendingWritesVec<'a> = ArrayVec<PendingWrite<'a>, MAX_DESCRIPTOR_WRITES>;
 
 pub struct Descriptors {
@@ -209,7 +210,7 @@ impl Descriptors {
                     .ty(descriptor_layout.descriptor_type)
                     .descriptor_count(descriptor_layout.descriptor_count)
             })
-            .collect::<ArrayVec<vk::DescriptorPoolSize, { PipelineIndex::Count as usize * 16 }>>();
+            .collect::<ArrayVec<vk::DescriptorPoolSize, { PIPELINE_COUNT * 16 }>>();
         let descriptor_sets_per_frame = pipeline_layouts.iter().flat_map(|pl| &pl.descriptor_set_layouts.inner).count() as u32;
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::default()
             .max_sets(descriptor_sets_per_frame)
@@ -334,7 +335,7 @@ impl Descriptors {
     ) {
         profiling::scope!("updating descriptors");
 
-        const UPDATE_COUNT: usize = PipelineIndex::Count as usize * MAX_TEXTURE_COUNT as usize;
+        const UPDATE_COUNT: usize = PIPELINE_COUNT * MAX_TEXTURE_COUNT as usize;
         let mut materials_needing_update = ArrayVec::<_, UPDATE_COUNT>::new();
         for (pipeline, material_slots) in self.material_slots_per_pipeline.iter_with_pipeline() {
             for (i, material_slot) in material_slots.iter().enumerate() {
