@@ -1,16 +1,16 @@
-use glam::{Mat4, Quat, Vec3};
-use log::LevelFilter;
-use sdl2::controller::{Axis, GameController};
-use sdl2::event::{Event, WindowEvent};
-use sdl2::keyboard::Keycode;
-use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
-use sdl2::mouse::MouseButton;
 use std::f32::consts::FRAC_PI_2;
 use std::path::Path;
 use std::sync::{Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
+use glam::{Mat4, Quat, Vec3};
+use log::LevelFilter;
 use logger::Logger;
+use sdl2::controller::{Axis, GameController};
+use sdl2::event::{Event, WindowEvent};
+use sdl2::keyboard::Keycode;
+use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
+use sdl2::mouse::MouseButton;
 static LOGGER: Logger = Logger;
 
 #[derive(thiserror::Error, Debug)]

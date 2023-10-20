@@ -1,10 +1,11 @@
+use ash::vk;
+
 use crate::arena::buffers::ForBuffers;
 use crate::arena::images::ForImages;
 use crate::arena::VulkanArena;
 use crate::image_loading::{self, ImageLoadingError, TextureKind};
 use crate::uploader::Uploader;
 use crate::vulkan_raii::{Device, ImageView};
-use ash::vk;
 
 const WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
 const BLACK: [u8; 4] = [0, 0, 0, 0xFF];

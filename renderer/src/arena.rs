@@ -1,14 +1,15 @@
 //! An arena allocator for managing GPU memory.
-use crate::physical_device::PhysicalDevice;
-use crate::uploader::UploadError;
-use crate::vulkan_raii::{Buffer, Device, DeviceMemory};
 use alloc::rc::Rc;
-use ash::vk;
-use ash::Instance;
 use core::fmt::{Arguments, Debug};
 use core::marker::PhantomData;
 use core::ptr;
 use core::sync::atomic::Ordering;
+
+use ash::{vk, Instance};
+
+use crate::physical_device::PhysicalDevice;
+use crate::uploader::UploadError;
+use crate::vulkan_raii::{Buffer, Device, DeviceMemory};
 
 pub(crate) mod buffers;
 pub(crate) mod images;
@@ -223,6 +224,7 @@ pub struct MemoryProps {
     pub unwanted: vk::MemoryPropertyFlags,
     pub fallback: vk::MemoryPropertyFlags,
 }
+
 impl MemoryProps {
     pub fn for_framebuffers() -> MemoryProps {
         MemoryProps {

@@ -1,10 +1,12 @@
-use crate::physical_device::{physical_device_features, PhysicalDevice, QueueFamily};
-use crate::vulkan_raii::Device;
 use alloc::boxed::Box;
+use core::ffi::c_char;
+
 use arrayvec::ArrayVec;
 use ash::extensions::khr;
 use ash::{vk, Entry, Instance};
-use core::ffi::c_char;
+
+use crate::physical_device::{physical_device_features, PhysicalDevice, QueueFamily};
+use crate::vulkan_raii::Device;
 
 #[derive(thiserror::Error, Debug)]
 pub enum DeviceError {

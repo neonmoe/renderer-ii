@@ -145,6 +145,7 @@ impl RenderPass {
 }
 
 pub type AttachmentVec<T> = ArrayVec<T, { Attachment::COUNT }>;
+
 pub struct AttachmentFormats {
     pub hdr: vk::Format,
     pub swapchain: vk::Format,

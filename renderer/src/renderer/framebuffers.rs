@@ -1,4 +1,8 @@
+use alloc::rc::Rc;
 use std::fmt::Arguments;
+
+use arrayvec::ArrayVec;
+use ash::{vk, Instance};
 
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
@@ -6,9 +10,6 @@ use crate::renderer::pipeline_parameters::render_passes::{Attachment, Attachment
 use crate::renderer::pipelines::Pipelines;
 use crate::renderer::swapchain::Swapchain;
 use crate::vulkan_raii::{AnyImage, Device, ImageView};
-use alloc::rc::Rc;
-use arrayvec::ArrayVec;
-use ash::{vk, Instance};
 
 #[derive(thiserror::Error, Debug)]
 pub enum FramebufferCreationError {

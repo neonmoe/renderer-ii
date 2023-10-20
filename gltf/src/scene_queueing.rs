@@ -1,8 +1,9 @@
 use std::mem::size_of;
 
-use crate::{Animation, AnimationError, Gltf};
 use glam::Mat4;
 use renderer::{Scene, SkinnedModel};
+
+use crate::{Animation, AnimationError, Gltf};
 
 impl Gltf {
     pub fn queue<'a>(&'a self, scene: &mut Scene<'a>, transform: Mat4) {

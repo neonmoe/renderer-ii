@@ -1,8 +1,9 @@
+use glam::Mat4;
+use hashbrown::HashMap;
+
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::descriptors::material::Material;
 use crate::renderer::pipeline_parameters::{PipelineIndex, PipelineMap};
-use glam::Mat4;
-use hashbrown::HashMap;
 
 pub(crate) mod camera;
 pub(crate) mod coordinate_system;
@@ -54,7 +55,7 @@ impl<'a> Scene<'a> {
     pub fn queue_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, transform: Mat4) {
         profiling::scope!("static mesh");
         let mesh_map = &mut self.static_meshes[material.pipeline(false)];
-        let mesh_vec = mesh_map.entry((mesh, material)).or_insert_with(Vec::new);
+        let mesh_vec = mesh_map.entry((mesh, material)).or_default();
         mesh_vec.push(transform);
     }
 

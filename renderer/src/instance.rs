@@ -1,9 +1,9 @@
+use core::ffi::{c_char, CStr};
+
 use arrayvec::ArrayVec;
 #[cfg(feature = "vulkan-debug-utils")]
 use ash::extensions::ext::DebugUtils;
 use ash::{vk, Entry};
-use core::ffi::c_char;
-use core::ffi::CStr;
 use raw_window_handle::HasRawDisplayHandle;
 
 #[derive(thiserror::Error, Debug)]
@@ -37,7 +37,9 @@ impl Instance {
             .application_version(version)
             .api_version(vk::API_VERSION_1_3);
         let app_name = app_name.to_str().unwrap_or("<invalid utf-8>");
-        log::debug!("Creating Vulkan instance with application name: \"{app_name}\", version: {major_version}.{minor_version}.{patch_version} (0x{version:X})");
+        log::debug!(
+            "Creating Vulkan instance with application name: \"{app_name}\", version: {major_version}.{minor_version}.{patch_version} (0x{version:X})"
+        );
 
         let mut layers: ArrayVec<*const c_char, 2> = ArrayVec::new();
         let mut validation_layer_enabled = false;
@@ -58,7 +60,7 @@ impl Instance {
         }
 
         #[allow(unused_mut)]
-            let mut extensions = ash_window::enumerate_required_extensions(display.raw_display_handle())
+        let mut extensions = ash_window::enumerate_required_extensions(display.raw_display_handle())
             .map_err(InstanceCreationError::WindowExtensionEnumeration)?
             .iter()
             .map(|&cs| {
@@ -69,7 +71,7 @@ impl Instance {
             })
             .collect::<ArrayVec<*const c_char, 4>>();
         #[cfg(feature = "vulkan-debug-utils")]
-            let mut debug_utils_enabled = false;
+        let mut debug_utils_enabled = false;
         #[cfg(feature = "vulkan-debug-utils")]
         if is_extension_supported(&entry, DebugUtils::NAME) {
             extensions.push(DebugUtils::NAME.as_ptr());
@@ -103,7 +105,7 @@ impl Instance {
         }
 
         #[cfg(feature = "vulkan-debug-utils")]
-            let mut debug_utils_messenger_create_info = crate::create_debug_utils_messenger_info();
+        let mut debug_utils_messenger_create_info = crate::create_debug_utils_messenger_info();
         #[cfg(feature = "vulkan-debug-utils")]
         if debug_utils_enabled {
             create_info = create_info.push_next(&mut debug_utils_messenger_create_info);

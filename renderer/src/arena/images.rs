@@ -1,10 +1,13 @@
-use crate::arena::{ArenaType, VulkanArena, VulkanArenaError};
-use crate::vulkan_raii::Image;
-use ash::vk;
 use core::fmt::Arguments;
 use core::sync::atomic::Ordering;
 
+use ash::vk;
+
+use crate::arena::{ArenaType, VulkanArena, VulkanArenaError};
+use crate::vulkan_raii::Image;
+
 pub struct ForImages;
+
 impl ArenaType for ForImages {
     const MAPPABLE: bool = false;
 }
@@ -30,7 +33,7 @@ impl VulkanArena<ForImages> {
         }
 
         match unsafe { self.device.bind_image_memory(image, self.memory.inner, offset) }.map_err(VulkanArenaError::ImageBinding) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(err) => {
                 unsafe { self.device.destroy_image(image, None) };
                 return Err(err);

@@ -2,22 +2,13 @@ use alloc::rc::Rc;
 use core::fmt::Arguments;
 
 use arrayvec::ArrayVec;
-use ash::{Instance, vk};
+use ash::{vk, Instance};
 use bytemuck::Zeroable;
 use glam::Mat4;
 
-use descriptors::{DescriptorError, Descriptors};
-use framebuffers::Framebuffers;
-use pipelines::Pipelines;
-use scene::{Scene, SkinnedModel, StaticMeshMap};
-use swapchain::Swapchain;
-
-use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::arena::buffers::ForBuffers;
+use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
-use crate::renderer::pipeline_parameters::{ALL_PIPELINES, DrawCallParametersSoa, PIPELINE_COUNT, PipelineIndex, PipelineMap, RenderSettings};
-use crate::renderer::pipeline_parameters::constants::MAX_BONE_COUNT;
-use crate::renderer::pipeline_parameters::render_passes::{Attachment, RenderPass};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 
 pub(crate) mod descriptors;
@@ -26,6 +17,15 @@ pub(crate) mod pipeline_parameters;
 pub(crate) mod pipelines;
 pub(crate) mod scene;
 pub(crate) mod swapchain;
+
+use descriptors::{DescriptorError, Descriptors};
+use framebuffers::Framebuffers;
+use pipeline_parameters::constants::MAX_BONE_COUNT;
+use pipeline_parameters::render_passes::{Attachment, RenderPass};
+use pipeline_parameters::{DrawCallParametersSoa, PipelineIndex, PipelineMap, RenderSettings, ALL_PIPELINES, PIPELINE_COUNT};
+use pipelines::Pipelines;
+use scene::{Scene, SkinnedModel, StaticMeshMap};
+use swapchain::Swapchain;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RendererError {
@@ -160,7 +160,7 @@ impl Renderer {
             MemoryProps::for_buffers(),
             format_args!("frame local arena"),
         )
-            .map_err(RendererError::FrameLocalArenaCreation)?;
+        .map_err(RendererError::FrameLocalArenaCreation)?;
 
         let frame_start_fence = unsafe {
             device

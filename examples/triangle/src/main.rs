@@ -1,11 +1,12 @@
-use arrayvec::{ArrayString, ArrayVec};
-use bytemuck::cast_slice;
 use core::ffi::CStr;
 use core::mem::size_of;
+use std::rc::Rc;
+
+use arrayvec::{ArrayString, ArrayVec};
+use bytemuck::cast_slice;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
-use std::rc::Rc;
 
 fn main() {
     use logger::Logger;

@@ -1,8 +1,10 @@
-use crate::physical_device::PhysicalDevice;
-use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
-use ash::vk;
 use core::fmt::Arguments;
 use core::time::Duration;
+
+use ash::vk;
+
+use crate::physical_device::PhysicalDevice;
+use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
 
 /// General errors related to the creation and usage of [Uploader]. The actual
 /// uploads have their own error type, [`UploadError`].
@@ -147,7 +149,7 @@ impl Uploader {
             Ok(true)
         } else {
             match unsafe { self.device.wait_for_fences(&fences, true, timeout) } {
-                Ok(_) => Ok(true),
+                Ok(()) => Ok(true),
                 Err(vk::Result::TIMEOUT) => Ok(false),
                 Err(err) => Err(UploaderError::FenceWait(err)),
             }

@@ -4,13 +4,11 @@ use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
-use constants::{MAX_BONE_COUNT, MAX_DRAW_CALLS, MAX_TEXTURE_COUNT};
-use render_passes::RenderPass;
-
-use crate::renderer::pipeline_parameters::constants::*;
-
 pub(crate) mod constants;
 pub(crate) mod render_passes;
+
+use constants::*;
+use render_passes::RenderPass;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PipelineIndex {
@@ -46,7 +44,7 @@ pub enum VertexBinding {
     Count,
 }
 
-pub const MAX_VERTEX_INPUT_BINDINGS: usize = VertexBinding::Count as usize;
+pub const VERTEX_BINDING_COUNT: usize = VertexBinding::Count as usize;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -158,15 +156,15 @@ impl<T> PipelineMap<T> {
     pub const fn len(&self) -> usize {
         PIPELINE_COUNT
     }
-    pub fn iter(&self) -> impl Iterator<Item=&T> {
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
         // Safety: initialized in PipelineMap::new
         self.buffer.iter().map(|o| unsafe { o.assume_init_ref() })
     }
-    pub fn iter_mut(&mut self) -> impl Iterator<Item=&mut T> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
         // Safety: initialized in PipelineMap::new
         self.buffer.iter_mut().map(|o| unsafe { o.assume_init_mut() })
     }
-    pub fn iter_with_pipeline(&self) -> impl Iterator<Item=(PipelineIndex, &T)> {
+    pub fn iter_with_pipeline(&self) -> impl Iterator<Item = (PipelineIndex, &T)> {
         self.buffer
             .iter()
             // Safety: initialized in PipelineMap::new

@@ -5,16 +5,19 @@ use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
 use bytemuck::Zeroable;
 
-use material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
-
-use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::arena::buffers::ForBuffers;
+use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
-use crate::renderer::pipeline_parameters::{DescriptorSetLayoutParams, PBR_PIPELINES, PbrFactorsSoa, PIPELINE_COUNT, PIPELINE_PARAMETERS, PipelineIndex, PipelineMap, PipelineParameters, SKINNED_PIPELINES};
 use crate::renderer::pipeline_parameters::constants::{MAX_BONE_COUNT, MAX_TEXTURE_COUNT};
+use crate::renderer::pipeline_parameters::{
+    DescriptorSetLayoutParams, PbrFactorsSoa, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_COUNT,
+    PIPELINE_PARAMETERS, SKINNED_PIPELINES,
+};
 use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 
 pub(crate) mod material;
+
+use material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
 
 #[derive(thiserror::Error, Debug)]
 pub enum DescriptorError {

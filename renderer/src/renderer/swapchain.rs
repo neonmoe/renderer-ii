@@ -1,9 +1,11 @@
-use crate::physical_device::PhysicalDevice;
-use crate::vulkan_raii::{self, AnyImage, Device, Surface};
 use alloc::rc::Rc;
+
 use arrayvec::ArrayVec;
 use ash::extensions::khr;
 use ash::vk;
+
+use crate::physical_device::PhysicalDevice;
+use crate::vulkan_raii::{self, AnyImage, Device, Surface};
 
 #[derive(thiserror::Error, Debug)]
 pub enum SwapchainError {

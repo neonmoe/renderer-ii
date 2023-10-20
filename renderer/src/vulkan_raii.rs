@@ -6,11 +6,12 @@
 //! recipe for memory leaks.
 
 use alloc::rc::Rc;
+use core::hash::{Hash, Hasher};
+use core::sync::atomic::Ordering;
+
 use arrayvec::ArrayVec;
 use ash::extensions::khr;
 use ash::vk;
-use core::hash::{Hash, Hasher};
-use core::sync::atomic::Ordering;
 
 /// The Vulkan device, which is used to make pretty much all Vulkan calls after
 /// its creation.
@@ -34,17 +35,20 @@ pub struct Device {
     pub surface_queue: vk::Queue,
     pub transfer_queue: vk::Queue,
 }
+
 impl Device {
     pub fn destroy(&mut self) {
         unsafe { self.inner.destroy_device(None) };
     }
 }
+
 impl core::ops::Deref for Device {
     type Target = ash::Device;
     fn deref(&self) -> &Self::Target {
         self.inner
     }
 }
+
 impl Device {
     /// Wait until the device is idle. Should be called before swapchain
     /// recreation and after the game loop is over to make sure none of the
@@ -136,6 +140,7 @@ pub struct DeviceMemory {
     pub device: Device,
     pub device_local_size: u64,
 }
+
 impl DeviceMemory {
     pub fn new(inner: vk::DeviceMemory, device: Device, device_local_size: u64) -> DeviceMemory {
         let new_allocated = crate::vram_usage::ALLOCATED.fetch_add(device_local_size, Ordering::Relaxed) + device_local_size;
@@ -148,6 +153,7 @@ impl DeviceMemory {
         }
     }
 }
+
 impl Drop for DeviceMemory {
     fn drop(&mut self) {
         profiling::scope!("vk::free_memory");
@@ -203,6 +209,7 @@ pub struct DescriptorSetLayouts {
     pub device: Device,
     pub immutable_samplers: ArrayVec<Rc<Sampler>, 1>,
 }
+
 impl Drop for DescriptorSetLayouts {
     fn drop(&mut self) {
         for descriptor_set_layout in &self.inner {
@@ -245,6 +252,7 @@ pub struct CommandBuffer {
     pub device: Device,
     pub command_pool: Rc<CommandPool>,
 }
+
 impl Drop for CommandBuffer {
     fn drop(&mut self) {
         unsafe { self.device.free_command_buffers(self.command_pool.inner, &[self.inner]) };

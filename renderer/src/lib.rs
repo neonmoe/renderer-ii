@@ -22,7 +22,8 @@
     clippy::cast_possible_wrap,
     clippy::cast_lossless,
     clippy::too_many_lines,
-    clippy::similar_names
+    clippy::similar_names,
+    clippy::wildcard_imports
 )]
 // TODO: #![no_std]
 
@@ -38,10 +39,13 @@ macro_rules! cstr {
 
 #[cfg(feature = "vulkan-debug-utils")]
 mod debug_utils;
+
 #[cfg(not(feature = "vulkan-debug-utils"))]
 mod debug_utils {
-    use ash::{vk, Device};
     use core::fmt::Arguments;
+
+    use ash::{vk, Device};
+
     #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn name_vulkan_object<H: vk::Handle>(_device: &Device, _object: H, _name: Arguments) {}
 }
@@ -54,6 +58,7 @@ use debug_utils::{create_debug_utils_messenger_info, init_debug_utils};
 
 mod vram_usage {
     use core::sync::atomic::{AtomicU64, Ordering};
+
     pub(crate) static ALLOCATED: AtomicU64 = AtomicU64::new(0);
     pub(crate) static IN_USE: AtomicU64 = AtomicU64::new(0);
     pub(crate) static ALLOCATED_PEAK: AtomicU64 = AtomicU64::new(0);
@@ -61,20 +66,23 @@ mod vram_usage {
     pub fn get_allocated_vram() -> u64 {
         ALLOCATED.load(Ordering::Relaxed)
     }
+
     pub fn get_allocated_vram_in_use() -> u64 {
         IN_USE.load(Ordering::Relaxed)
     }
+
     pub fn get_allocated_vram_peak() -> u64 {
         ALLOCATED_PEAK.load(Ordering::Relaxed)
     }
 }
+
 pub use vram_usage::{get_allocated_vram, get_allocated_vram_in_use, get_allocated_vram_peak};
 
 mod arena;
+
 pub use arena::buffers::ForBuffers;
 pub use arena::images::ForImages;
 pub use arena::{MemoryProps, VulkanArena, VulkanArenaError};
-
 pub use ash::vk;
 
 mod display_utils {
@@ -101,6 +109,7 @@ mod display_utils {
         }
     }
 }
+
 pub use display_utils::*;
 
 pub mod image_loading;
@@ -108,15 +117,19 @@ pub mod image_loading;
 pub mod include_words;
 
 mod instance;
+
 pub use instance::Instance;
 
 mod memory_measurement;
+
 pub use memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
 
 mod physical_device;
+
 pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 
 mod renderer;
+
 pub use renderer::descriptors::material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
 pub use renderer::descriptors::{DescriptorError, Descriptors, PbrDefaults};
 pub use renderer::framebuffers::{FramebufferCreationError, Framebuffers};
@@ -151,13 +164,17 @@ mod surface {
         })
     }
 }
+
 pub use surface::{create_surface, Surface};
 
 mod uploader;
+
 pub use uploader::Uploader;
 
 mod vertex_library;
+
 pub use vertex_library::VertexLibrary;
 
 mod vulkan_raii;
+
 pub use vulkan_raii::{Buffer, Device, ImageView};

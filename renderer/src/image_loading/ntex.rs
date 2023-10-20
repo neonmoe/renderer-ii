@@ -1,7 +1,9 @@
-use crate::image_loading::ImageData;
+use core::convert::TryInto;
+
 use arrayvec::ArrayVec;
 use ash::vk;
-use core::convert::TryInto;
+
+use crate::image_loading::ImageData;
 
 #[derive(thiserror::Error, Debug)]
 pub enum NtexDecodeError {

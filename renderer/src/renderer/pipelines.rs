@@ -3,8 +3,8 @@ use ash::vk;
 use hashbrown::HashMap;
 
 use crate::renderer::descriptors::Descriptors;
-use crate::renderer::pipeline_parameters::{ALL_PIPELINES, PIPELINE_COUNT, PIPELINE_PARAMETERS, PipelineMap, Shader};
 use crate::renderer::pipeline_parameters::render_passes::{AttachmentFormats, AttachmentVec};
+use crate::renderer::pipeline_parameters::{PipelineMap, Shader, ALL_PIPELINES, PIPELINE_COUNT, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout};
 
 #[derive(thiserror::Error, Debug, Clone, Copy)]
@@ -71,10 +71,10 @@ fn create_pipelines(
     let mut create_shader_module = |(filename, spirv): (&'static str, &'static [u32])| -> Result<vk::ShaderModule, PipelineCreationError> {
         *all_shader_modules.entry((filename, spirv)).or_insert_with(|| {
             #[cfg(target_endian = "big")]
-                let spirv = &ash::util::read_spv(&mut std::io::Cursor::new(bytemuck::cast_slice(spirv))).unwrap();
+            let spirv = &ash::util::read_spv(&mut std::io::Cursor::new(bytemuck::cast_slice(spirv))).unwrap();
             let create_info = vk::ShaderModuleCreateInfo::default().code(spirv);
             let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(PipelineCreationError::ShaderModule)?;
-            crate::name_vulkan_object(device, shader_module, format_args!("{}", filename));
+            crate::name_vulkan_object(device, shader_module, format_args!("{filename}"));
             Ok(shader_module)
         })
     };

@@ -1,7 +1,8 @@
 //! `VkPhysicalDeviceLimits` checks that can be made against `PipelinesParameters`.
 
-use crate::renderer::pipeline_parameters::{PipelineParameters, PIPELINE_PARAMETERS};
 use ash::vk;
+
+use crate::renderer::pipeline_parameters::{PipelineParameters, PIPELINE_PARAMETERS};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PhysicalDeviceLimitBreak {

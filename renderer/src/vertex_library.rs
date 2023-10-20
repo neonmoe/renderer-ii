@@ -6,12 +6,11 @@
 use arrayvec::ArrayVec;
 use ash::vk;
 
-use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::arena::buffers::ForBuffers;
-use crate::renderer::pipeline_parameters::{ALL_PIPELINES, PIPELINE_COUNT, PIPELINE_PARAMETERS, PipelineIndex, PipelineMap};
-
-// TODO: figure out how to enforce this limit
-const MAX_BINDINGS_PER_SET: usize = 8;
+use crate::arena::{VulkanArena, VulkanArenaError};
+use crate::renderer::pipeline_parameters::{
+    PipelineIndex, PipelineMap, ALL_PIPELINES, PIPELINE_COUNT, PIPELINE_PARAMETERS, VERTEX_BINDING_COUNT,
+};
 
 struct BindingSetOffset {
     offset: usize,
@@ -23,7 +22,7 @@ struct BindingSetOffset {
 pub struct VertexLibrary {
     arena: VulkanArena<ForBuffers>,
     distinct_binding_sets: DistinctBindingSets,
-    offsets_per_distinct_binding_set: ArrayVec<ArrayVec<BindingSetOffset, MAX_BINDINGS_PER_SET>, PIPELINE_COUNT>,
+    offsets_per_distinct_binding_set: ArrayVec<ArrayVec<BindingSetOffset, VERTEX_BINDING_COUNT>, PIPELINE_COUNT>,
 }
 
 impl VertexLibrary {
@@ -35,7 +34,7 @@ impl VertexLibrary {
         let mut buffer_size = 0;
         let mut offsets_per_distinct_binding_set = ArrayVec::new();
         for (&vertex_count, &bindings) in vertex_counts_per_binding.iter().zip(&distinct_binding_sets.binding_sets) {
-            let mut offsets = ArrayVec::<BindingSetOffset, MAX_BINDINGS_PER_SET>::new();
+            let mut offsets = ArrayVec::<BindingSetOffset, VERTEX_BINDING_COUNT>::new();
             for binding in bindings {
                 offsets.push(BindingSetOffset {
                     offset: buffer_size,
@@ -126,7 +125,10 @@ impl Default for DistinctBindingSets {
                 bindings.push(PIPELINE_PARAMETERS[pipeline].bindings);
             }
         }
-        DistinctBindingSets { binding_sets: bindings, binding_set_indices: binding_indices }
+        DistinctBindingSets {
+            binding_sets: bindings,
+            binding_set_indices: binding_indices,
+        }
     }
 }
 

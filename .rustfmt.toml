@@ -1,1 +1,4 @@
 max_width = 140
+imports_granularity = "Module"
+group_imports = "StdExternalCrate"
+version = "Two"

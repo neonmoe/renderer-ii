@@ -1,6 +1,7 @@
-use crate::Gltf;
 use glam::Mat4;
 use renderer::{Material, Mesh};
+
+use crate::Gltf;
 
 pub(crate) struct MeshIterItem<'a> {
     pub node_index: usize,

@@ -1,11 +1,12 @@
-use crate::renderer::pipeline_parameters::render_passes::AttachmentFormats;
-use arrayvec::ArrayVec;
-use ash::extensions::khr;
-use ash::vk;
-use ash::{Entry, Instance};
 use core::ffi::CStr;
 use core::fmt::{self, Display, Formatter};
 use std::error::Error;
+
+use arrayvec::ArrayVec;
+use ash::extensions::khr;
+use ash::{vk, Entry, Instance};
+
+use crate::renderer::pipeline_parameters::render_passes::AttachmentFormats;
 
 pub(crate) mod device_creation;
 pub(crate) mod limits;
@@ -43,6 +44,7 @@ pub enum PhysicalDeviceRejectionReason {
 
 #[derive(Debug)]
 pub struct RejectionReasonList(ArrayVec<PhysicalDeviceRejectionReason, 128>);
+
 impl From<PhysicalDeviceRejectionReason> for RejectionReasonList {
     fn from(reason: PhysicalDeviceRejectionReason) -> Self {
         let mut reasons = ArrayVec::new();
@@ -50,11 +52,13 @@ impl From<PhysicalDeviceRejectionReason> for RejectionReasonList {
         RejectionReasonList(reasons)
     }
 }
+
 impl Error for RejectionReasonList {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         None
     }
 }
+
 impl Display for RejectionReasonList {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         writeln!(f, "graphics driver or hardware does not support the required features:")?;

@@ -1,5 +1,6 @@
-use ash::{vk, Instance};
 use core::ffi::CStr;
+
+use ash::{vk, Instance};
 
 pub const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] = &[
     cstr!("VK_KHR_swapchain"),

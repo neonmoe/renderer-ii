@@ -1,10 +1,12 @@
-use crate::arena::{ArenaType, VulkanArena, VulkanArenaError};
-use crate::uploader::Uploader;
-use crate::vulkan_raii::Buffer;
-use ash::vk;
 use core::fmt::Arguments;
 use core::ptr;
 use core::sync::atomic::Ordering;
+
+use ash::vk;
+
+use crate::arena::{ArenaType, VulkanArena, VulkanArenaError};
+use crate::uploader::Uploader;
+use crate::vulkan_raii::Buffer;
 
 // TODO: Allow making buffers from staging buffers, and making empty staging buffers that can be written to?
 
@@ -51,7 +53,7 @@ impl VulkanArena<ForBuffers> {
         }
 
         match unsafe { self.device.bind_buffer_memory(buffer, self.memory.inner, offset) }.map_err(VulkanArenaError::BufferBinding) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(err) => {
                 unsafe { self.device.destroy_buffer(buffer, None) };
                 return Err(err);

@@ -1,11 +1,13 @@
+use alloc::rc::Rc;
+use core::hash::{Hash, Hasher};
+
+use arrayvec::{ArrayString, ArrayVec};
+use bytemuck::Zeroable;
+use glam::Vec4;
+
 use crate::renderer::descriptors::MAX_PIPELINES_PER_MATERIAL;
 use crate::renderer::pipeline_parameters::PipelineIndex;
 use crate::vulkan_raii::ImageView;
-use alloc::rc::Rc;
-use arrayvec::{ArrayString, ArrayVec};
-use bytemuck::Zeroable;
-use core::hash::{Hash, Hasher};
-use glam::Vec4;
 
 #[derive(Clone, Copy, Zeroable)]
 pub struct PbrFactors {
@@ -71,7 +73,9 @@ impl PartialEq for Material {
         self.array_indices == other.array_indices
     }
 }
+
 impl Eq for Material {}
+
 impl Hash for Material {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.array_indices.hash(state);

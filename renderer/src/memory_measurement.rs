@@ -1,9 +1,11 @@
+use core::marker::PhantomData;
+
+use ash::vk;
+
 use crate::arena::buffers::ForBuffers;
 use crate::arena::images::ForImages;
 use crate::arena::ArenaType;
 use crate::vulkan_raii::Device;
-use ash::vk;
-use core::marker::PhantomData;
 
 #[derive(thiserror::Error, Debug)]
 pub enum VulkanArenaMeasurementError {

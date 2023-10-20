@@ -1,13 +1,15 @@
+use alloc::rc::Rc;
+use core::ops::Range;
+
+use arrayvec::ArrayVec;
+use ash::vk;
+
 use crate::arena::buffers::ForBuffers;
 use crate::arena::images::ForImages;
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::TEXTURE_FORMATS;
 use crate::uploader::{UploadError, Uploader};
 use crate::vulkan_raii::{Device, ImageView};
-use alloc::rc::Rc;
-use arrayvec::ArrayVec;
-use ash::vk;
-use core::ops::Range;
 
 pub mod ntex;
 pub mod pbr_defaults;
@@ -86,12 +88,13 @@ pub fn create_pixel(
     kind: TextureKind,
     debug_identifier: &str,
 ) -> Result<ImageView, ImageLoadingError> {
+    let pixel_mip_range = 0..pixels.len();
     let image_data = ImageData {
         width: 1,
         height: 1,
         format: vk::Format::R8G8B8A8_UNORM,
         pixels: &pixels,
-        mip_ranges: ArrayVec::from_iter([0..pixels.len()]),
+        mip_ranges: ArrayVec::from_iter([pixel_mip_range]),
     };
     load_image(device, staging_arena, uploader, arena, &image_data, kind, debug_identifier)
 }

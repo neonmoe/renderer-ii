@@ -1,10 +1,10 @@
 use alloc::ffi::CString;
+use core::ffi::{c_char, c_void, CStr};
+use core::fmt::Arguments;
+
 use ash::extensions::ext;
 use ash::extensions::ext::DebugUtils;
 use ash::{vk, Device, Entry, Instance};
-use core::ffi::CStr;
-use core::ffi::{c_char, c_void};
-use core::fmt::Arguments;
 
 static mut DEBUG_UTILS: Option<ext::DebugUtils> = None;
 
@@ -119,8 +119,7 @@ fn vulkan_debug(
     cmdbuf_label: Option<&str>,
     object_name: Option<&str>,
 ) {
-    use vk::DebugUtilsMessageSeverityFlagsEXT as Severity;
-    use vk::DebugUtilsMessageTypeFlagsEXT as Type;
+    use vk::{DebugUtilsMessageSeverityFlagsEXT as Severity, DebugUtilsMessageTypeFlagsEXT as Type};
 
     let formatted_message = {
         use core::fmt::Write;

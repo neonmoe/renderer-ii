@@ -1,9 +1,12 @@
 extern crate alloc;
 
 use alloc::rc::Rc;
-use arrayvec::{ArrayString, ArrayVec};
 use core::mem;
 use core::ops::Range;
+use std::fs::{self, File};
+use std::path::Path;
+
+use arrayvec::{ArrayString, ArrayVec};
 use glam::{Mat4, Quat, Vec3, Vec4};
 use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
@@ -12,8 +15,6 @@ use renderer::{
     vk, AlphaMode, Buffer, DescriptorError, Descriptors, Device, ForBuffers, ForImages, ImageView, Material, Mesh, PbrFactors,
     PipelineSpecificData, Uploader, VulkanArena, VulkanArenaError,
 };
-use std::fs::{self, File};
-use std::path::Path;
 
 mod gltf_json;
 mod memory_measurement;

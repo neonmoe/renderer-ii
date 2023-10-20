@@ -1,9 +1,10 @@
-use crate::{gltf_json, GltfLoadingError};
-use renderer::image_loading::{self, ntex, ImageLoadingError, TextureKind};
-use renderer::vk;
-use renderer::{ForBuffers, ForImages, VulkanArenaMeasurementError, VulkanArenaMeasurer};
 use std::fs;
 use std::path::Path;
+
+use renderer::image_loading::{self, ntex, ImageLoadingError, TextureKind};
+use renderer::{vk, ForBuffers, ForImages, VulkanArenaMeasurementError, VulkanArenaMeasurer};
+
+use crate::{gltf_json, GltfLoadingError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum GltfMemoryMeasurementError {
