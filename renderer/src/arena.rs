@@ -112,7 +112,7 @@ impl<T: ArenaType> VulkanArena<T> {
         let device_local_size = if device_local { size } else { 0 };
         let memory = Rc::new(DeviceMemory::new(memory, device.clone(), device_local_size));
         // IN_USE gets bumped by DeviceMemory::new, subtract it back down because none of it is actually in use.
-        crate::vram_usage::IN_USE.fetch_sub(device_local_size, core::sync::atomic::Ordering::Relaxed);
+        crate::vram_usage::IN_USE.fetch_sub(device_local_size, Ordering::Relaxed);
 
         Ok(VulkanArena {
             device: device.clone(),

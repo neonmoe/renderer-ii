@@ -1,8 +1,6 @@
 use core::ffi::CStr;
-use core::mem::size_of;
-use std::rc::Rc;
 
-use arrayvec::{ArrayString, ArrayVec};
+use arrayvec::ArrayString;
 use bytemuck::cast_slice;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use sdl2::event::{Event, WindowEvent};
@@ -88,43 +86,25 @@ fn main() {
     let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device).unwrap();
 
     let triangle_mesh = {
-        use renderer::vk;
+        let positions = [Vec3::new(-0.5, 0.5, 0.8), Vec3::new(0.5, 0.5, 0.8), Vec3::new(-0.1, -0.5, 0.8)];
+        let positions: &[u8] = cast_slice(&positions);
+        let uvs = [Vec2::new(0.0, 1.0), Vec2::new(1.0, 1.0), Vec2::new(0.5, 0.0)];
+        let uvs: &[u8] = cast_slice(&uvs);
+        let norms: &[u8] = cast_slice(&[Vec3::X, Vec3::Y, Vec3::Z]);
+        let tgts: &[u8] = cast_slice(&[Vec4::Y, Vec4::Z, Vec4::X]);
+        let idxs: &[u8] = cast_slice(&[0u16, 1, 2]);
 
-        let mut bytes: Vec<u8> = Vec::with_capacity(4096);
-        bytes.extend_from_slice(cast_slice(&[
-            Vec3::new(-0.5, 0.5, 0.8),
-            Vec3::new(0.5, 0.5, 0.8),
-            Vec3::new(-0.1, -0.5, 0.8),
-        ]));
-        let uvs = bytes.len() as vk::DeviceSize;
-        bytes.extend_from_slice(cast_slice(&[Vec2::new(0.0, 1.0), Vec2::new(1.0, 1.0), Vec2::new(0.5, 0.0)]));
-        let norms = bytes.len() as vk::DeviceSize;
-        bytes.extend_from_slice(cast_slice(&[Vec3::X, Vec3::Y, Vec3::Z]));
-        let tgts = bytes.len() as vk::DeviceSize;
-        bytes.extend_from_slice(cast_slice(&[Vec4::Y, Vec4::Z, Vec4::X]));
-        let idxs = bytes.len() as vk::DeviceSize;
-        bytes.extend_from_slice(cast_slice(&[0u16, 1, 2]));
-
-        let staging_arena = Some(&mut staging_arena);
-        let uploader = Some(&mut uploader);
-        let info = vk::BufferCreateInfo {
-            size: bytes.len() as vk::DeviceSize,
-            usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            ..Default::default()
-        };
-        let buf = buffer_arena
-            .create_buffer(info, &bytes, staging_arena, uploader, format_args!("triangle mesh"))
-            .unwrap();
-        let buf = Rc::new(buf);
-
-        renderer::Mesh::new::<u16>(
-            ArrayVec::from_iter([buf.clone(), buf.clone(), buf.clone(), buf.clone()]),
-            ArrayVec::from_iter([0, uvs, norms, tgts]),
-            buf,
-            idxs,
-            size_of::<u16>() as vk::DeviceSize * 3,
-        )
+        let mut measurer = renderer::VertexLibraryMeasurer::default();
+        measurer.add_mesh(
+            renderer::PipelineIndex::PbrOpaque,
+            &[positions.len(), uvs.len(), norms.len(), tgts.len()],
+            3,
+        );
+        let debug_id = format_args!("triangle mesh");
+        let mut library = renderer::VertexLibraryBuilder::new(&mut staging_arena, measurer, debug_id).unwrap();
+        let mesh = library.add_mesh::<u16>(renderer::PipelineIndex::PbrOpaque, &[positions, uvs, norms, tgts], idxs);
+        library.upload(&mut buffer_arena, &mut uploader, debug_id).unwrap();
+        mesh
     };
 
     let triangle_material = renderer::Material::new(

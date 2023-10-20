@@ -168,6 +168,7 @@ pub struct Buffer {
     pub inner: vk::Buffer,
     pub device: Device,
     pub memory: Rc<DeviceMemory>,
+    pub offset: vk::DeviceSize,
     pub size: vk::DeviceSize,
 }
 trivial_drop_impl!(Buffer, destroy_buffer);
