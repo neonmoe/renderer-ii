@@ -1,7 +1,24 @@
-//! This module exists for convenience, to make it ergonomic at all to have all meshes' vertex data
-//! be in the same buffers. Even if there was a "buffer arena" which could sub-allocate from a
-//! buffer, you'd need 4 or 6 of those to contain each of the buffers of the  different vertex
-//! attributes.
+// TODO: Now that this kinda works, make it ergonomic
+
+// Current workflow:
+// - Find out what primitives your model consists of, record them in VertexLibraryMeasurer
+// - Create an appropriately sized arena based on that
+// - Create the VertexLibraryBuilder from the arena and the measurer
+// - Go through the primitives again, this time writing the actual data
+// - Upload the VertexLibraryBuilder
+
+// One easy solution: keep a Vec of the parameters of add_mesh calls. The Vec could then be
+// "replayed" to do the last half of the steps in one function.
+
+// Harder, possibly less performant, but no allocation: get a `|add_buffer: Fn| {}` closure from the
+// user, run it once to measure, another time to allocate. Kinda thinking the whole no-alloc thing
+// might've gone too far at this point.
+
+// In both cases, it should be doable to hide the difference between the measurer and the actual
+// writer, at least if this module creates the arenas. Otherwise the user does need the measurer to
+// create the arena in between.
+
+// FIXME: remove above comment
 
 use alloc::rc::Rc;
 use core::fmt::Arguments;
