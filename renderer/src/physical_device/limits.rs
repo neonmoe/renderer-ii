@@ -13,8 +13,6 @@ pub enum PhysicalDeviceLimitBreak {
     UniformBufferRange(u32, u32),
     #[error("physical device only supports storage buffers of size {0}, but {1} are needed")]
     StorageBufferRange(u32, u32),
-    #[error("physical device only supports push constants of size {0}, but {1} are needed")]
-    PushConstantsSize(u32, u32),
     #[error("physical device only supports {0} descriptor sets, but {1} are needed")]
     DescriptorSetLimit(u32, u32),
     #[error("physical device only supports {1} {0:?} descriptors per stage, but {2} are needed")]

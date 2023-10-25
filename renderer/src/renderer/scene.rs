@@ -28,6 +28,7 @@ pub type StaticMeshMap<'a> = HashMap<(&'a Mesh, &'a Material), Vec<Mat4>>;
 /// A container for the materials and meshes to render during a particular
 /// frame, and transforms for each instance.
 pub struct Scene<'a> {
+    // TODO: Associate the scene with a vertex library so that all its meshes can be drawn from a single buffer
     pub world_space: CoordinateSystem,
     pub camera: Camera,
     pub static_meshes: PipelineMap<StaticMeshMap<'a>>,

@@ -14,7 +14,8 @@ pub const TOTAL_DEVICE_EXTENSIONS: usize = REQUIRED_DEVICE_EXTENSIONS.len() + OP
 pub struct SupportedFeatures {
     sampler_anisotropy: bool,
     sample_rate_shading: bool,
-    texture_array_dynamic_indexing: bool,
+    shader_sampled_image_array_dynamic_indexing: bool,
+    multi_draw_indirect: bool,
     partially_bound_descriptors: bool,
     extended_dynamic_state: bool,
     pipeline_creation_cache_control: bool,
@@ -33,7 +34,8 @@ pub fn create_with_features(
     let features = vk::PhysicalDeviceFeatures::default()
         .sampler_anisotropy(true)
         .sample_rate_shading(true)
-        .shader_sampled_image_array_dynamic_indexing(true);
+        .shader_sampled_image_array_dynamic_indexing(true)
+        .multi_draw_indirect(true);
     let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default().descriptor_binding_partially_bound(true);
     let mut extended_dynamic_state_features = vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT::default().extended_dynamic_state(true);
     let mut pipeline_creation_cache_control_features =
@@ -80,7 +82,8 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
     let features = SupportedFeatures {
         sampler_anisotropy: features.features.sampler_anisotropy == vk::TRUE,
         sample_rate_shading: features.features.sample_rate_shading == vk::TRUE,
-        texture_array_dynamic_indexing: features.features.shader_sampled_image_array_dynamic_indexing == vk::TRUE,
+        shader_sampled_image_array_dynamic_indexing: features.features.shader_sampled_image_array_dynamic_indexing == vk::TRUE,
+        multi_draw_indirect: features.features.multi_draw_indirect == vk::TRUE,
         partially_bound_descriptors: descriptor_indexing_features.descriptor_binding_partially_bound == vk::TRUE,
         extended_dynamic_state: extended_dynamic_state_features.extended_dynamic_state == vk::TRUE,
         pipeline_creation_cache_control: pipeline_creation_cache_control_features.pipeline_creation_cache_control == vk::TRUE,
@@ -91,7 +94,8 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
     };
     if features.sampler_anisotropy
         && features.sample_rate_shading
-        && features.texture_array_dynamic_indexing
+        && features.shader_sampled_image_array_dynamic_indexing
+        && features.multi_draw_indirect
         && features.partially_bound_descriptors
         && features.extended_dynamic_state
         && features.pipeline_creation_cache_control

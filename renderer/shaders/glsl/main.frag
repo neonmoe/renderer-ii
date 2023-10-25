@@ -34,18 +34,12 @@ uniform DrawCallParametersSoa {
     uint material_index[MAX_DRAW_CALLS];
 } uf_draw_call_parameters;
 
-// TODO: Remove this once uf_draw_call_parameters is working
-layout(push_constant)
-uniform PushConstantStruct { uint material_index; }
-push_constant;
-
 layout(set = 0, binding = UF_RENDER_SETTINGS_BINDING)
 uniform RenderSettings { uint debug_value; }
 uf_render_settings;
 
 void main() {
-    // TODO: Use uf_draw_call_parameters here
-    uint material_index = push_constant.material_index + in_draw_id /* always 0 for now, just don't optimize it out */;
+    uint material_index = uf_draw_call_parameters.material_index[in_draw_id];
 
     vec4 base_color = texture(sampler2D(base_color[material_index], uf_sampler), in_uv);
     vec4 metallic_roughness_tex = texture(sampler2D(metallic_roughness[material_index], uf_sampler), in_uv);

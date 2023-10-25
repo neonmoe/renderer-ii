@@ -43,6 +43,7 @@ pub struct VertexLibraryBuilder<'a> {
     distinct_binding_sets: DistinctBindingSets,
     binding_offsets: ArrayVec<ArrayVec<BindingOffset, VERTEX_BINDING_COUNT>, PIPELINE_COUNT>,
     vertices_allocated: ArrayVec<usize, PIPELINE_COUNT>,
+    indices_allocated: ArrayVec<usize, PIPELINE_COUNT>,
 }
 
 impl<'a> VertexLibraryBuilder<'a> {
@@ -68,6 +69,7 @@ impl<'a> VertexLibraryBuilder<'a> {
         let index_buffer = staging_arena.create_empty_buffer(index_buffer_info, format_args!("{name} (index buffer)"))?;
 
         let vertices_allocated = distinct_binding_sets.binding_sets.iter().map(|_| 0).collect();
+        let indices_allocated = distinct_binding_sets.binding_sets.iter().map(|_| 0).collect();
         Ok(VertexLibraryBuilder {
             debug_id: name,
             vertex_staging,
@@ -77,6 +79,7 @@ impl<'a> VertexLibraryBuilder<'a> {
             distinct_binding_sets,
             binding_offsets,
             vertices_allocated,
+            indices_allocated,
         })
     }
 
@@ -85,39 +88,44 @@ impl<'a> VertexLibraryBuilder<'a> {
     #[track_caller]
     pub fn add_mesh<I: IndexType + Copy>(&mut self, pipeline: PipelineIndex, vertex_buffers: &[&[u8]], index_buffer: &[I]) -> Mesh {
         let (binding_set_idx, vertex_count) = self.distinct_binding_sets.find_set_and_vertex_count(pipeline, vertex_buffers);
-        let vertex_offset = self.vertices_allocated[binding_set_idx];
+        let vertex_offset = self.vertices_allocated[binding_set_idx] as i32;
+        let first_index = self.indices_allocated[binding_set_idx] as u32;
         self.vertices_allocated[binding_set_idx] += vertex_count;
+        self.indices_allocated[binding_set_idx] += index_buffer.len();
 
-        // Offset indices by vertex_offset and write into the staging index buffer:
-        let index_buffer_offset = VERTEX_LIBRARY_INDEX_SIZE * vertex_offset;
-        let index_buffer_end = VERTEX_LIBRARY_INDEX_SIZE * (vertex_offset + vertex_count);
-        let indices_dst = &mut self.index_staging.data_mut()[index_buffer_offset..index_buffer_end];
-        let indices_dst = bytemuck::cast_slice_mut(indices_dst);
-        copy_and_extend_indices(index_buffer, indices_dst, vertex_offset as u32, vertex_count as u32);
+        let index_buffer_start = VERTEX_LIBRARY_INDEX_SIZE * first_index as usize;
+        let index_buffer_end = index_buffer_start + VERTEX_LIBRARY_INDEX_SIZE * index_buffer.len();
+        let indices_dst: &mut [u8] = &mut self.index_staging.data_mut()[index_buffer_start..index_buffer_end];
+        let indices_dst: &mut [VertexLibraryIndexType] = bytemuck::cast_slice_mut(indices_dst);
+        for (src_index, dst_index) in index_buffer.iter().zip(indices_dst) {
+            let index = src_index.to_u32();
+            debug_assert!(index < vertex_count as u32, "index is {index} but mesh has {vertex_count} vertices");
+            *dst_index = index;
+        }
 
-        // Write the vertices into the staging vertex buffer:
-        let mut vertices_offsets = ArrayVec::new();
-        let vertex_buffer_offsets = self.binding_offsets[binding_set_idx]
+        let mut vertex_buffer_offsets = ArrayVec::new();
+        let vertex_buffer_offset_params = self.binding_offsets[binding_set_idx]
             .iter()
             .filter(|offs| offs.description.input_rate == vk::VertexInputRate::VERTEX);
-        for (src, dst_offset) in vertex_buffers.iter().zip(vertex_buffer_offsets) {
+        for (src, dst_offset) in vertex_buffers.iter().zip(vertex_buffer_offset_params) {
             let stride = dst_offset.description.stride as usize;
-            let offset_into_buffer = dst_offset.offset + vertex_offset * stride;
+            let offset_into_buffer = dst_offset.offset + vertex_offset as usize * stride;
             let fits = offset_into_buffer + src.len() <= dst_offset.offset + dst_offset.size;
             assert!(fits, "given vertex buffer does not fit, check that the measurements are correct");
             let matches_stride = src.len() % stride == 0;
             assert!(matches_stride, "given vertices do not have the correct stride, check pipeline");
             let dst = &mut self.vertex_staging.data_mut()[offset_into_buffer..offset_into_buffer + src.len()];
             dst.copy_from_slice(src);
-            vertices_offsets.push(offset_into_buffer as vk::DeviceSize);
+            vertex_buffer_offsets.push(dst_offset.offset as vk::DeviceSize);
         }
-        let vertex_buffers = vertices_offsets.iter().map(|_| self.vertex_buffer.clone()).collect();
 
         Mesh {
-            vertex_buffers,
-            vertices_offsets,
+            vertex_buffer: self.vertex_buffer.clone(),
+            vertex_buffer_offsets,
+            vertex_offset,
             index_buffer: self.index_buffer.clone(),
-            index_buffer_offset: index_buffer_offset as vk::DeviceSize,
+            index_buffer_offset: 0,
+            first_index,
             index_count: index_buffer.len() as u32,
             index_type: VERTEX_LIBRARY_INDEX_TYPE,
         }
@@ -137,15 +145,6 @@ impl<'a> VertexLibraryBuilder<'a> {
             format_args!("{} (index buffer)", self.debug_id),
         )?;
         Ok(())
-    }
-}
-
-fn copy_and_extend_indices<I: IndexType + Copy>(index_buffer: &[I], indices_dst: &mut [u32], vertex_offset: u32, vertex_count: u32) {
-    for (src_index, dst_index) in index_buffer.iter().zip(indices_dst) {
-        let index = src_index.to_u32();
-        debug_assert!(index < vertex_count, "index is {index} but mesh has {vertex_count} vertices");
-        let index = index + vertex_offset;
-        *dst_index = index;
     }
 }
 

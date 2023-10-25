@@ -53,6 +53,8 @@ pub enum RendererError {
     JointTransformUniformCreation(#[source] VulkanArenaError),
     #[error("failed to create per-frame material uniforms")]
     MaterialsUniformCreation(#[source] DescriptorError),
+    #[error("failed to create draw call parameters uniform")]
+    DrawCallParamsUniformCreation(#[source] VulkanArenaError),
     #[error("failed to submit rendering command buffers to the graphics queue (device lost or out of memory?)")]
     RenderQueueSubmit(#[source] vk::Result),
     #[error("present was successful, but may display oddly; swapchain is out of date")]
@@ -245,6 +247,9 @@ impl Renderer {
             data: DrawCallParametersSoa::zeroed(),
             draw_calls: 0,
         });
+        // TODO: Fill out the draw calls params at firstIndex values for sets of instanced meshes
+        // Basically, the transforms-array should semantically match the draw call params arrays,
+        // except that draw call params are zeroed for non-first-instance indices
 
         // Create and update descriptors (buffer allocations and then desc writes):
 
@@ -275,7 +280,7 @@ impl Renderer {
         for pipeline in ALL_PIPELINES {
             let draw_call_parameters = &[draw_call_params[pipeline].data];
             let buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")
-                .map_err(RendererError::RenderSettingsUniformCreation)?;
+                .map_err(RendererError::DrawCallParamsUniformCreation)?;
             draw_call_params_buffers.push(buffer);
         }
 
@@ -447,17 +452,7 @@ impl Renderer {
             }
             let skinned_meshes = &skinned_meshes[skinned_pl];
             if !skinned_meshes.is_empty() {
-                let pipeline = pipelines.pipelines[skinned_pl].inner;
-                let layout = descriptors.pipeline_layouts[skinned_pl].inner;
-                let descriptor_sets = descriptors.descriptor_sets(skinned_pl);
-                self.record_skinned_pipeline(
-                    command_buffer,
-                    (pipeline, layout),
-                    descriptor_sets,
-                    skinned_meshes,
-                    skinned_pl,
-                    format_args!("skinned model {static_pl:?}"),
-                )?;
+                // TODO: Draw skinned meshes again
             }
         }
 
@@ -574,23 +569,14 @@ impl Renderer {
 
             let texture_index = material.array_index(pl_index).unwrap();
 
-            // TODO: Remove this push constant once the BaseInstance-based draw call params are working
-            let push_constants = [texture_index];
-            let push_constants = bytemuck::bytes_of(&push_constants);
-            unsafe {
-                profiling::scope!("push constants");
-                self.device
-                    .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
-            }
-
-            let mut vertex_buffers = ArrayVec::<vk::Buffer, 8>::new();
-            vertex_buffers.push(transform_buffer.inner);
-            for vertex_buffer in &mesh.vertex_buffers {
-                vertex_buffers.push(vertex_buffer.inner);
-            }
             let mut vertex_offsets = ArrayVec::<vk::DeviceSize, 8>::new();
             vertex_offsets.push(0);
-            vertex_offsets.try_extend_from_slice(&mesh.vertices_offsets).unwrap();
+            vertex_offsets.try_extend_from_slice(&mesh.vertex_buffer_offsets).unwrap();
+            let mut vertex_buffers = ArrayVec::<vk::Buffer, 8>::new();
+            vertex_buffers.push(transform_buffer.inner);
+            for _ in 0..mesh.vertex_buffer_offsets.len() {
+                vertex_buffers.push(mesh.vertex_buffer.inner);
+            }
 
             unsafe {
                 profiling::scope!("draw");
@@ -598,88 +584,14 @@ impl Renderer {
                     .cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
                 self.device
                     .cmd_bind_index_buffer(command_buffer, mesh.index_buffer.inner, mesh.index_buffer_offset, mesh.index_type);
-                self.device
-                    .cmd_draw_indexed(command_buffer, mesh.index_count, transforms.len() as u32, 0, 0, 0);
-            }
-
-            self.temp_arena.add_buffer(transform_buffer);
-        }
-        Ok(())
-    }
-
-    fn record_skinned_pipeline(
-        &mut self,
-        command_buffer: vk::CommandBuffer,
-        (pipeline, layout): (vk::Pipeline, vk::PipelineLayout),
-        descriptor_sets: &[vk::DescriptorSet],
-        meshes: &[SkinnedModel],
-        pl_index: PipelineIndex,
-        pl_name: Arguments,
-    ) -> Result<(), RendererError> {
-        let bind_point = vk::PipelineBindPoint::GRAPHICS;
-        unsafe { self.device.cmd_bind_pipeline(command_buffer, bind_point, pipeline) };
-
-        for model in meshes {
-            unsafe {
-                self.device.cmd_bind_descriptor_sets(
+                self.device.cmd_draw_indexed(
                     command_buffer,
-                    bind_point,
-                    layout,
-                    1,
-                    &descriptor_sets[1..],
-                    &[model.joints_offset.0],
+                    mesh.index_count,
+                    transforms.len() as u32,
+                    mesh.first_index,
+                    mesh.vertex_offset,
+                    0,
                 );
-            }
-            let transform_buffer = {
-                profiling::scope!("create transform buffer for skinned model");
-                let transforms = &[model.transform];
-                let transforms_bytes = bytemuck::cast_slice(transforms);
-                let buffer_create_info = vk::BufferCreateInfo::default()
-                    .size(transforms_bytes.len() as vk::DeviceSize)
-                    .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                self.temp_arena
-                    .create_buffer(
-                        buffer_create_info,
-                        transforms_bytes,
-                        None,
-                        None,
-                        format_args!("transform buffer for skinned model ({pl_name})"),
-                    )
-                    .map_err(RendererError::TransformBufferCreation)?
-            };
-
-            for (mesh, material) in &model.meshes {
-                profiling::scope!("skinned mesh");
-
-                let texture_index = material.array_index(pl_index).unwrap();
-
-                // TODO: Remove this push constant once the BaseInstance-based draw call params are working
-                let push_constants = [texture_index];
-                let push_constants = bytemuck::bytes_of(&push_constants);
-                unsafe {
-                    profiling::scope!("push constants");
-                    self.device
-                        .cmd_push_constants(command_buffer, layout, vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
-                }
-
-                let mut vertex_buffers = ArrayVec::<vk::Buffer, 8>::new();
-                vertex_buffers.push(transform_buffer.inner);
-                for vertex_buffer in &mesh.vertex_buffers {
-                    vertex_buffers.push(vertex_buffer.inner);
-                }
-                let mut vertex_offsets = ArrayVec::<vk::DeviceSize, 8>::new();
-                vertex_offsets.push(0);
-                vertex_offsets.try_extend_from_slice(&mesh.vertices_offsets).unwrap();
-
-                unsafe {
-                    profiling::scope!("draw");
-                    self.device
-                        .cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
-                    self.device
-                        .cmd_bind_index_buffer(command_buffer, mesh.index_buffer.inner, mesh.index_buffer_offset, mesh.index_type);
-                    self.device.cmd_draw_indexed(command_buffer, mesh.index_count, 1, 0, 0, 0);
-                }
             }
 
             self.temp_arena.add_buffer(transform_buffer);
