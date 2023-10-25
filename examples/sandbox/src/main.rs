@@ -276,14 +276,15 @@ fn main_() -> anyhow::Result<()> {
                 }
 
                 Event::Window {
-                    win_event: WindowEvent::SizeChanged(width, height),
+                    win_event: WindowEvent::SizeChanged(_, _),
                     ..
                 } => {
                     state.mouse_look = false;
                     sdl_context.mouse().set_relative_mouse_mode(false);
                     sdl_context.mouse().show_cursor(true);
-                    state.width = width as u32;
-                    state.height = height as u32;
+                    let (width, height) = window.vulkan_drawable_size();
+                    state.width = width;
+                    state.height = height;
                     state.queued_resize = Some(Instant::now());
                 }
 

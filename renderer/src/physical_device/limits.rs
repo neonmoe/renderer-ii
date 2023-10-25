@@ -4,6 +4,9 @@ use ash::vk;
 
 use crate::renderer::pipeline_parameters::{PipelineParameters, PIPELINE_PARAMETERS};
 
+// TODO: Add a limit check for PhysicalDeviceLimits maxDrawIndirectCount, as some only support 0 or 1.
+// Everything else supports >1 billion draws, so might as well set some ridiculous "minimum".
+
 #[derive(Debug, thiserror::Error)]
 pub enum PhysicalDeviceLimitBreak {
     #[error("physical device only supports uniform buffers of size {0}, but {1} are needed")]

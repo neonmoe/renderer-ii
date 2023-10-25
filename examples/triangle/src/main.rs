@@ -139,7 +139,7 @@ fn main() {
             match event {
                 Event::Quit { .. } => break 'main,
                 Event::Window {
-                    win_event: WindowEvent::Resized(_, _),
+                    win_event: WindowEvent::SizeChanged(_, _),
                     ..
                 } => {
                     let (w, h) = window.vulkan_drawable_size();
