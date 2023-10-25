@@ -91,19 +91,15 @@ fn main() {
         let uvs = [Vec2::new(0.0, 1.0), Vec2::new(1.0, 1.0), Vec2::new(0.5, 0.0)];
         let uvs: &[u8] = cast_slice(&uvs);
         let norms: &[u8] = cast_slice(&[Vec3::X, Vec3::Y, Vec3::Z]);
-        let tgts: &[u8] = cast_slice(&[Vec4::Y, Vec4::Z, Vec4::X]);
-        let idxs: &[u8] = cast_slice(&[0u16, 1, 2]);
+        let tangents: &[u8] = cast_slice(&[Vec4::Y, Vec4::Z, Vec4::X]);
+        let indices: &[u16] = &[0u16, 1, 2];
+        let vertex_buffers: &[&[u8]; 4] = &[positions, uvs, norms, tangents];
 
         let mut measurer = renderer::VertexLibraryMeasurer::default();
-        measurer.add_mesh(
-            renderer::PipelineIndex::PbrOpaque,
-            &[positions.len(), uvs.len(), norms.len(), tgts.len()],
-            3,
-        );
-        let debug_id = format_args!("triangle mesh");
-        let mut library = renderer::VertexLibraryBuilder::new(&mut staging_arena, measurer, debug_id).unwrap();
-        let mesh = library.add_mesh::<u16>(renderer::PipelineIndex::PbrOpaque, &[positions, uvs, norms, tgts], idxs);
-        library.upload(&mut buffer_arena, &mut uploader, debug_id).unwrap();
+        measurer.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
+        let mut library = renderer::VertexLibraryBuilder::new(&mut staging_arena, measurer, format_args!("triangle mesh")).unwrap();
+        let mesh = library.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
+        library.upload(&mut buffer_arena, &mut uploader).unwrap();
         mesh
     };
 

@@ -1,28 +1,6 @@
-// TODO: Now that this kinda works, make it ergonomic
-
-// Current workflow:
-// - Find out what primitives your model consists of, record them in VertexLibraryMeasurer
-// - Create an appropriately sized arena based on that
-// - Create the VertexLibraryBuilder from the arena and the measurer
-// - Go through the primitives again, this time writing the actual data
-// - Upload the VertexLibraryBuilder
-
-// One easy solution: keep a Vec of the parameters of add_mesh calls. The Vec could then be
-// "replayed" to do the last half of the steps in one function.
-
-// Harder, possibly less performant, but no allocation: get a `|add_buffer: Fn| {}` closure from the
-// user, run it once to measure, another time to allocate. Kinda thinking the whole no-alloc thing
-// might've gone too far at this point.
-
-// In both cases, it should be doable to hide the difference between the measurer and the actual
-// writer, at least if this module creates the arenas. Otherwise the user does need the measurer to
-// create the arena in between.
-
-// FIXME: remove above comment
-
 use alloc::rc::Rc;
 use core::fmt::Arguments;
-use std::mem;
+use core::mem;
 
 use arrayvec::ArrayVec;
 use ash::vk;
@@ -56,7 +34,8 @@ struct MeasurementResults {
     binding_offsets: ArrayVec<ArrayVec<BindingOffset, VERTEX_BINDING_COUNT>, PIPELINE_COUNT>,
 }
 
-pub struct VertexLibraryBuilder {
+pub struct VertexLibraryBuilder<'a> {
+    debug_id: Arguments<'a>,
     vertex_staging: MappedBuffer,
     vertex_buffer: Rc<Buffer>,
     index_staging: MappedBuffer,
@@ -66,12 +45,12 @@ pub struct VertexLibraryBuilder {
     vertices_allocated: ArrayVec<usize, PIPELINE_COUNT>,
 }
 
-impl VertexLibraryBuilder {
+impl<'a> VertexLibraryBuilder<'a> {
     pub fn new(
         staging_arena: &mut VulkanArena<ForBuffers>,
         measurer: VertexLibraryMeasurer,
-        name: Arguments,
-    ) -> Result<VertexLibraryBuilder, VulkanArenaError> {
+        name: Arguments<'a>,
+    ) -> Result<VertexLibraryBuilder<'a>, VulkanArenaError> {
         let MeasurementResults {
             staging_vertex_buffer_info,
             staging_index_buffer_info,
@@ -90,6 +69,7 @@ impl VertexLibraryBuilder {
 
         let vertices_allocated = distinct_binding_sets.binding_sets.iter().map(|_| 0).collect();
         Ok(VertexLibraryBuilder {
+            debug_id: name,
             vertex_staging,
             vertex_buffer: Rc::new(vertex_buffer),
             index_staging,
@@ -100,13 +80,11 @@ impl VertexLibraryBuilder {
         })
     }
 
-    /// Writes the mesh into the staging buffers and returns a `Mesh` that can be rendered *after*
-    /// this vertex library has been uploaded.
+    /// Writes the mesh into the staging buffers and returns a [`Mesh`] that can be rendered after
+    /// the uploader passed to [`VertexLibraryBuilder::upload`] has finished uploading it.
     #[track_caller]
-    pub fn add_mesh<I: IndexType>(&mut self, pipeline: PipelineIndex, vertex_buffers: &[&[u8]], index_buffer: &[u8]) -> Mesh {
-        let (binding_set_idx, vertex_count) = self
-            .distinct_binding_sets
-            .find_set_and_vertex_count(pipeline, vertex_buffers.iter().map(|buffer| buffer.len()));
+    pub fn add_mesh<I: IndexType + Copy>(&mut self, pipeline: PipelineIndex, vertex_buffers: &[&[u8]], index_buffer: &[I]) -> Mesh {
+        let (binding_set_idx, vertex_count) = self.distinct_binding_sets.find_set_and_vertex_count(pipeline, vertex_buffers);
         let vertex_offset = self.vertices_allocated[binding_set_idx];
         self.vertices_allocated[binding_set_idx] += vertex_count;
 
@@ -114,25 +92,8 @@ impl VertexLibraryBuilder {
         let index_buffer_offset = VERTEX_LIBRARY_INDEX_SIZE * vertex_offset;
         let index_buffer_end = VERTEX_LIBRARY_INDEX_SIZE * (vertex_offset + vertex_count);
         let indices_dst = &mut self.index_staging.data_mut()[index_buffer_offset..index_buffer_end];
-        assert_eq!(0, indices_dst.len() % VERTEX_LIBRARY_INDEX_SIZE);
-        let input_index_size = mem::size_of::<I>();
-        assert_eq!(
-            0,
-            index_buffer.len() % input_index_size,
-            "index buffer size {} is not divisible by IndexType size {}?",
-            index_buffer.len(),
-            input_index_size,
-        );
-        // TODO: This feels slow, low hanging optimization fruit?
-        for (src_index, dst_index) in index_buffer
-            .chunks(input_index_size)
-            .zip(indices_dst.chunks_mut(VERTEX_LIBRARY_INDEX_SIZE))
-        {
-            let index = I::bytes_to_u32(src_index);
-            debug_assert!(index < vertex_count as u32, "index is {index} but mesh has {vertex_count} vertices");
-            let index = index + vertex_offset as u32;
-            dst_index.copy_from_slice(&u32::to_le_bytes(index));
-        }
+        let indices_dst = bytemuck::cast_slice_mut(indices_dst);
+        copy_and_extend_indices(index_buffer, indices_dst, vertex_offset as u32, vertex_count as u32);
 
         // Write the vertices into the staging vertex buffer:
         let mut vertices_offsets = ArrayVec::new();
@@ -157,25 +118,34 @@ impl VertexLibraryBuilder {
             vertices_offsets,
             index_buffer: self.index_buffer.clone(),
             index_buffer_offset: index_buffer_offset as vk::DeviceSize,
-            index_count: (index_buffer.len() / input_index_size) as u32,
+            index_count: index_buffer.len() as u32,
             index_type: VERTEX_LIBRARY_INDEX_TYPE,
         }
     }
 
-    pub fn upload(self, arena: &mut VulkanArena<ForBuffers>, uploader: &mut Uploader, name: Arguments) -> Result<(), VulkanArenaError> {
+    pub fn upload(self, arena: &mut VulkanArena<ForBuffers>, uploader: &mut Uploader) -> Result<(), VulkanArenaError> {
         arena.copy_buffer(
             self.vertex_staging.buffer,
             &self.vertex_buffer,
             uploader,
-            format_args!("{name} (vertex buffer)"),
+            format_args!("{} (vertex buffer)", self.debug_id),
         )?;
         arena.copy_buffer(
             self.index_staging.buffer,
             &self.index_buffer,
             uploader,
-            format_args!("{name} (index buffer)"),
+            format_args!("{} (index buffer)", self.debug_id),
         )?;
         Ok(())
+    }
+}
+
+fn copy_and_extend_indices<I: IndexType + Copy>(index_buffer: &[I], indices_dst: &mut [u32], vertex_offset: u32, vertex_count: u32) {
+    for (src_index, dst_index) in index_buffer.iter().zip(indices_dst) {
+        let index = src_index.to_u32();
+        debug_assert!(index < vertex_count, "index is {index} but mesh has {vertex_count} vertices");
+        let index = index + vertex_offset;
+        *dst_index = index;
     }
 }
 
@@ -187,16 +157,11 @@ pub struct VertexLibraryMeasurer {
 }
 
 impl VertexLibraryMeasurer {
-    /// Record the amount of vertices represented by vertex buffer sizes in bytes, and ensure that
-    /// it's well-formed: same amount of vertices in each buffer, using the vertex binding
-    /// descriptions from the given pipeline.
     #[track_caller]
-    pub fn add_mesh(&mut self, pipeline: PipelineIndex, vertex_buffer_sizes: &[usize], index_count: usize) {
-        let (binding_set_idx, vertex_count) = self
-            .distinct_binding_sets
-            .find_set_and_vertex_count(pipeline, vertex_buffer_sizes.iter().copied());
+    pub fn add_mesh<I: IndexType + Copy>(&mut self, pipeline: PipelineIndex, vertex_buffers: &[&[u8]], index_buffers: &[I]) {
+        let (binding_set_idx, vertex_count) = self.distinct_binding_sets.find_set_and_vertex_count(pipeline, vertex_buffers);
         self.vertex_counts_per_binding[binding_set_idx] += vertex_count;
-        self.index_counts_per_binding[binding_set_idx] += index_count;
+        self.index_counts_per_binding[binding_set_idx] += index_buffers.len();
     }
 
     pub fn measure_required_arena(&self, arena_measurer: &mut VulkanArenaMeasurer<ForBuffers>) -> Result<(), VulkanArenaMeasurementError> {
@@ -266,11 +231,7 @@ struct DistinctBindingSets {
 }
 
 impl DistinctBindingSets {
-    fn find_set_and_vertex_count<I: Iterator<Item = usize>>(
-        &self,
-        pipeline: PipelineIndex,
-        mut vertex_buffer_lengths: I,
-    ) -> (usize, usize) {
+    fn find_set_and_vertex_count(&self, pipeline: PipelineIndex, vertex_buffers: &[&[u8]]) -> (usize, usize) {
         let binding_set_idx = self.binding_set_indices[pipeline];
         let descriptions = self.binding_sets[binding_set_idx];
         let mut vertex_count = None;
@@ -279,9 +240,11 @@ impl DistinctBindingSets {
             .filter(|desc| desc.input_rate == vk::VertexInputRate::VERTEX)
             .enumerate()
         {
-            let Some(vertex_buffer_length) = vertex_buffer_lengths.next() else {
-                panic!("provided only {i} vertex buffers, but pipeline {pipeline:?} has a binding at index {i}");
-            };
+            assert!(
+                i < vertex_buffers.len(),
+                "provided only {i} vertex buffers, but pipeline {pipeline:?} has a binding at index {i}"
+            );
+            let vertex_buffer_length = vertex_buffers[i].len();
             let new_vertex_count = vertex_buffer_length / desc.stride as usize;
             vertex_count = Some(vertex_count.unwrap_or(new_vertex_count));
             assert_eq!(
@@ -295,7 +258,7 @@ impl DistinctBindingSets {
         if let Some(vertex_count) = vertex_count {
             (binding_set_idx, vertex_count)
         } else {
-            assert_eq!(None, vertex_buffer_lengths.next(), "pipeline {pipeline:?} takes no input vertices");
+            assert!(vertex_buffers.is_empty(), "pipeline {pipeline:?} takes no input vertices");
             (binding_set_idx, 0)
         }
     }

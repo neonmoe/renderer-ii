@@ -52,8 +52,8 @@ pub trait IndexType {
     const SIZE: usize;
     /// Returns the appropriate [`vk::IndexType`] for the implementing type.
     fn vk_index_type() -> vk::IndexType;
-    /// Converts the implementing type as bytes to a u32.
-    fn bytes_to_u32(bytes: &[u8]) -> u32;
+    /// Converts the implementing type to a u32.
+    fn to_u32(self) -> u32;
 }
 
 impl IndexType for u16 {
@@ -61,12 +61,8 @@ impl IndexType for u16 {
     fn vk_index_type() -> vk::IndexType {
         vk::IndexType::UINT16
     }
-    fn bytes_to_u32(bytes: &[u8]) -> u32 {
-        if let &[a, b] = bytes {
-            u16::from_le_bytes([a, b]) as u32
-        } else {
-            unreachable!();
-        }
+    fn to_u32(self) -> u32 {
+        self as u32
     }
 }
 
@@ -75,11 +71,7 @@ impl IndexType for u32 {
     fn vk_index_type() -> vk::IndexType {
         vk::IndexType::UINT32
     }
-    fn bytes_to_u32(bytes: &[u8]) -> u32 {
-        if let &[a, b, c, d] = bytes {
-            u32::from_le_bytes([a, b, c, d])
-        } else {
-            unreachable!();
-        }
+    fn to_u32(self) -> u32 {
+        self
     }
 }

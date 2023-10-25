@@ -9,6 +9,8 @@
 // Unwraps are just less code and they still allow locating the line where it crashed.
 
 #![warn(clippy::pedantic)]
+#![warn(clippy::std_instead_of_alloc)]
+#![warn(clippy::std_instead_of_core)]
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,

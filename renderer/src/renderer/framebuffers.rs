@@ -1,5 +1,5 @@
 use alloc::rc::Rc;
-use std::fmt::Arguments;
+use core::fmt::Arguments;
 
 use arrayvec::ArrayVec;
 use ash::{vk, Instance};
