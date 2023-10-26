@@ -1,28 +1,13 @@
 use alloc::rc::Rc;
 
-use arrayvec::ArrayVec;
 use ash::vk;
 
-use crate::vulkan_raii::Buffer;
+use crate::vertex_library::VertexLibrary;
 
-const VERTEX_BUFFERS: usize = 6;
-
-// TODO: Differentiate meshes by vertex attribute binding layout?
-
-// Previously they were differentiated by pipelines, but then they were
-// generalized and pipelines were moved to the material. But really, the
-// pipeline choice is a combination of both: vertex bindings change for meshes,
-// uniforms change for both. So maybe meshes should have some identifier that
-// can be compared against a PipelineIndex to see if it's compatible, when
-// trying to render with a specific material?
-
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct Mesh {
-    pub(crate) vertex_buffer: Rc<Buffer>,
-    pub(crate) vertex_buffer_offsets: ArrayVec<vk::DeviceSize, VERTEX_BUFFERS>,
+    pub(crate) library: Rc<VertexLibrary>,
     pub(crate) vertex_offset: i32,
-    pub(crate) index_buffer: Rc<Buffer>,
-    pub(crate) index_buffer_offset: vk::DeviceSize,
     pub(crate) first_index: u32,
     pub(crate) index_count: u32,
     pub(crate) index_type: vk::IndexType,

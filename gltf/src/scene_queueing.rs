@@ -55,9 +55,7 @@ impl Gltf {
             } else {
                 profiling::scope!("non-skinned mesh");
                 let animated_transform = animated_node_transforms[mesh.node_index].unwrap_or(Mat4::IDENTITY);
-                let mesh_map = &mut scene.static_meshes[mesh.material.pipeline(false)];
-                let mesh_vec = mesh_map.entry((mesh.mesh, mesh.material)).or_insert_with(Vec::new);
-                mesh_vec.push(transform * animated_transform);
+                scene.queue_mesh(mesh.mesh, mesh.material, transform * animated_transform);
             }
         }
         for skinned_model in skinned_models {

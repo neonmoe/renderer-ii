@@ -3,7 +3,7 @@
 
 pub const MAX_TEXTURE_COUNT: u32 = 25;
 pub const MAX_BONE_COUNT: u32 = 128;
-pub const MAX_DRAW_CALLS: u32 = 1024;
+pub const MAX_DRAWS: u32 = 65536 / 4; // TODO: Switch to SSBO to increase this limit?
 
 pub const IN_TRANSFORM_LOCATION: u32 = 0;
 pub const IN_POSITION_LOCATION: u32 = 4;

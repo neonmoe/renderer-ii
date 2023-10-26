@@ -1,14 +1,16 @@
 use alloc::rc::Rc;
-use core::fmt::Arguments;
+use core::mem;
 
 use arrayvec::ArrayVec;
 use ash::{vk, Instance};
-use bytemuck::Zeroable;
+use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
+use hashbrown::HashMap;
 
 use crate::arena::buffers::ForBuffers;
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
+use crate::vertex_library::{VertexLibrary, VERTEX_LIBRARY_INDEX_TYPE};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 
 pub(crate) mod descriptors;
@@ -22,9 +24,9 @@ use descriptors::{DescriptorError, Descriptors};
 use framebuffers::Framebuffers;
 use pipeline_parameters::constants::MAX_BONE_COUNT;
 use pipeline_parameters::render_passes::{Attachment, RenderPass};
-use pipeline_parameters::{DrawCallParametersSoa, PipelineIndex, PipelineMap, RenderSettings, ALL_PIPELINES, PIPELINE_COUNT};
+use pipeline_parameters::{DrawCallParametersSoa, PipelineIndex, PipelineMap, RenderSettings};
 use pipelines::Pipelines;
-use scene::{Scene, SkinnedModel, StaticMeshMap};
+use scene::Scene;
 use swapchain::Swapchain;
 
 #[derive(thiserror::Error, Debug)]
@@ -69,6 +71,8 @@ pub enum RendererError {
     CommandBufferBegin(#[source] vk::Result),
     #[error("failed to create transform buffer")]
     TransformBufferCreation(#[source] VulkanArenaError),
+    #[error("failed to create indirect draw command buffer")]
+    IndirectCmdBufferCreation(#[source] VulkanArenaError),
     #[error("failed to end rendering command buffer")]
     CommandBufferEnd(#[source] vk::Result),
 }
@@ -86,26 +90,14 @@ impl FrameIndex {
 
 struct DrawCallParameters {
     data: DrawCallParametersSoa,
-    draw_calls: usize,
+    instance_count: vk::DeviceSize,
 }
 
-impl DrawCallParameters {
-    /// Returns the value to put in the draw's `firstInstance` which will result
-    /// in the given parameters in the shader, or None if the buffer is full.
-    pub fn draw_call_params_id(&mut self, material_index: u32) -> Option<u32> {
-        if let Some(i) = self.data.material_index.iter().position(|idx| material_index == *idx) {
-            Some(i as u32)
-        } else if self.draw_calls < self.data.material_index.len() {
-            let i = self.draw_calls;
-            self.data.material_index[i] = material_index;
-            self.draw_calls += 1;
-            Some(i as u32)
-        } else {
-            debug_assert!(false, "draw call parameter buffer was filled");
-            None
-        }
-    }
-}
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct PodIndirectCommands(vk::DrawIndexedIndirectCommand);
+unsafe impl Zeroable for PodIndirectCommands {}
+unsafe impl Pod for PodIndirectCommands {}
 
 pub struct Renderer {
     device: Device,
@@ -113,6 +105,7 @@ pub struct Renderer {
     ready_for_present: Semaphore,
     frame_end_fence: Fence,
     temp_arena: VulkanArena<ForBuffers>,
+    draw_call_parameters: DrawCallParameters,
     command_pool: Rc<CommandPool>,
     command_buffer: Option<CommandBuffer>,
 }
@@ -175,12 +168,18 @@ impl Renderer {
             device: device.clone(),
         };
 
+        let draw_call_parameters = DrawCallParameters {
+            data: DrawCallParametersSoa::zeroed(),
+            instance_count: 0,
+        };
+
         Ok(Renderer {
             device: device.clone(),
             frame_start_fence,
             ready_for_present,
             frame_end_fence,
             temp_arena,
+            draw_call_parameters,
             command_pool,
             command_buffer: None,
         })
@@ -224,7 +223,7 @@ impl Renderer {
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
         framebuffers: &Framebuffers,
-        scene: Scene,
+        mut scene: Scene,
         debug_value: u32,
     ) -> Result<(), RendererError> {
         fn create_uniform_buffer<T: bytemuck::Pod>(
@@ -243,13 +242,50 @@ impl Renderer {
         // Prepare the data (CPU-side work):
 
         let vk::Extent2D { width, height } = framebuffers.extent;
-        let mut draw_call_params = PipelineMap::from_infallible(|_| DrawCallParameters {
-            data: DrawCallParametersSoa::zeroed(),
-            draw_calls: 0,
-        });
-        // TODO: Fill out the draw calls params at firstIndex values for sets of instanced meshes
-        // Basically, the transforms-array should semantically match the draw call params arrays,
-        // except that draw call params are zeroed for non-first-instance indices
+        self.draw_call_parameters.instance_count = 0;
+        let mut transforms = Vec::new();
+        let mut draws: PipelineMap<HashMap<&VertexLibrary, Vec<PodIndirectCommands>>> = PipelineMap::from_infallible(|_| HashMap::new());
+        scene.static_draws.sort();
+        let mut prev_tag = None;
+        for static_draw in scene.static_draws {
+            let pipeline = static_draw.tag.pipeline;
+            let index_count = static_draw.tag.mesh.index_count;
+            let first_index = static_draw.tag.mesh.first_index;
+            let vertex_offset = static_draw.tag.mesh.vertex_offset;
+            let material_index = static_draw.tag.material.array_index(pipeline).unwrap();
+
+            let indirect_draw_set = draws[pipeline].entry(static_draw.tag.vertex_library).or_default();
+
+            let first_instance = transforms.len() as u32;
+            transforms.push(static_draw.transform);
+            self.draw_call_parameters.instance_count += 1;
+
+            if Some(static_draw.tag) == prev_tag {
+                indirect_draw_set.last_mut().unwrap().0.instance_count += 1;
+            } else {
+                indirect_draw_set.push(PodIndirectCommands(vk::DrawIndexedIndirectCommand {
+                    index_count,
+                    instance_count: 1,
+                    first_index,
+                    vertex_offset,
+                    first_instance,
+                }));
+                self.draw_call_parameters.data.material_index[first_instance as usize] = material_index;
+                prev_tag = Some(static_draw.tag);
+            }
+        }
+
+        let transforms_buffer = {
+            profiling::scope!("create transform buffer");
+            let transforms_bytes = bytemuck::cast_slice::<Mat4, u8>(&transforms);
+            let buffer_create_info = vk::BufferCreateInfo::default()
+                .size(transforms_bytes.len() as vk::DeviceSize)
+                .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE);
+            self.temp_arena
+                .create_buffer(buffer_create_info, transforms_bytes, None, None, format_args!("transforms"))
+                .map_err(RendererError::TransformBufferCreation)?
+        };
 
         // Create and update descriptors (buffer allocations and then desc writes):
 
@@ -276,20 +312,21 @@ impl Renderer {
             .create_materials_temp_uniform(&mut self.temp_arena)
             .map_err(RendererError::MaterialsUniformCreation)?;
 
-        let mut draw_call_params_buffers = ArrayVec::<Buffer, PIPELINE_COUNT>::new();
-        for pipeline in ALL_PIPELINES {
-            let draw_call_parameters = &[draw_call_params[pipeline].data];
-            let buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")
-                .map_err(RendererError::DrawCallParamsUniformCreation)?;
-            draw_call_params_buffers.push(buffer);
-        }
+        let draw_call_parameters = &[self.draw_call_parameters.data];
+        let draw_call_params_buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")
+            .map_err(RendererError::DrawCallParamsUniformCreation)?;
+        let mut draw_call_params_update_ranges = [(0, 0); 1];
+        draw_call_params_update_ranges[0] = (
+            DrawCallParametersSoa::MATERIAL_INDEX_OFFSET,
+            self.draw_call_parameters.instance_count * DrawCallParametersSoa::MATERIAL_INDEX_ELEMENT_SIZE,
+        );
 
         descriptors.write_descriptors(
             &global_transforms_buffer,
             &render_settings_buffer,
             &skinned_mesh_joints_buffer,
             &materials_temp_uniform,
-            &PipelineMap::from_infallible(|pipeline| &draw_call_params_buffers[pipeline as usize]),
+            (&draw_call_params_buffer, &draw_call_params_update_ranges),
             &framebuffers.hdr_image,
         );
 
@@ -297,20 +334,12 @@ impl Renderer {
         self.temp_arena.add_buffer(render_settings_buffer);
         self.temp_arena.add_buffer(skinned_mesh_joints_buffer);
         self.temp_arena.add_buffer(materials_temp_uniform.buffer);
-        for draw_call_params in draw_call_params_buffers {
-            self.temp_arena.add_buffer(draw_call_params);
-        }
+        self.temp_arena.add_buffer(draw_call_params_buffer);
 
         // Draw (record the actual draw calls):
 
-        let command_buffer = self.record_command_buffer(
-            frame_index,
-            descriptors,
-            pipelines,
-            framebuffers,
-            &scene.static_meshes,
-            &scene.skinned_meshes,
-        )?;
+        let command_buffer = self.record_command_buffer(frame_index, descriptors, pipelines, framebuffers, &draws, &transforms_buffer)?;
+        self.temp_arena.add_buffer(transforms_buffer);
 
         let signal_semaphores = [
             vk::SemaphoreSubmitInfo::default()
@@ -358,8 +387,8 @@ impl Renderer {
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
         framebuffers: &Framebuffers,
-        static_meshes: &PipelineMap<StaticMeshMap>,
-        skinned_meshes: &PipelineMap<Vec<SkinnedModel>>,
+        draws: &PipelineMap<HashMap<&VertexLibrary, Vec<PodIndirectCommands>>>,
+        transforms_buffer: &Buffer,
     ) -> Result<vk::CommandBuffer, RendererError> {
         let command_pool = self.command_pool.inner;
         unsafe {
@@ -379,7 +408,6 @@ impl Renderer {
                 .command_buffer_count(1);
             let command_buffers = unsafe { self.device.allocate_command_buffers(&command_buffer_allocate_info) }
                 .map_err(RendererError::CommandBufferAllocation)?;
-            crate::name_vulkan_object(&self.device, command_buffers[0], format_args!("frame rendering cmds"));
             self.command_buffer = Some(CommandBuffer {
                 inner: command_buffers[0],
                 device: self.device.clone(),
@@ -395,6 +423,7 @@ impl Renderer {
                 .begin_command_buffer(command_buffer, &begin_info)
                 .map_err(RendererError::CommandBufferBegin)?;
         }
+        crate::name_vulkan_object(&self.device, command_buffer, format_args!("one frame's rendering cmds"));
 
         // Prepare geometry render pass:
 
@@ -429,31 +458,69 @@ impl Renderer {
             );
         }
 
-        for (static_pl, skinned_pl) in [
+        for (static_pl, _skinned_pl) in [
             (PipelineIndex::PbrOpaque, PipelineIndex::PbrSkinnedOpaque),
             (PipelineIndex::PbrAlphaToCoverage, PipelineIndex::PbrSkinnedAlphaToCoverage),
             (PipelineIndex::PbrBlended, PipelineIndex::PbrSkinnedBlended),
         ] {
             profiling::scope!("pipeline");
-            let static_meshes = &static_meshes[static_pl];
-            if !static_meshes.is_empty() {
-                let pipeline = pipelines.pipelines[static_pl].inner;
-                let layout = descriptors.pipeline_layouts[static_pl].inner;
-                let descriptor_sets = descriptors.descriptor_sets(static_pl);
-                // TODO: Instead of "recording" the calls here, "play them back" (execute the indirect calls in one command for this pipeline)
-                self.record_static_pipeline(
-                    command_buffer,
-                    (pipeline, layout),
-                    descriptor_sets,
-                    static_meshes,
-                    static_pl,
-                    format_args!("instanced statics {static_pl:?}"),
-                )?;
+            let pipeline = pipelines.pipelines[static_pl].inner;
+            let layout = descriptors.pipeline_layouts[static_pl].inner;
+            let descriptor_sets = descriptors.descriptor_sets(static_pl);
+            let bind_point = vk::PipelineBindPoint::GRAPHICS;
+            unsafe { self.device.cmd_bind_pipeline(command_buffer, bind_point, pipeline) };
+            unsafe {
+                self.device
+                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[]);
             }
-            let skinned_meshes = &skinned_meshes[skinned_pl];
-            if !skinned_meshes.is_empty() {
-                // TODO: Draw skinned meshes again
+            for (vertex_library, draws) in &draws[static_pl] {
+                let mut vertex_offsets = ArrayVec::<vk::DeviceSize, 8>::new();
+                vertex_offsets.push(0);
+                vertex_offsets
+                    .try_extend_from_slice(&vertex_library.vertex_buffer_offsets[static_pl])
+                    .unwrap();
+                let mut vertex_buffers = ArrayVec::<vk::Buffer, 8>::new();
+                vertex_buffers.push(transforms_buffer.inner);
+                for _ in 1..vertex_offsets.len() {
+                    vertex_buffers.push(vertex_library.vertex_buffer.inner);
+                }
+
+                unsafe {
+                    self.device
+                        .cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
+                    self.device
+                        .cmd_bind_index_buffer(command_buffer, vertex_library.index_buffer.inner, 0, VERTEX_LIBRARY_INDEX_TYPE);
+                }
+
+                let indirect_draws_buffer = {
+                    profiling::scope!("create indirect draws buffer");
+                    let transforms_bytes = bytemuck::cast_slice(draws);
+                    let buffer_create_info = vk::BufferCreateInfo::default()
+                        .size(transforms_bytes.len() as vk::DeviceSize)
+                        .usage(vk::BufferUsageFlags::INDIRECT_BUFFER)
+                        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+                    self.temp_arena
+                        .create_buffer(
+                            buffer_create_info,
+                            transforms_bytes,
+                            None,
+                            None,
+                            format_args!("indirect draw command buffer ({static_pl:?})"),
+                        )
+                        .map_err(RendererError::IndirectCmdBufferCreation)?
+                };
+                unsafe {
+                    self.device.cmd_draw_indexed_indirect(
+                        command_buffer,
+                        indirect_draws_buffer.inner,
+                        0,
+                        draws.len() as u32,
+                        mem::size_of::<PodIndirectCommands>() as u32,
+                    );
+                }
+                self.temp_arena.add_buffer(indirect_draws_buffer);
             }
+            // TODO: Draw skinned meshes again
         }
 
         unsafe {
@@ -527,75 +594,5 @@ impl Renderer {
         }
 
         Ok(command_buffer)
-    }
-
-    fn record_static_pipeline(
-        &mut self,
-        command_buffer: vk::CommandBuffer,
-        (pipeline, layout): (vk::Pipeline, vk::PipelineLayout),
-        descriptor_sets: &[vk::DescriptorSet],
-        meshes: &StaticMeshMap,
-        pl_index: PipelineIndex,
-        pl_name: Arguments,
-    ) -> Result<(), RendererError> {
-        // TODO: Make this return a vector of indirect draw call structs or something
-
-        let bind_point = vk::PipelineBindPoint::GRAPHICS;
-        unsafe { self.device.cmd_bind_pipeline(command_buffer, bind_point, pipeline) };
-        unsafe {
-            self.device
-                .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[]);
-        }
-
-        for (i, (&(mesh, material), transforms)) in meshes.iter().enumerate() {
-            profiling::scope!("static instanced meshes");
-            let transform_buffer = {
-                profiling::scope!("create transform buffer");
-                let transforms_bytes = bytemuck::cast_slice(transforms);
-                let buffer_create_info = vk::BufferCreateInfo::default()
-                    .size(transforms_bytes.len() as vk::DeviceSize)
-                    .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                self.temp_arena
-                    .create_buffer(
-                        buffer_create_info,
-                        transforms_bytes,
-                        None,
-                        None,
-                        format_args!("{}. transform buffer ({pl_name})", i + 1),
-                    )
-                    .map_err(RendererError::TransformBufferCreation)?
-            };
-
-            let texture_index = material.array_index(pl_index).unwrap();
-
-            let mut vertex_offsets = ArrayVec::<vk::DeviceSize, 8>::new();
-            vertex_offsets.push(0);
-            vertex_offsets.try_extend_from_slice(&mesh.vertex_buffer_offsets).unwrap();
-            let mut vertex_buffers = ArrayVec::<vk::Buffer, 8>::new();
-            vertex_buffers.push(transform_buffer.inner);
-            for _ in 0..mesh.vertex_buffer_offsets.len() {
-                vertex_buffers.push(mesh.vertex_buffer.inner);
-            }
-
-            unsafe {
-                profiling::scope!("draw");
-                self.device
-                    .cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
-                self.device
-                    .cmd_bind_index_buffer(command_buffer, mesh.index_buffer.inner, mesh.index_buffer_offset, mesh.index_type);
-                self.device.cmd_draw_indexed(
-                    command_buffer,
-                    mesh.index_count,
-                    transforms.len() as u32,
-                    mesh.first_index,
-                    mesh.vertex_offset,
-                    0,
-                );
-            }
-
-            self.temp_arena.add_buffer(transform_buffer);
-        }
-        Ok(())
     }
 }

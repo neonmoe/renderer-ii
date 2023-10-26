@@ -16,6 +16,7 @@ pub struct SupportedFeatures {
     sample_rate_shading: bool,
     shader_sampled_image_array_dynamic_indexing: bool,
     multi_draw_indirect: bool,
+    draw_indirect_first_instance: bool,
     partially_bound_descriptors: bool,
     extended_dynamic_state: bool,
     pipeline_creation_cache_control: bool,
@@ -35,7 +36,8 @@ pub fn create_with_features(
         .sampler_anisotropy(true)
         .sample_rate_shading(true)
         .shader_sampled_image_array_dynamic_indexing(true)
-        .multi_draw_indirect(true);
+        .multi_draw_indirect(true)
+        .draw_indirect_first_instance(true);
     let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default().descriptor_binding_partially_bound(true);
     let mut extended_dynamic_state_features = vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT::default().extended_dynamic_state(true);
     let mut pipeline_creation_cache_control_features =
@@ -84,6 +86,7 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
         sample_rate_shading: features.features.sample_rate_shading == vk::TRUE,
         shader_sampled_image_array_dynamic_indexing: features.features.shader_sampled_image_array_dynamic_indexing == vk::TRUE,
         multi_draw_indirect: features.features.multi_draw_indirect == vk::TRUE,
+        draw_indirect_first_instance: features.features.draw_indirect_first_instance == vk::TRUE,
         partially_bound_descriptors: descriptor_indexing_features.descriptor_binding_partially_bound == vk::TRUE,
         extended_dynamic_state: extended_dynamic_state_features.extended_dynamic_state == vk::TRUE,
         pipeline_creation_cache_control: pipeline_creation_cache_control_features.pipeline_creation_cache_control == vk::TRUE,
@@ -96,6 +99,7 @@ pub fn has_required_features(instance: &Instance, physical_device: vk::PhysicalD
         && features.sample_rate_shading
         && features.shader_sampled_image_array_dynamic_indexing
         && features.multi_draw_indirect
+        && features.draw_indirect_first_instance
         && features.partially_bound_descriptors
         && features.extended_dynamic_state
         && features.pipeline_creation_cache_control

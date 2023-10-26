@@ -10,7 +10,7 @@ pub(crate) mod render_passes;
 use constants::*;
 use render_passes::RenderPass;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PipelineIndex {
     /// Opaque geometry pass.
     PbrOpaque,
@@ -65,10 +65,18 @@ pub struct RenderSettings {
 /// This is the most "dynamic" data accessible in the shader which is still
 /// dynamically uniform. Stored in a structure-of-arrays layout, indexed via the
 /// `gl_BaseInstanceARB` variable which can be included in indirect draws.
+///
+/// When rendering many instances, all instances of a specific draw will refer to the same base
+/// instance, so the rest is left zeroed.
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct DrawCallParametersSoa {
-    pub material_index: [u32; MAX_DRAW_CALLS as usize],
+    pub material_index: [u32; MAX_DRAWS as usize],
+}
+
+impl DrawCallParametersSoa {
+    pub const MATERIAL_INDEX_OFFSET: vk::DeviceSize = 0;
+    pub const MATERIAL_INDEX_ELEMENT_SIZE: vk::DeviceSize = mem::size_of::<u32>() as vk::DeviceSize;
 }
 
 /// Rust-side representation of the std430-layout `PbrFactorsSoa` struct in

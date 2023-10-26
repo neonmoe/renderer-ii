@@ -141,7 +141,7 @@ pub use renderer::pipelines::{PipelineCreationError, Pipelines};
 pub use renderer::scene::camera::Camera;
 pub use renderer::scene::coordinate_system::CoordinateSystem;
 pub use renderer::scene::mesh::Mesh;
-pub use renderer::scene::{JointOffset, Scene, SkinnedModel, StaticMeshMap};
+pub use renderer::scene::{JointOffset, Scene, SkinnedModel, StaticDraws};
 pub use renderer::swapchain::{Swapchain, SwapchainBase, SwapchainError, SwapchainSettings};
 pub use renderer::{Renderer, RendererError};
 

@@ -17,7 +17,7 @@ fn main() {
     let time = sdl.timer().unwrap();
     let video = sdl.video().unwrap();
     let mut window = video
-        .window("Hello, Triangle!", 640, 480)
+        .window("Hello, Triangles!", 640, 480)
         .vulkan()
         .allow_highdpi()
         .resizable()
@@ -85,7 +85,7 @@ fn main() {
     let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain).unwrap();
     let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device).unwrap();
 
-    let triangle_mesh = {
+    let (triangle_mesh1, triangle_mesh2) = {
         let positions = [Vec3::new(-0.5, 0.5, 0.8), Vec3::new(0.5, 0.5, 0.8), Vec3::new(-0.1, -0.5, 0.8)];
         let positions: &[u8] = cast_slice(&positions);
         let uvs = [Vec2::new(0.0, 1.0), Vec2::new(1.0, 1.0), Vec2::new(0.5, 0.0)];
@@ -97,10 +97,12 @@ fn main() {
 
         let mut measurer = renderer::VertexLibraryMeasurer::default();
         measurer.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
-        let mut library = renderer::VertexLibraryBuilder::new(&mut staging_arena, measurer, format_args!("triangle mesh")).unwrap();
-        let mesh = library.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
-        library.upload(&mut buffer_arena, &mut uploader).unwrap();
-        mesh
+        measurer.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
+        let mut builder = renderer::VertexLibraryBuilder::new(&mut staging_arena, measurer, format_args!("triangle mesh")).unwrap();
+        let mesh1 = builder.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
+        let mesh2 = builder.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
+        builder.upload(&mut buffer_arena, &mut uploader).unwrap();
+        (mesh1, mesh2)
     };
 
     let triangle_material = renderer::Material::new(
@@ -175,7 +177,8 @@ fn main() {
         }
 
         let mut scene = renderer::Scene::new(&physical_device);
-        scene.queue_mesh(&triangle_mesh, &triangle_material, Mat4::from_scale(Vec3::new(1.0, 1.0, 1.0)));
+        scene.queue_mesh(&triangle_mesh1, &triangle_material, Mat4::from_scale(Vec3::new(1.0, 1.0, 1.0)));
+        scene.queue_mesh(&triangle_mesh2, &triangle_material, Mat4::from_scale(Vec3::new(2.0, 0.5, 1.0)));
 
         let frame_index = renderer.wait_frame(&swapchain).unwrap();
         renderer
@@ -192,7 +195,7 @@ fn main() {
         fps_ticks.retain(|t| now - *t <= 1000);
         if now - prev_fps_update >= 1000 {
             prev_fps_update = now;
-            let _ = window.set_title(&format!("Hello, Triangle! (FPS: {})", fps_ticks.len()));
+            let _ = window.set_title(&format!("Hello, Triangles! (FPS: {})", fps_ticks.len()));
         }
     }
     device.wait_idle();

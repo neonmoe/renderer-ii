@@ -1,9 +1,12 @@
 use alloc::rc::Rc;
+use core::cmp::Ordering;
 use core::fmt::Arguments;
+use core::hash::{Hash, Hasher};
 use core::mem;
 
 use arrayvec::ArrayVec;
 use ash::vk;
+use ash::vk::Handle;
 
 use crate::arena::buffers::{ForBuffers, MappedBuffer};
 use crate::arena::{VulkanArena, VulkanArenaError};
@@ -17,7 +20,7 @@ use crate::vulkan_raii::Buffer;
 
 pub type VertexLibraryIndexType = u32;
 
-const VERTEX_LIBRARY_INDEX_TYPE: vk::IndexType = vk::IndexType::UINT32;
+pub const VERTEX_LIBRARY_INDEX_TYPE: vk::IndexType = vk::IndexType::UINT32;
 const VERTEX_LIBRARY_INDEX_SIZE: usize = mem::size_of::<VertexLibraryIndexType>();
 
 struct BindingOffset {
@@ -34,24 +37,59 @@ struct MeasurementResults {
     binding_offsets: ArrayVec<ArrayVec<BindingOffset, VERTEX_BINDING_COUNT>, PIPELINE_COUNT>,
 }
 
-pub struct VertexLibraryBuilder<'a> {
-    debug_id: Arguments<'a>,
+pub struct VertexLibrary {
+    pub vertex_buffer: Buffer,
+    pub index_buffer: Buffer,
+    pub vertex_buffer_offsets: PipelineMap<ArrayVec<vk::DeviceSize, VERTEX_BINDING_COUNT>>,
+}
+
+impl PartialEq for VertexLibrary {
+    fn eq(&self, other: &Self) -> bool {
+        self.vertex_buffer.inner.as_raw() == other.vertex_buffer.inner.as_raw()
+            && self.index_buffer.inner.as_raw() == other.index_buffer.inner.as_raw()
+    }
+}
+
+impl Eq for VertexLibrary {}
+
+impl PartialOrd for VertexLibrary {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for VertexLibrary {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let a = (self.vertex_buffer.inner.as_raw() as u128) | ((self.index_buffer.inner.as_raw() as u128) << 64);
+        let b = (other.vertex_buffer.inner.as_raw() as u128) | ((other.index_buffer.inner.as_raw() as u128) << 64);
+        a.cmp(&b)
+    }
+}
+
+impl Hash for VertexLibrary {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.vertex_buffer.hash(state);
+        self.index_buffer.hash(state);
+    }
+}
+
+pub struct VertexLibraryBuilder<'name> {
+    debug_id: Arguments<'name>,
+    library: Rc<VertexLibrary>,
     vertex_staging: MappedBuffer,
-    vertex_buffer: Rc<Buffer>,
     index_staging: MappedBuffer,
-    index_buffer: Rc<Buffer>,
     distinct_binding_sets: DistinctBindingSets,
     binding_offsets: ArrayVec<ArrayVec<BindingOffset, VERTEX_BINDING_COUNT>, PIPELINE_COUNT>,
     vertices_allocated: ArrayVec<usize, PIPELINE_COUNT>,
     indices_allocated: ArrayVec<usize, PIPELINE_COUNT>,
 }
 
-impl<'a> VertexLibraryBuilder<'a> {
-    pub fn new(
+impl VertexLibraryBuilder<'_> {
+    pub fn new<'name>(
         staging_arena: &mut VulkanArena<ForBuffers>,
         measurer: VertexLibraryMeasurer,
-        name: Arguments<'a>,
-    ) -> Result<VertexLibraryBuilder<'a>, VulkanArenaError> {
+        name: Arguments<'name>,
+    ) -> Result<VertexLibraryBuilder<'name>, VulkanArenaError> {
         let MeasurementResults {
             staging_vertex_buffer_info,
             staging_index_buffer_info,
@@ -68,19 +106,33 @@ impl<'a> VertexLibraryBuilder<'a> {
         let vertex_buffer = staging_arena.create_empty_buffer(vertex_buffer_info, format_args!("{name} (vertex buffer)"))?;
         let index_buffer = staging_arena.create_empty_buffer(index_buffer_info, format_args!("{name} (index buffer)"))?;
 
+        let vertex_buffer_offsets = PipelineMap::from_infallible(|pipeline| {
+            let binding_set_idx = distinct_binding_sets.binding_set_indices[pipeline];
+            binding_offsets[binding_set_idx]
+                .iter()
+                .filter(|offset| offset.description.input_rate == vk::VertexInputRate::VERTEX)
+                .map(|offset| offset.offset as vk::DeviceSize)
+                .collect::<ArrayVec<vk::DeviceSize, VERTEX_BINDING_COUNT>>()
+        });
+
+        let library = Rc::new(VertexLibrary {
+            vertex_buffer,
+            index_buffer,
+            vertex_buffer_offsets,
+        });
         let vertices_allocated = distinct_binding_sets.binding_sets.iter().map(|_| 0).collect();
         let indices_allocated = distinct_binding_sets.binding_sets.iter().map(|_| 0).collect();
-        Ok(VertexLibraryBuilder {
+        let builder = VertexLibraryBuilder {
             debug_id: name,
+            library,
             vertex_staging,
-            vertex_buffer: Rc::new(vertex_buffer),
             index_staging,
-            index_buffer: Rc::new(index_buffer),
             distinct_binding_sets,
             binding_offsets,
             vertices_allocated,
             indices_allocated,
-        })
+        };
+        Ok(builder)
     }
 
     /// Writes the mesh into the staging buffers and returns a [`Mesh`] that can be rendered after
@@ -103,7 +155,6 @@ impl<'a> VertexLibraryBuilder<'a> {
             *dst_index = index;
         }
 
-        let mut vertex_buffer_offsets = ArrayVec::new();
         let vertex_buffer_offset_params = self.binding_offsets[binding_set_idx]
             .iter()
             .filter(|offs| offs.description.input_rate == vk::VertexInputRate::VERTEX);
@@ -116,15 +167,11 @@ impl<'a> VertexLibraryBuilder<'a> {
             assert!(matches_stride, "given vertices do not have the correct stride, check pipeline");
             let dst = &mut self.vertex_staging.data_mut()[offset_into_buffer..offset_into_buffer + src.len()];
             dst.copy_from_slice(src);
-            vertex_buffer_offsets.push(dst_offset.offset as vk::DeviceSize);
         }
 
         Mesh {
-            vertex_buffer: self.vertex_buffer.clone(),
-            vertex_buffer_offsets,
+            library: self.library.clone(),
             vertex_offset,
-            index_buffer: self.index_buffer.clone(),
-            index_buffer_offset: 0,
             first_index,
             index_count: index_buffer.len() as u32,
             index_type: VERTEX_LIBRARY_INDEX_TYPE,
@@ -134,13 +181,13 @@ impl<'a> VertexLibraryBuilder<'a> {
     pub fn upload(self, arena: &mut VulkanArena<ForBuffers>, uploader: &mut Uploader) -> Result<(), VulkanArenaError> {
         arena.copy_buffer(
             self.vertex_staging.buffer,
-            &self.vertex_buffer,
+            &self.library.vertex_buffer,
             uploader,
             format_args!("{} (vertex buffer)", self.debug_id),
         )?;
         arena.copy_buffer(
             self.index_staging.buffer,
-            &self.index_buffer,
+            &self.library.index_buffer,
             uploader,
             format_args!("{} (index buffer)", self.debug_id),
         )?;

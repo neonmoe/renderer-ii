@@ -1,5 +1,5 @@
 use alloc::rc::Rc;
-use core::hash::{Hash, Hasher};
+use core::cmp::Ordering;
 
 use arrayvec::{ArrayString, ArrayVec};
 use bytemuck::Zeroable;
@@ -76,8 +76,14 @@ impl PartialEq for Material {
 
 impl Eq for Material {}
 
-impl Hash for Material {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.array_indices.hash(state);
+impl Ord for Material {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.array_indices.cmp(&other.array_indices)
+    }
+}
+
+impl PartialOrd for Material {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
