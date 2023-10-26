@@ -98,10 +98,11 @@ fn main() {
         let mut measurer = renderer::VertexLibraryMeasurer::default();
         measurer.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
         measurer.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
-        let mut builder = renderer::VertexLibraryBuilder::new(&mut staging_arena, measurer, format_args!("triangle mesh")).unwrap();
+        let mut builder =
+            renderer::VertexLibraryBuilder::new(&mut staging_arena, &mut buffer_arena, measurer, format_args!("triangle mesh")).unwrap();
         let mesh1 = builder.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
         let mesh2 = builder.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
-        builder.upload(&mut buffer_arena, &mut uploader).unwrap();
+        builder.upload(&mut uploader, &mut buffer_arena).unwrap();
         (mesh1, mesh2)
     };
 

@@ -327,7 +327,7 @@ impl Descriptors {
         render_settings_buffer: &Buffer,
         skinned_mesh_joints_buffer: &Buffer,
         material_buffers: &MaterialTempUniforms,
-        draw_call_data: (&Buffer, &[(vk::DeviceSize, vk::DeviceSize)]),
+        draw_call_data: Option<(vk::Buffer, &[(vk::DeviceSize, vk::DeviceSize)])>,
         hdr_attachment: &ImageView,
     ) {
         profiling::scope!("updating descriptors");
@@ -375,9 +375,11 @@ impl Descriptors {
             let buffer = (material_buffers.buffer.inner, offset, size);
             self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 6, 0), buffer);
 
-            for &(offset, size) in draw_call_data.1 {
-                let buffer = (draw_call_data.0.inner, offset, size);
-                self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 7, 0), buffer);
+            if let Some(draw_call_data) = draw_call_data.as_ref() {
+                for &(offset, size) in draw_call_data.1 {
+                    let buffer = (draw_call_data.0, offset, size);
+                    self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 7, 0), buffer);
+                }
             }
         }
 

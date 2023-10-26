@@ -5,6 +5,8 @@ use ash::vk;
 
 use crate::image_loading::ImageData;
 
+const MAGIC_STRING: &[u8] = b"The GPU decodable image container format";
+
 #[derive(thiserror::Error, Debug)]
 pub enum NtexDecodeError {
     #[error("invalid ntex header (the image file is probably not an ntex file)")]
@@ -19,7 +21,42 @@ pub enum NtexDecodeError {
 
 #[profiling::function]
 pub fn decode(bytes: &[u8]) -> Result<ImageData, NtexDecodeError> {
-    if &bytes[0..40] != b"The GPU decodable image container format" || bytes.len() < 1024 {
+    let ImageData {
+        width,
+        height,
+        format,
+        pixels: _,
+        mip_ranges,
+    } = decode_header(bytes)?;
+
+    let pixels_len = mip_ranges[mip_ranges.len() - 1].end;
+    let bytes_len = pixels_len + 1024;
+    if bytes_len > bytes.len() {
+        return Err(NtexDecodeError::NotEnoughPixels {
+            expected: crate::Bytes(bytes_len as u64),
+            actual: crate::Bytes(bytes.len() as u64),
+        });
+    }
+    if bytes.len() != bytes_len {
+        return Err(NtexDecodeError::FileLength {
+            expected: bytes_len,
+            actual: bytes.len(),
+        });
+    }
+
+    Ok(ImageData {
+        width,
+        height,
+        format,
+        pixels: &bytes[1024..1024 + pixels_len],
+        mip_ranges,
+    })
+}
+
+/// Like [`decode`], but [`ImageData::pixels`] is empty.
+#[profiling::function]
+pub fn decode_header(bytes: &[u8]) -> Result<ImageData<'static>, NtexDecodeError> {
+    if &bytes[0..40] != MAGIC_STRING || bytes.len() < 1024 {
         return Err(NtexDecodeError::InvalidHeader);
     }
     let width = u32::from_le_bytes(bytes[992..996].try_into().unwrap());
@@ -42,28 +79,15 @@ pub fn decode(bytes: &[u8]) -> Result<ImageData, NtexDecodeError> {
         let mip_size = (mip_width as f32 / block_width as f32).ceil() as usize
             * (mip_height as f32 / block_height as f32).ceil() as usize
             * block_size as usize;
-        if prev_mip_end + mip_size + 1024 > bytes.len() {
-            return Err(NtexDecodeError::NotEnoughPixels {
-                expected: crate::Bytes((prev_mip_end + mip_size + 1024) as u64),
-                actual: crate::Bytes(bytes.len() as u64),
-            });
-        }
         mip_ranges.push(prev_mip_end..prev_mip_end + mip_size);
         prev_mip_end += mip_size;
-    }
-
-    if bytes.len() != prev_mip_end + 1024 {
-        return Err(NtexDecodeError::FileLength {
-            expected: prev_mip_end + 1024,
-            actual: bytes.len(),
-        });
     }
 
     Ok(ImageData {
         width,
         height,
         format: vk::Format::from_raw(format as i32),
-        pixels: &bytes[1024..1024 + prev_mip_end],
+        pixels: &[],
         mip_ranges,
     })
 }

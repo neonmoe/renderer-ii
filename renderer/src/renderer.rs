@@ -29,6 +29,8 @@ use pipelines::Pipelines;
 use scene::Scene;
 use swapchain::Swapchain;
 
+use self::pipeline_parameters::VERTEX_BINDING_COUNT;
+
 #[derive(thiserror::Error, Debug)]
 pub enum RendererError {
     #[error("failed to create semaphore for renderer signalling present")]
@@ -93,11 +95,13 @@ struct DrawCallParameters {
     instance_count: vk::DeviceSize,
 }
 
+/// Wrapper around [`vk::DrawIndexedIndirectCommand`] which implements [`Pod`]
+/// and [`Zeroable`].
 #[derive(Clone, Copy)]
 #[repr(C)]
-struct PodIndirectCommands(vk::DrawIndexedIndirectCommand);
-unsafe impl Zeroable for PodIndirectCommands {}
-unsafe impl Pod for PodIndirectCommands {}
+struct DrawIndexedIndirectCommand(vk::DrawIndexedIndirectCommand);
+unsafe impl Zeroable for DrawIndexedIndirectCommand {}
+unsafe impl Pod for DrawIndexedIndirectCommand {}
 
 pub struct Renderer {
     device: Device,
@@ -244,7 +248,8 @@ impl Renderer {
         let vk::Extent2D { width, height } = framebuffers.extent;
         self.draw_call_parameters.instance_count = 0;
         let mut transforms = Vec::new();
-        let mut draws: PipelineMap<HashMap<&VertexLibrary, Vec<PodIndirectCommands>>> = PipelineMap::from_infallible(|_| HashMap::new());
+        let mut draws: PipelineMap<HashMap<&VertexLibrary, Vec<DrawIndexedIndirectCommand>>> =
+            PipelineMap::from_infallible(|_| HashMap::new());
         scene.static_draws.sort();
         let mut prev_tag = None;
         for static_draw in scene.static_draws {
@@ -263,7 +268,7 @@ impl Renderer {
             if Some(static_draw.tag) == prev_tag {
                 indirect_draw_set.last_mut().unwrap().0.instance_count += 1;
             } else {
-                indirect_draw_set.push(PodIndirectCommands(vk::DrawIndexedIndirectCommand {
+                indirect_draw_set.push(DrawIndexedIndirectCommand(vk::DrawIndexedIndirectCommand {
                     index_count,
                     instance_count: 1,
                     first_index,
@@ -312,21 +317,28 @@ impl Renderer {
             .create_materials_temp_uniform(&mut self.temp_arena)
             .map_err(RendererError::MaterialsUniformCreation)?;
 
-        let draw_call_parameters = &[self.draw_call_parameters.data];
-        let draw_call_params_buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")
-            .map_err(RendererError::DrawCallParamsUniformCreation)?;
         let mut draw_call_params_update_ranges = [(0, 0); 1];
-        draw_call_params_update_ranges[0] = (
-            DrawCallParametersSoa::MATERIAL_INDEX_OFFSET,
-            self.draw_call_parameters.instance_count * DrawCallParametersSoa::MATERIAL_INDEX_ELEMENT_SIZE,
-        );
+        let draw_call_params = if self.draw_call_parameters.instance_count > 0 {
+            let draw_call_parameters = &[self.draw_call_parameters.data];
+            let draw_call_params_buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")
+                .map_err(RendererError::DrawCallParamsUniformCreation)?;
+            draw_call_params_update_ranges[0] = (
+                DrawCallParametersSoa::MATERIAL_INDEX_OFFSET,
+                self.draw_call_parameters.instance_count * DrawCallParametersSoa::MATERIAL_INDEX_ELEMENT_SIZE,
+            );
+            let params = (draw_call_params_buffer.inner, &draw_call_params_update_ranges[..]);
+            self.temp_arena.add_buffer(draw_call_params_buffer);
+            Some(params)
+        } else {
+            None
+        };
 
         descriptors.write_descriptors(
             &global_transforms_buffer,
             &render_settings_buffer,
             &skinned_mesh_joints_buffer,
             &materials_temp_uniform,
-            (&draw_call_params_buffer, &draw_call_params_update_ranges),
+            draw_call_params,
             &framebuffers.hdr_image,
         );
 
@@ -334,7 +346,6 @@ impl Renderer {
         self.temp_arena.add_buffer(render_settings_buffer);
         self.temp_arena.add_buffer(skinned_mesh_joints_buffer);
         self.temp_arena.add_buffer(materials_temp_uniform.buffer);
-        self.temp_arena.add_buffer(draw_call_params_buffer);
 
         // Draw (record the actual draw calls):
 
@@ -387,7 +398,7 @@ impl Renderer {
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
         framebuffers: &Framebuffers,
-        draws: &PipelineMap<HashMap<&VertexLibrary, Vec<PodIndirectCommands>>>,
+        draws: &PipelineMap<HashMap<&VertexLibrary, Vec<DrawIndexedIndirectCommand>>>,
         transforms_buffer: &Buffer,
     ) -> Result<vk::CommandBuffer, RendererError> {
         let command_pool = self.command_pool.inner;
@@ -474,12 +485,13 @@ impl Renderer {
                     .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[]);
             }
             for (vertex_library, draws) in &draws[static_pl] {
-                let mut vertex_offsets = ArrayVec::<vk::DeviceSize, 8>::new();
+                const VERTEX_BUFFERS: usize = VERTEX_BINDING_COUNT + 1;
+                let mut vertex_offsets = ArrayVec::<vk::DeviceSize, VERTEX_BUFFERS>::new();
                 vertex_offsets.push(0);
                 vertex_offsets
                     .try_extend_from_slice(&vertex_library.vertex_buffer_offsets[static_pl])
                     .unwrap();
-                let mut vertex_buffers = ArrayVec::<vk::Buffer, 8>::new();
+                let mut vertex_buffers = ArrayVec::<vk::Buffer, VERTEX_BUFFERS>::new();
                 vertex_buffers.push(transforms_buffer.inner);
                 for _ in 1..vertex_offsets.len() {
                     vertex_buffers.push(vertex_library.vertex_buffer.inner);
@@ -515,7 +527,7 @@ impl Renderer {
                         indirect_draws_buffer.inner,
                         0,
                         draws.len() as u32,
-                        mem::size_of::<PodIndirectCommands>() as u32,
+                        mem::size_of::<DrawIndexedIndirectCommand>() as u32,
                     );
                 }
                 self.temp_arena.add_buffer(indirect_draws_buffer);

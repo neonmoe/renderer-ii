@@ -26,12 +26,12 @@ pub enum VulkanArenaError {
     Map(#[source] vk::Result, String, crate::Bytes),
     #[error("tried to reset arena while some resources allocated from it are still in use ({0} refs)")]
     NotResettable(usize),
-    #[error("arena {identifier} ({used}/{total} bytes used) cannot fit {required} bytes")]
+    #[error("arena {identifier} ({used}/{total} used) cannot fit {required}")]
     OutOfMemory {
         identifier: String,
-        used: vk::DeviceSize,
-        total: vk::DeviceSize,
-        required: vk::DeviceSize,
+        used: crate::Bytes,
+        total: crate::Bytes,
+        required: crate::Bytes,
     },
     #[error("tried to write to arena without HOST_VISIBLE | HOST_COHERENT without providing an uploader and/or staging memory")]
     NotWritable,

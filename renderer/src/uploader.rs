@@ -194,16 +194,6 @@ impl Uploader {
                 unsafe { self.device.allocate_command_buffers(&graphics) }.map_err(UploadError::GraphicsCommandBufferCreation)?;
             [transfer_buffers[0], graphics_buffers[0]]
         };
-        crate::name_vulkan_object(
-            &self.device,
-            transfer_cmdbuf,
-            format_args!("upload cmds (T) for {}: {}", self.debug_identifier, debug_identifier),
-        );
-        crate::name_vulkan_object(
-            &self.device,
-            graphics_cmdbuf,
-            format_args!("upload cmds (G) for {}: {}", self.debug_identifier, debug_identifier),
-        );
 
         let upload_fence = if let Some(fence) = self.free_fences.pop() {
             let fences = [fence.inner];
@@ -248,6 +238,11 @@ impl Uploader {
             let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { self.device.begin_command_buffer(transfer_cmdbuf, &command_buffer_begin_info) }
                 .map_err(UploadError::TransferCommandBufferBegin)?;
+            crate::name_vulkan_object(
+                &self.device,
+                transfer_cmdbuf,
+                format_args!("upload cmds (T) for {}: {}", self.debug_identifier, debug_identifier),
+            );
             queue_transfer_commands(&self.device, &staging_buffer, transfer_cmdbuf);
             unsafe { self.device.end_command_buffer(transfer_cmdbuf) }.map_err(UploadError::TransferCommandBufferEnd)?;
         }
@@ -257,6 +252,11 @@ impl Uploader {
             let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { self.device.begin_command_buffer(graphics_cmdbuf, &command_buffer_begin_info) }
                 .map_err(UploadError::GraphicsCommandBufferBegin)?;
+            crate::name_vulkan_object(
+                &self.device,
+                graphics_cmdbuf,
+                format_args!("upload cmds (G) for {}: {}", self.debug_identifier, debug_identifier),
+            );
             queue_graphics_commands(&self.device, graphics_cmdbuf);
             unsafe { self.device.end_command_buffer(graphics_cmdbuf) }.map_err(UploadError::GraphicsCommandBufferEnd)?;
         }

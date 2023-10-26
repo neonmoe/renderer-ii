@@ -1,9 +1,10 @@
+use arrayvec::ArrayVec;
 use ash::vk;
 
 use crate::arena::buffers::ForBuffers;
 use crate::arena::images::ForImages;
 use crate::arena::VulkanArena;
-use crate::image_loading::{self, ImageLoadingError, TextureKind};
+use crate::image_loading::{self, ImageData, ImageLoadingError, TextureKind};
 use crate::uploader::Uploader;
 use crate::vulkan_raii::{Device, ImageView};
 
@@ -130,9 +131,15 @@ pub fn all_defaults_create_infos() -> [vk::ImageCreateInfo<'static>; 5] {
     let mut infos = [vk::ImageCreateInfo::default(); 5];
     assert_eq!(infos.len(), image_kinds.len());
     for (info, kind) in infos.iter_mut().zip(&image_kinds) {
-        let format = kind.convert_format(vk::Format::R8G8B8A8_UNORM);
-        let extent = vk::Extent3D::default().width(1).height(1).depth(1);
-        *info = image_loading::get_image_create_info(extent, 1, format);
+        let mip_range = 0..4;
+        let placeholder = ImageData {
+            width: 1,
+            height: 1,
+            format: vk::Format::R8G8B8A8_UNORM,
+            pixels: &[0, 0, 0, 0],
+            mip_ranges: ArrayVec::from_iter([mip_range]),
+        };
+        *info = placeholder.get_create_info(*kind);
     }
     infos
 }

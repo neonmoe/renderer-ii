@@ -9,7 +9,6 @@ bytemuck = { version = "1.9" }
 glam = { version = "0.23", default-features = false, features = ["libm", "bytemuck"] }
 hashbrown = { version = "0.13", features = ["serde"] }
 log = { version = "0.4" }
-# requires std, only used by the gltf module
 memmap2 = { version = "0.5" }
 profiling = { version = "1.0" }
 renderer = { path = "../renderer" }

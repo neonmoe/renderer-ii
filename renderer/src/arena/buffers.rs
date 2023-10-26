@@ -143,9 +143,9 @@ impl VulkanArena<ForBuffers> {
             unsafe { self.device.destroy_buffer(buffer, None) };
             return Err(VulkanArenaError::OutOfMemory {
                 identifier: self.debug_identifier.clone(),
-                used: offset,
-                total: self.total_size,
-                required: required_size,
+                used: crate::Bytes(offset),
+                total: crate::Bytes(self.total_size),
+                required: crate::Bytes(required_size),
             });
         }
 

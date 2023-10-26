@@ -3,27 +3,28 @@ extern crate alloc;
 use alloc::rc::Rc;
 use core::mem;
 use core::ops::Range;
-use std::fs::{self, File};
-use std::path::Path;
+use std::fs::File;
+use std::path::{Path, PathBuf};
 
 use arrayvec::{ArrayString, ArrayVec};
-use glam::{Mat4, Quat, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3};
 use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
-use renderer::image_loading::{self, ntex, ImageLoadingError, TextureKind};
+use renderer::image_loading::{ntex, ImageLoadingError, TextureKind};
 use renderer::{
-    vk, AlphaMode, Buffer, DescriptorError, Descriptors, Device, ForBuffers, ForImages, ImageView, Material, Mesh, PbrFactors,
-    PipelineSpecificData, Uploader, VulkanArena, VulkanArenaError,
+    DescriptorError, ForImages, Material, Mesh, PipelineIndex, VertexLibraryMeasurer, VulkanArenaError, VulkanArenaMeasurementError,
+    VulkanArenaMeasurer,
 };
 
 mod gltf_json;
-mod memory_measurement;
 mod mesh_iter;
+mod pending_gltf;
 mod scene_queueing;
 
 use gltf_json::AnimationInterpolation;
-pub use memory_measurement::*;
+pub use pending_gltf::*;
 
+const MAX_VERTEX_BUFFERS: usize = 6;
 const GLTF_BYTE: i32 = 5120;
 const GLTF_UNSIGNED_BYTE: i32 = 5121;
 const GLTF_SHORT: i32 = 5122;
@@ -55,8 +56,6 @@ pub enum GltfLoadingError {
     UnsupportedGltfVersion(ArrayString<32>),
     #[error("gltf has buffer without an uri but no glb BIN buffer")]
     GlbBinMissing,
-    #[error("given gltf/glb file cannot be read")]
-    MissingFile(#[source] std::io::Error),
     #[error("gltf refers to external data ({0}) but no directory was given in from_gltf/from_glb")]
     MissingDirectory(String),
     #[error("could not open resource file for gltf at {1}")]
@@ -71,10 +70,12 @@ pub enum GltfLoadingError {
     BufferCreationFromMaterialParameters(#[source] VulkanArenaError),
     #[error("failed to decode ntex {1}")]
     NtexDecoding(#[source] ntex::NtexDecodeError, String),
-    #[error("failed to load image {1}")]
-    ImageLoading(#[source] ImageLoadingError, String),
     #[error("failed to create material")]
     MaterialCreation(#[source] DescriptorError),
+    #[error("failed to load image {1}")]
+    ImageLoading(#[source] ImageLoadingError, String),
+    #[error("failed to measure texture vram usage")]
+    TextureMeasurement(#[source] VulkanArenaMeasurementError),
     #[error("gltf node has multiple parents, which is not allowed by the 2.0 spec")]
     InvalidNodeGraph,
     #[error("gltf has an out-of-bounds index ({0})")]
@@ -147,59 +148,33 @@ pub struct Gltf {
 }
 
 impl Gltf {
-    /// Loads the glTF scene from a .glb file.
+    /// Loads the glTF scene from a .glb file and measures textures and meshes, but does not write to VRAM yet.
     ///
     /// Any external files referenced in the glTF are searched relative to
     /// `resource_path`.
-    pub fn from_glb(
-        device: &Device,
-        staging_arena: &mut VulkanArena<ForBuffers>,
-        uploader: &mut Uploader,
-        descriptors: &mut Descriptors,
-        arenas: (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
-        glb_path: &Path,
-        resource_path: &Path,
-    ) -> Result<Gltf, GltfLoadingError> {
+    pub fn preload_glb<'a>(
+        glb_file_contents: &'a [u8],
+        resource_path: PathBuf,
+        (texture_measurer, mesh_measurer): (&mut VulkanArenaMeasurer<ForImages>, &mut VertexLibraryMeasurer),
+    ) -> Result<PendingGltf<'a>, GltfLoadingError> {
         profiling::scope!("loading glb from disk", &format!("file: {}", glb_path.display()));
-        let glb = fs::read(glb_path).map_err(GltfLoadingError::MissingFile)?;
-        let (json, buffer) = read_glb_json_and_buffer(&glb)?;
+        let (json, buffer) = read_glb_json_and_buffer(glb_file_contents)?;
         let gltf: gltf_json::GltfJson = serde_json::from_str(json).map_err(GltfLoadingError::JsonDeserialization)?;
-        create_gltf(
-            device,
-            staging_arena,
-            uploader,
-            descriptors,
-            arenas,
-            gltf,
-            (glb_path, resource_path, Some(buffer)),
-        )
+        create_gltf(gltf, resource_path, Some(buffer), texture_measurer, mesh_measurer)
     }
 
-    /// Loads the glTF scene from a .gltf file.
+    /// Loads the glTF scene from a .gltf file and measures textures and meshes, but does not write to VRAM yet.
     ///
     /// Any external files referenced in the glTF are searched relative to
     /// `resource_path`.
-    pub fn from_gltf(
-        device: &Device,
-        staging_arena: &mut VulkanArena<ForBuffers>,
-        uploader: &mut Uploader,
-        descriptors: &mut Descriptors,
-        arenas: (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
-        gltf_path: &Path,
-        resource_path: &Path,
-    ) -> Result<Gltf, GltfLoadingError> {
+    pub fn preload_gltf<'a>(
+        gltf_file_contents: &'a str,
+        resource_path: PathBuf,
+        (texture_measurer, mesh_measurer): (&mut VulkanArenaMeasurer<ForImages>, &mut VertexLibraryMeasurer),
+    ) -> Result<PendingGltf<'a>, GltfLoadingError> {
         profiling::scope!("loading gltf from disk", &format!("file: {}", gltf_path.display()));
-        let gltf = fs::read_to_string(gltf_path).map_err(GltfLoadingError::MissingFile)?;
-        let gltf: gltf_json::GltfJson = serde_json::from_str(&gltf).map_err(GltfLoadingError::JsonDeserialization)?;
-        create_gltf(
-            device,
-            staging_arena,
-            uploader,
-            descriptors,
-            arenas,
-            gltf,
-            (gltf_path, resource_path, None),
-        )
+        let gltf: gltf_json::GltfJson = serde_json::from_str(gltf_file_contents).map_err(GltfLoadingError::JsonDeserialization)?;
+        create_gltf(gltf, resource_path, None, texture_measurer, mesh_measurer)
     }
 
     pub fn get_animation(&self, name: &str) -> Option<&Animation> {
@@ -332,15 +307,13 @@ pub(crate) fn read_glb_json_and_buffer(glb: &[u8]) -> Result<(&str, &[u8]), Gltf
 }
 
 #[profiling::function]
-fn create_gltf(
-    device: &Device,
-    staging_arena: &mut VulkanArena<ForBuffers>,
-    uploader: &mut Uploader,
-    descriptors: &mut Descriptors,
-    (buffer_arena, image_arena): (&mut VulkanArena<ForBuffers>, &mut VulkanArena<ForImages>),
+fn create_gltf<'a>(
     gltf: gltf_json::GltfJson,
-    (gltf_path, resource_path, bin_buffer): (&Path, &Path, Option<&[u8]>),
-) -> Result<Gltf, GltfLoadingError> {
+    resource_path: PathBuf,
+    bin_buffer: Option<&'a [u8]>,
+    texture_measurer: &mut VulkanArenaMeasurer<ForImages>,
+    mesh_measurer: &mut VertexLibraryMeasurer,
+) -> Result<PendingGltf<'a>, GltfLoadingError> {
     if let Some(min_version) = &gltf.asset.min_version {
         let min_version_f32 = str::parse::<f32>(min_version);
         if min_version_f32 != Ok(2.0) {
@@ -361,53 +334,21 @@ fn create_gltf(
 
     let mut memmap_holder = None;
 
-    let mut buffers = Vec::with_capacity(gltf.buffers.len());
-    for buffer in &gltf.buffers {
-        let buffer_create_info = get_mesh_buffer_create_info(buffer.byte_length as vk::DeviceSize);
-        if let Some(uri) = buffer.uri.as_ref() {
-            profiling::scope!("upload buffer from file", &format!("file: {uri}"));
-            let path = resource_path.join(uri);
-            let data = map_file(&mut memmap_holder, &path, None)?;
-            let data = &data[0..buffer.byte_length];
-            let buffer = buffer_arena
-                .create_buffer(
-                    buffer_create_info,
-                    data,
-                    Some(staging_arena),
-                    Some(uploader),
-                    format_args!("{} ({})", uri, gltf_path.display()),
-                )
-                .map_err(|err| GltfLoadingError::BufferCreationFromFile(err, path))?;
-            buffers.push(Rc::new(buffer));
-        } else {
-            profiling::scope!("upload buffer from glb");
-            match bin_buffer {
-                Some(data) => {
-                    let data = &data[0..buffer.byte_length];
-                    let buffer = buffer_arena
-                        .create_buffer(
-                            buffer_create_info,
-                            data,
-                            Some(staging_arena),
-                            Some(uploader),
-                            format_args!("glb buffer ({})", gltf_path.display()),
-                        )
-                        .map_err(GltfLoadingError::BufferCreationFromGlb)?;
-                    buffers.push(Rc::new(buffer));
-                }
-                None => return Err(GltfLoadingError::GlbBinMissing),
-            }
-        }
-    }
-
     let mut meshes = Vec::with_capacity(gltf.meshes.len());
     for mesh in &gltf.meshes {
         profiling::scope!("reading primitives");
         let mut primitives = Vec::with_capacity(mesh.primitives.len());
         for primitive in &mesh.primitives {
-            let mesh = create_primitive(&gltf, &buffers, primitive)?;
+            let params = create_primitive(&gltf, primitive)?;
+            let vertex_buffer_lengths: ArrayVec<usize, MAX_VERTEX_BUFFERS> = params.vertex_buffers.iter().map(|buf| buf.length).collect();
+            let index_count = params.index_buffer.length / params.index_buffer.stride;
+            match params.index_buffer.stride {
+                4 => mesh_measurer.add_mesh_by_len::<u32>(params.pipeline, &vertex_buffer_lengths, index_count),
+                2 => mesh_measurer.add_mesh_by_len::<u16>(params.pipeline, &vertex_buffer_lengths, index_count),
+                stride => panic!("create_primitive returned invalid stride {stride} for index buffer"),
+            }
             let material_index = primitive.material.ok_or(GltfLoadingError::Misc("material missing"))?;
-            primitives.push((Rc::new(mesh), material_index));
+            primitives.push((params, material_index));
         }
         meshes.push(primitives);
     }
@@ -462,84 +403,25 @@ fn create_gltf(
     let mut images = Vec::with_capacity(gltf.images.len());
     for (i, image) in gltf.images.iter().enumerate() {
         profiling::scope!("uploading image", &format!("file: {:?}", image.uri));
-        let name = image.uri.as_deref().unwrap_or("glb binary buffer");
-        let bytes = load_image_bytes(&mut memmap_holder, resource_path, bin_buffer, image, &gltf)?;
-        let image_data = ntex::decode(bytes).map_err(|err| GltfLoadingError::NtexDecoding(err, name.to_string()))?;
+        let Some(uri) = &image.uri else {
+            return Err(GltfLoadingError::Misc("image missing an uri"));
+        };
+        let name = uri.clone();
+        let mut path = resource_path.join(uri);
+        path.set_extension("ntex");
+        let bytes = map_file(&mut memmap_holder, &path, Some(0..1024))?;
+        let data = ImageData::File(PathBuf::from(uri));
         let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
-        images.push(Rc::new(
-            image_loading::load_image(device, staging_arena, uploader, image_arena, &image_data, kind, name)
-                .map_err(|err| GltfLoadingError::ImageLoading(err, name.to_string()))?,
-        ));
-    }
-
-    let mut materials = Vec::with_capacity(gltf.materials.len());
-    for mat in &gltf.materials {
-        profiling::scope!("reading material");
-        let mktex = |images: &[Rc<ImageView>], texture_info: &gltf_json::TextureInfo| {
-            if texture_info.texcoord != 0 {
-                return Some(Err(GltfLoadingError::Misc("non-0 texCoord used for texture")));
-            }
-            let texture = match gltf.textures.get(texture_info.index) {
-                Some(tex) => tex,
-                None => return Some(Err(GltfLoadingError::Oob("texture"))),
-            };
-            let image_index = texture.source?;
-            let image_view = match images.get(image_index) {
-                Some(image_view) => image_view,
-                None => return Some(Err(GltfLoadingError::Oob("image"))),
-            };
-            Some(Ok(image_view.clone()))
-        };
-
-        macro_rules! handle_optional_result {
-            ($expression:expr) => {
-                match $expression {
-                    Some(Ok(ok)) => Some(ok),
-                    Some(Err(err)) => return Err(err),
-                    None => None,
-                }
-            };
-        }
-
-        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
-        let base_color = handle_optional_result!(pbr.base_color_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-        let metallic_roughness = handle_optional_result!(pbr.metallic_roughness_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-        let normal = handle_optional_result!(mat.normal_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-        let occlusion = handle_optional_result!(mat.occlusion_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-        let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(&images, tex)));
-
-        let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
-        let mtl = pbr.metallic_factor;
-        let rgh = pbr.roughness_factor;
-        let em_factor = Vec3::from(mat.emissive_factor);
-        let norm_factor = mat.normal_texture.as_ref().map(|t| t.scale).unwrap_or(1.0);
-        let occl_factor = mat.occlusion_texture.as_ref().map(|t| t.strength).unwrap_or(1.0);
-        let alpha_cutoff = if mat.alpha_mode == gltf_json::AlphaMode::Mask {
-            mat.alpha_cutoff
-        } else {
-            0.0
-        };
-        let factors = PbrFactors {
-            base_color: Vec4::from(pbr.base_color_factor),
-            emissive_and_occlusion: Vec4::from((em_factor, occl_factor)),
-            alpha_rgh_mtl_normal: Vec4::new(alpha_cutoff, rgh, mtl, norm_factor),
-        };
-
-        let pipeline_specific_data = PipelineSpecificData::Pbr {
-            base_color,
-            metallic_roughness,
-            normal,
-            occlusion,
-            emissive,
-            factors,
-            alpha_mode: match mat.alpha_mode {
-                gltf_json::AlphaMode::Opaque => AlphaMode::Opaque,
-                gltf_json::AlphaMode::Mask => AlphaMode::AlphaToCoverage,
-                gltf_json::AlphaMode::Blend => AlphaMode::Blend,
-            },
-        };
-        let name = mat.name.unwrap_or_else(|| ArrayString::from("unnamed material").unwrap());
-        materials.push(Material::new(descriptors, pipeline_specific_data, name).map_err(GltfLoadingError::MaterialCreation)?);
+        let image_header = ntex::decode_header(bytes).map_err(|err| GltfLoadingError::NtexDecoding(err, name.clone()))?;
+        let image_create_info = image_header.get_create_info(kind);
+        texture_measurer
+            .add_image(image_create_info)
+            .map_err(GltfLoadingError::TextureMeasurement)?;
+        images.push(ImageParameters {
+            data,
+            name,
+            image_create_info,
+        });
     }
 
     let mut animations = Vec::with_capacity(gltf.animations.len());
@@ -559,7 +441,7 @@ fn create_gltf(
                 .get_or_insert_with(Vec::new);
             let (timestamps, _) = get_slice_and_component_type_from_accessor(
                 &mut memmap_holder,
-                resource_path,
+                &resource_path,
                 bin_buffer,
                 &gltf,
                 sampler.input,
@@ -584,7 +466,7 @@ fn create_gltf(
                     let mut keyframes = timestamps.iter().map(|f| (*f, Vec3::ZERO)).collect::<Vec<(f32, Vec3)>>();
                     let (translations, _) = get_slice_and_component_type_from_accessor(
                         &mut memmap_holder,
-                        resource_path,
+                        &resource_path,
                         bin_buffer,
                         &gltf,
                         sampler.output,
@@ -605,7 +487,7 @@ fn create_gltf(
                     let mut keyframes = timestamps.iter().map(|f| (*f, Quat::IDENTITY)).collect::<Vec<(f32, Quat)>>();
                     let (rotations, ctype) = get_slice_and_component_type_from_accessor(
                         &mut memmap_holder,
-                        resource_path,
+                        &resource_path,
                         bin_buffer,
                         &gltf,
                         sampler.output,
@@ -626,7 +508,7 @@ fn create_gltf(
                     let mut keyframes = timestamps.iter().map(|f| (*f, 0.0)).collect::<Vec<(f32, f32)>>();
                     let (weights, ctype) = get_slice_and_component_type_from_accessor(
                         &mut memmap_holder,
-                        resource_path,
+                        &resource_path,
                         bin_buffer,
                         &gltf,
                         sampler.output,
@@ -660,7 +542,7 @@ fn create_gltf(
         if let Some(inverse_bind_matrices) = skin.inverse_bind_matrices {
             let (inverse_bind_matrices, _) = get_slice_and_component_type_from_accessor(
                 &mut memmap_holder,
-                resource_path,
+                &resource_path,
                 bin_buffer,
                 &gltf,
                 inverse_bind_matrices,
@@ -727,13 +609,21 @@ fn create_gltf(
         parent_nodes.append(&mut children);
     }
 
-    Ok(Gltf {
-        animations,
-        nodes,
-        root_nodes,
-        materials,
+    Ok(PendingGltf {
+        gltf_base: Gltf {
+            animations,
+            nodes,
+            root_nodes,
+            skins,
+            meshes: Vec::new(),
+            materials: Vec::new(),
+        },
+        json: gltf,
+        bin_buffer,
+        resource_path,
+        image_texture_kinds,
         meshes,
-        skins,
+        images,
     })
 }
 
@@ -754,134 +644,64 @@ fn map_file<'a>(memmap_holder: &'a mut Option<Mmap>, path: &Path, range: Option<
     Ok(memmap_holder.as_deref().unwrap())
 }
 
-pub(crate) fn load_image_bytes<'a>(
-    memmap_holder: &'a mut Option<Mmap>,
-    resource_path: &Path,
-    bin_buffer: Option<&'a [u8]>,
-    image: &gltf_json::Image,
-    gltf: &gltf_json::GltfJson,
-) -> Result<&'a [u8], GltfLoadingError> {
-    profiling::scope!("map image file into memory");
-    if let (Some(_), Some(buffer_view)) = (&image.mime_type, &image.buffer_view) {
-        let buffer_view = gltf
-            .buffer_views
-            .get(*buffer_view)
-            .ok_or(GltfLoadingError::Oob("texture buffer view"))?;
-        let buffer = gltf
-            .buffers
-            .get(buffer_view.buffer)
-            .ok_or(GltfLoadingError::Oob("texture buffer"))?;
-        let buffer_offset = buffer_view.byte_offset;
-        let buffer_size = buffer_view.byte_length;
-        let buffer_bytes = if let Some(uri) = buffer.uri.as_ref() {
-            let path = resource_path.join(uri);
-            map_file(memmap_holder, &path, Some(buffer_offset..buffer_offset + buffer_size))?
-        } else {
-            bin_buffer.ok_or(GltfLoadingError::GlbBinMissing)?
-        };
-        if buffer_offset + buffer_size >= buffer_bytes.len() {
-            return Err(GltfLoadingError::Oob("texture buffer view bytes"));
-        }
-        Ok(&buffer_bytes[buffer_offset..buffer_offset + buffer_size])
-    } else if let Some(uri) = &image.uri {
-        let mut path = resource_path.join(uri);
-        path.set_extension("ntex");
-        map_file(memmap_holder, &path, None)
-    } else {
-        Err(GltfLoadingError::Spec("image does not have an uri nor a mimetype + buffer view"))
-    }
-}
-
 #[profiling::function]
-fn create_primitive(
-    gltf: &gltf_json::GltfJson,
-    buffers: &[Rc<Buffer>],
-    primitive: &gltf_json::Primitive,
-) -> Result<Mesh, GltfLoadingError> {
+fn create_primitive(gltf: &gltf_json::GltfJson, primitive: &gltf_json::Primitive) -> Result<MeshParameters, GltfLoadingError> {
     let index_accessor = primitive.indices.ok_or(GltfLoadingError::Misc("missing indices"))?;
-    let (index_buffer, index_buffer_offset, index_buffer_size, index_ctype) =
-        get_buffer_from_accessor(buffers, gltf, index_accessor, None, "SCALAR")?;
+    let (index_buffer, index_ctype) = get_buffer_view_from_accessor(gltf, index_accessor, None, "SCALAR")?;
+    let large_indices = if index_ctype == GLTF_UNSIGNED_SHORT {
+        false
+    } else if index_ctype == GLTF_UNSIGNED_INT {
+        true
+    } else {
+        return Err(GltfLoadingError::Spec("index ctype is not UNSIGNED_SHORT or UNSIGNED_INT"));
+    };
 
     let mut vertex_buffers = ArrayVec::new();
-    let mut buffer_offsets = ArrayVec::new();
 
     let pos_accessor = *primitive
         .attributes
         .get("POSITION")
         .ok_or(GltfLoadingError::Misc("missing position attributes"))?;
-    let (pos_buffer, pos_offset, _, _) = get_buffer_from_accessor(buffers, gltf, pos_accessor, GLTF_FLOAT, "VEC3")?;
+    let (pos_buffer, _) = get_buffer_view_from_accessor(gltf, pos_accessor, Some(GLTF_FLOAT), "VEC3")?;
     vertex_buffers.push(pos_buffer);
-    buffer_offsets.push(pos_offset);
 
     let tex_accessor = *primitive
         .attributes
         .get("TEXCOORD_0")
         .ok_or(GltfLoadingError::Misc("missing UV0 attributes"))?;
-    let (tex_buffer, tex_offset, _, _) = get_buffer_from_accessor(buffers, gltf, tex_accessor, GLTF_FLOAT, "VEC2")?;
+    let (tex_buffer, _) = get_buffer_view_from_accessor(gltf, tex_accessor, Some(GLTF_FLOAT), "VEC2")?;
     vertex_buffers.push(tex_buffer);
-    buffer_offsets.push(tex_offset);
 
     let normal_accessor = *primitive
         .attributes
         .get("NORMAL")
         .ok_or(GltfLoadingError::Misc("missing normal attributes"))?;
-    let (normal_buffer, normal_offset, _, _) = get_buffer_from_accessor(buffers, gltf, normal_accessor, GLTF_FLOAT, "VEC3")?;
+    let (normal_buffer, _) = get_buffer_view_from_accessor(gltf, normal_accessor, Some(GLTF_FLOAT), "VEC3")?;
     vertex_buffers.push(normal_buffer);
-    buffer_offsets.push(normal_offset);
 
     let tangent_accessor = *primitive
         .attributes
         .get("TANGENT")
         .ok_or(GltfLoadingError::Misc("missing tangent attributes"))?;
-    let (tangent_buffer, tangent_offset, _, _) = get_buffer_from_accessor(buffers, gltf, tangent_accessor, GLTF_FLOAT, "VEC4")?;
+    let (tangent_buffer, _) = get_buffer_view_from_accessor(gltf, tangent_accessor, Some(GLTF_FLOAT), "VEC4")?;
     vertex_buffers.push(tangent_buffer);
-    buffer_offsets.push(tangent_offset);
 
+    let mut pipeline = PipelineIndex::PbrOpaque;
     if let (Some(&joints_accessor), Some(&weights_accessor)) = (primitive.attributes.get("JOINTS_0"), primitive.attributes.get("WEIGHTS_0"))
     {
-        let (joints_buffer, joints_offset, _, _) = get_buffer_from_accessor(buffers, gltf, joints_accessor, GLTF_UNSIGNED_BYTE, "VEC4")?;
+        let (joints_buffer, _) = get_buffer_view_from_accessor(gltf, joints_accessor, Some(GLTF_UNSIGNED_BYTE), "VEC4")?;
         vertex_buffers.push(joints_buffer);
-        buffer_offsets.push(joints_offset);
-        let (weights_buffer, weights_offset, _, _) = get_buffer_from_accessor(buffers, gltf, weights_accessor, GLTF_FLOAT, "VEC4")?;
+        let (weights_buffer, _) = get_buffer_view_from_accessor(gltf, weights_accessor, Some(GLTF_FLOAT), "VEC4")?;
         vertex_buffers.push(weights_buffer);
-        buffer_offsets.push(weights_offset);
+        pipeline = PipelineIndex::PbrSkinnedOpaque;
     }
 
-    if index_ctype == GLTF_UNSIGNED_SHORT {
-        Ok(Mesh::new::<u16>(
-            vertex_buffers,
-            buffer_offsets,
-            index_buffer,
-            index_buffer_offset,
-            index_buffer_size,
-        ))
-    } else if index_ctype == GLTF_UNSIGNED_INT {
-        Ok(Mesh::new::<u32>(
-            vertex_buffers,
-            buffer_offsets,
-            index_buffer,
-            index_buffer_offset,
-            index_buffer_size,
-        ))
-    } else {
-        Err(GltfLoadingError::Spec("index ctype is not UNSIGNED_SHORT or UNSIGNED_INT"))
-    }
-}
-
-#[profiling::function]
-fn get_buffer_from_accessor<'buffer, C: Into<Option<i32>>>(
-    buffers: &'buffer [Rc<Buffer>],
-    gltf: &gltf_json::GltfJson,
-    accessor: usize,
-    ctype: C,
-    atype: &str,
-) -> Result<(Rc<Buffer>, vk::DeviceSize, vk::DeviceSize, i32), GltfLoadingError> {
-    let (buffer, offset, length, ctype) = get_buffer_view_from_accessor(gltf, accessor, ctype.into(), atype)?;
-    let buffer = buffers.get(buffer).ok_or(GltfLoadingError::Oob("buffer"))?;
-    if (offset + length) as vk::DeviceSize > buffer.size {
-        return Err(GltfLoadingError::Oob("buffer offset + length"));
-    }
-    Ok((buffer.clone(), offset as vk::DeviceSize, length as vk::DeviceSize, ctype))
+    Ok(MeshParameters {
+        pipeline,
+        vertex_buffers,
+        index_buffer,
+        large_indices,
+    })
 }
 
 #[profiling::function]
@@ -895,16 +715,16 @@ fn get_slice_and_component_type_from_accessor<'buffer, C: Into<Option<i32>>>(
     atype: &str,
 ) -> Result<(&'buffer [u8], i32), GltfLoadingError> {
     let ctype = ctype.into();
-    let (buffer, offset, length, ctype) = get_buffer_view_from_accessor(gltf, accessor, ctype, atype)?;
-    let buffer = gltf.buffers.get(buffer).ok_or(GltfLoadingError::Oob("buffer"))?;
-    if offset + length > buffer.byte_length {
+    let (view, ctype) = get_buffer_view_from_accessor(gltf, accessor, ctype, atype)?;
+    let buffer = gltf.buffers.get(view.buffer).ok_or(GltfLoadingError::Oob("buffer"))?;
+    if view.offset + view.length > buffer.byte_length {
         return Err(GltfLoadingError::Oob("buffer offset + length"));
     }
     let buffer = if let Some(uri) = &buffer.uri {
         let path = resource_path.join(uri);
-        map_file(memmap_holder, &path, Some(offset..offset + length))?
+        map_file(memmap_holder, &path, Some(view.offset..view.offset + view.length))?
     } else if let Some(bin_buffer) = bin_buffer.as_ref() {
-        &bin_buffer[offset..offset + length]
+        &bin_buffer[view.offset..view.offset + view.length]
     } else {
         return Err(GltfLoadingError::Misc("buffer has no uri but there's no glb buffer"));
     };
@@ -916,7 +736,7 @@ fn get_buffer_view_from_accessor(
     accessor: usize,
     ctype: Option<i32>,
     atype: &str,
-) -> Result<(usize, usize, usize, i32), GltfLoadingError> {
+) -> Result<(BufferView, i32), GltfLoadingError> {
     let accessor = gltf.accessors.get(accessor).ok_or(GltfLoadingError::Oob("accessor"))?;
     let ctype = ctype.unwrap_or(accessor.component_type);
     if accessor.component_type != ctype {
@@ -937,7 +757,15 @@ fn get_buffer_view_from_accessor(
         Some(x) if x != stride => return Err(GltfLoadingError::Misc("wrong stride")),
         _ => {}
     }
-    Ok((view.buffer, offset, length.min(accessor.count * stride), ctype))
+    Ok((
+        BufferView {
+            buffer: view.buffer,
+            offset,
+            length: length.min(accessor.count * stride),
+            stride,
+        },
+        ctype,
+    ))
 }
 
 fn stride_for(component_type: i32, attribute_type: &str) -> usize {
@@ -958,18 +786,6 @@ fn stride_for(component_type: i32, attribute_type: &str) -> usize {
         _ => unreachable!(),
     };
     bytes_per_component * components
-}
-
-pub(crate) fn get_mesh_buffer_create_info(size: vk::DeviceSize) -> vk::BufferCreateInfo<'static> {
-    vk::BufferCreateInfo::default()
-        .size(size)
-        .usage(
-            vk::BufferUsageFlags::TRANSFER_DST
-                | vk::BufferUsageFlags::VERTEX_BUFFER
-                | vk::BufferUsageFlags::INDEX_BUFFER
-                | vk::BufferUsageFlags::UNIFORM_BUFFER,
-        )
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
 }
 
 pub(crate) fn get_gltf_texture_kinds(gltf: &gltf_json::GltfJson) -> Result<HashMap<usize, TextureKind>, GltfLoadingError> {

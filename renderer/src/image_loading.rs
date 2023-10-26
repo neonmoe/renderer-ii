@@ -36,6 +36,31 @@ pub struct ImageData<'a> {
     pub mip_ranges: ArrayVec<Range<usize>, 16>,
 }
 
+impl ImageData<'_> {
+    pub fn get_create_info(&self, kind: TextureKind) -> vk::ImageCreateInfo<'static> {
+        let ImageData {
+            width,
+            height,
+            format,
+            mip_ranges,
+            ..
+        } = self;
+        let format = kind.convert_format(*format);
+        let extent = vk::Extent3D::default().width(*width).height(*height).depth(1);
+        vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .extent(extent)
+            .mip_levels(mip_ranges.len() as u32)
+            .array_layers(1)
+            .format(format)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum TextureKind {
     SrgbColor,
@@ -50,33 +75,6 @@ impl TextureKind {
             TextureKind::NormalMap | TextureKind::LinearColor => format,
         }
     }
-}
-
-pub fn get_image_create_info(extent: vk::Extent3D, mip_levels: u32, format: vk::Format) -> vk::ImageCreateInfo<'static> {
-    vk::ImageCreateInfo::default()
-        .image_type(vk::ImageType::TYPE_2D)
-        .extent(extent)
-        .mip_levels(mip_levels)
-        .array_layers(1)
-        .format(format)
-        .tiling(vk::ImageTiling::OPTIMAL)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
-        .samples(vk::SampleCountFlags::TYPE_1)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-}
-
-pub fn get_image_data_create_info(image_data: &ImageData, kind: TextureKind) -> Result<vk::ImageCreateInfo<'static>, ImageLoadingError> {
-    let ImageData {
-        width,
-        height,
-        format,
-        mip_ranges,
-        ..
-    } = image_data;
-    let format = kind.convert_format(*format);
-    let extent = vk::Extent3D::default().width(*width).height(*height).depth(1);
-    Ok(get_image_create_info(extent, mip_ranges.len() as u32, format))
 }
 
 pub fn create_pixel(
@@ -113,11 +111,11 @@ pub fn load_image(
     let pixels = &image_data.pixels;
     let mip_ranges = &image_data.mip_ranges;
 
+    let format = kind.convert_format(format);
     if cfg!(debug_assertions) {
         debug_assert!(TEXTURE_FORMATS.contains(&format));
     }
 
-    let format = kind.convert_format(format);
     let extent = vk::Extent3D::default().width(width).height(height).depth(1);
     let &mut Uploader {
         graphics_queue_family,
@@ -145,7 +143,7 @@ pub fn load_image(
 
     let image_allocation = {
         profiling::scope!("allocate gpu texture");
-        let image_info = get_image_create_info(extent, mip_ranges.len() as u32, format);
+        let image_info = image_data.get_create_info(kind);
         arena
             .create_image(image_info, format_args!("{debug_identifier}"))
             .map_err(ImageLoadingError::ImageCreation)?

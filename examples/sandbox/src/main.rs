@@ -416,16 +416,20 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
     for image_create_info in renderer::image_loading::pbr_defaults::all_defaults_create_infos() {
         assets_textures_measurer.add_image(image_create_info)?;
     }
-    gltf::measure_gltf_memory_usage(
-        (&mut assets_buffers_measurer, &mut assets_textures_measurer),
-        &resources_path.join("sponza/glTF/Sponza.gltf"),
-        &resources_path.join("sponza/glTF"),
+    let mut vertex_library_measurer = renderer::VertexLibraryMeasurer::default();
+    let sponza_json = std::fs::read_to_string(resources_path.join("sponza/glTF/Sponza.gltf")).unwrap();
+    let smol_ame_json = std::fs::read_to_string(resources_path.join("smol-ame-by-seafoam/smol-ame.gltf")).unwrap();
+    let sponza_pending = gltf::Gltf::preload_gltf(
+        &sponza_json,
+        resources_path.join("sponza/glTF"),
+        (&mut assets_textures_measurer, &mut vertex_library_measurer),
     )?;
-    gltf::measure_gltf_memory_usage(
-        (&mut assets_buffers_measurer, &mut assets_textures_measurer),
-        &resources_path.join("smol-ame-by-seafoam/smol-ame.gltf"),
-        &resources_path.join("smol-ame-by-seafoam"),
+    let smol_ame_pending = gltf::Gltf::preload_gltf(
+        &smol_ame_json,
+        resources_path.join("smol-ame-by-seafoam"),
+        (&mut assets_textures_measurer, &mut vertex_library_measurer),
     )?;
+    vertex_library_measurer.measure_required_arena(&mut assets_buffers_measurer)?;
 
     print_memory_usage("after measurements");
 
@@ -467,26 +471,31 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
 
     let pbr_defaults = renderer::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena)?;
     let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults)?;
+    let mut vertex_library_builder = renderer::VertexLibraryBuilder::new(
+        &mut staging_arena,
+        &mut buffer_arena,
+        vertex_library_measurer,
+        format_args!("vertex library of babel"),
+    )?;
 
     let upload_start = Instant::now();
-    let sponza_model = gltf::Gltf::from_gltf(
+    let sponza_model = sponza_pending.upload(
         &device,
         &mut staging_arena,
         &mut uploader,
         &mut descriptors,
-        (&mut buffer_arena, &mut texture_arena),
-        &resources_path.join("sponza/glTF/Sponza.gltf"),
-        &resources_path.join("sponza/glTF"),
+        &mut texture_arena,
+        &mut vertex_library_builder,
     )?;
-    let smol_ame_model = gltf::Gltf::from_gltf(
+    let smol_ame_model = smol_ame_pending.upload(
         &device,
         &mut staging_arena,
         &mut uploader,
         &mut descriptors,
-        (&mut buffer_arena, &mut texture_arena),
-        &resources_path.join("smol-ame-by-seafoam/smol-ame.gltf"),
-        &resources_path.join("smol-ame-by-seafoam"),
+        &mut texture_arena,
+        &mut vertex_library_builder,
     )?;
+    vertex_library_builder.upload(&mut uploader, &mut buffer_arena)?;
     let upload_wait_start = Instant::now();
     {
         profiling::scope!("wait for uploads to finish");
@@ -677,7 +686,7 @@ mod logger {
                 let message = format!("{}", record.args());
                 let file = record.file().unwrap_or("");
                 let line = record.line().unwrap_or(0);
-                let is_vk_debug_utils_print = file == "src/debug_utils.rs";
+                let is_vk_debug_utils_print = file == "renderer/src/debug_utils.rs";
                 let mut log_level = record.level();
                 if is_vk_debug_utils_print && message.contains("[Loader Message]") {
                     log_level = Level::Trace;

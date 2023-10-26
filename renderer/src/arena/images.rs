@@ -26,9 +26,9 @@ impl VulkanArena<ForImages> {
             unsafe { self.device.destroy_image(image, None) };
             return Err(VulkanArenaError::OutOfMemory {
                 identifier: self.debug_identifier.clone(),
-                used: offset,
-                total: self.total_size,
-                required: size,
+                used: crate::Bytes(offset),
+                total: crate::Bytes(self.total_size),
+                required: crate::Bytes(size),
             });
         }
 

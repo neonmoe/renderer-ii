@@ -109,10 +109,6 @@ pub(crate) struct Texture {
 #[derive(Deserialize)]
 pub(crate) struct Image {
     pub uri: Option<String>,
-    #[serde(rename = "mimeType")]
-    pub mime_type: Option<String>,
-    #[serde(rename = "bufferView")]
-    pub buffer_view: Option<usize>,
 }
 
 #[derive(Deserialize)]
