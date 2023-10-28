@@ -536,10 +536,10 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
     let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device)?;
     print_memory_usage("after renderer creation");
 
+    let mut scene = renderer::Scene::new(&physical_device);
     let mut recreate_swapchain = false;
     'running: loop {
         // Rendering preparation, which needs the SharedState:
-        let mut scene;
         let debug_value;
         {
             let mut state = {
@@ -575,7 +575,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
 
             debug_value = state.debug_value;
 
-            scene = renderer::Scene::new(&physical_device);
+            scene.clear();
             scene.camera.orientation = Quat::from_rotation_y(state.cam_yaw) * Quat::from_rotation_x(state.cam_pitch);
             scene.camera.position = Vec3::new(state.cam_x, state.cam_y, state.cam_z);
             scene.world_space = renderer::CoordinateSystem::GLTF;
@@ -629,7 +629,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
                     continue;
                 }
             };
-            match renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, scene, debug_value) {
+            match renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, debug_value) {
                 Ok(_) => {}
                 Err(err) => {
                     log::warn!("Error during regular frame rendering: {}", err);

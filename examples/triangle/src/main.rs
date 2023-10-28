@@ -131,6 +131,7 @@ fn main() {
 
     let mut swapchain_recreation_requested = None;
     let mut event_pump = sdl.event_pump().unwrap();
+    let mut scene = renderer::Scene::new(&physical_device);
     let mut fps_ticks = Vec::with_capacity(10_000);
     let mut prev_fps_update = time.ticks();
     'main: loop {
@@ -177,13 +178,13 @@ fn main() {
             }
         }
 
-        let mut scene = renderer::Scene::new(&physical_device);
+        scene.clear();
         scene.queue_mesh(&triangle_mesh1, &triangle_material, Mat4::from_scale(Vec3::new(1.0, 1.0, 1.0)));
         scene.queue_mesh(&triangle_mesh2, &triangle_material, Mat4::from_scale(Vec3::new(2.0, 0.5, 1.0)));
 
         let frame_index = renderer.wait_frame(&swapchain).unwrap();
         renderer
-            .render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, scene, 3)
+            .render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, 3)
             .unwrap();
         match { renderer.present_frame(frame_index, &swapchain) } {
             Ok(_) => {}

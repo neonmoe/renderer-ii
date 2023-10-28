@@ -1,5 +1,6 @@
 use glam::{Mat4, Vec3, Vec4};
 
+#[derive(Clone, Copy)]
 pub struct CoordinateSystem {
     pub up: Vec3,
     pub right: Vec3,

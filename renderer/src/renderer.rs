@@ -227,7 +227,7 @@ impl Renderer {
         descriptors: &mut Descriptors,
         pipelines: &Pipelines,
         framebuffers: &Framebuffers,
-        mut scene: Scene,
+        scene: &mut Scene,
         debug_value: u32,
     ) -> Result<(), RendererError> {
         fn create_uniform_buffer<T: bytemuck::Pod>(
@@ -252,7 +252,7 @@ impl Renderer {
             PipelineMap::from_infallible(|_| HashMap::new());
         scene.static_draws.sort();
         let mut prev_tag = None;
-        for static_draw in scene.static_draws {
+        for static_draw in &scene.static_draws {
             let pipeline = static_draw.tag.pipeline;
             let index_count = static_draw.tag.mesh.index_count;
             let first_index = static_draw.tag.mesh.first_index;
@@ -304,13 +304,13 @@ impl Renderer {
         let render_settings_buffer = create_uniform_buffer(&mut self.temp_arena, render_settings, "render settings")
             .map_err(RendererError::RenderSettingsUniformCreation)?;
 
-        let mut skinned_mesh_joints = scene.skinned_mesh_joints_buffer;
+        let skinned_mesh_joints = &mut scene.skinned_mesh_joints_buffer;
         // The joint buffer needs to have backing memory for the entire uniform
         // buffer's length at all offsets, so without this padding, the last
         // (few) skeletons would overflow the buffer's end.
         let empty_full_length_skeleton = &[Mat4::ZERO; MAX_BONE_COUNT as usize];
         skinned_mesh_joints.extend_from_slice(bytemuck::cast_slice(empty_full_length_skeleton));
-        let skinned_mesh_joints_buffer = create_uniform_buffer(&mut self.temp_arena, &skinned_mesh_joints, "joint transforms")
+        let skinned_mesh_joints_buffer = create_uniform_buffer(&mut self.temp_arena, skinned_mesh_joints, "joint transforms")
             .map_err(RendererError::JointTransformUniformCreation)?;
 
         let materials_temp_uniform = descriptors

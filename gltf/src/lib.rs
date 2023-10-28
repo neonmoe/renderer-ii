@@ -157,7 +157,7 @@ impl Gltf {
         resource_path: PathBuf,
         (texture_measurer, mesh_measurer): (&mut VulkanArenaMeasurer<ForImages>, &mut VertexLibraryMeasurer),
     ) -> Result<PendingGltf<'a>, GltfLoadingError> {
-        profiling::scope!("loading glb from disk", &format!("file: {}", glb_path.display()));
+        profiling::scope!("preloading glb from disk");
         let (json, buffer) = read_glb_json_and_buffer(glb_file_contents)?;
         let gltf: gltf_json::GltfJson = serde_json::from_str(json).map_err(GltfLoadingError::JsonDeserialization)?;
         create_gltf(gltf, resource_path, Some(buffer), texture_measurer, mesh_measurer)
@@ -172,7 +172,7 @@ impl Gltf {
         resource_path: PathBuf,
         (texture_measurer, mesh_measurer): (&mut VulkanArenaMeasurer<ForImages>, &mut VertexLibraryMeasurer),
     ) -> Result<PendingGltf<'a>, GltfLoadingError> {
-        profiling::scope!("loading gltf from disk", &format!("file: {}", gltf_path.display()));
+        profiling::scope!("preloading gltf from disk");
         let gltf: gltf_json::GltfJson = serde_json::from_str(gltf_file_contents).map_err(GltfLoadingError::JsonDeserialization)?;
         create_gltf(gltf, resource_path, None, texture_measurer, mesh_measurer)
     }

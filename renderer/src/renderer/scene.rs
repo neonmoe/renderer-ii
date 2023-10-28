@@ -84,6 +84,15 @@ impl<'a> Scene<'a> {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.total_draws = 0;
+        self.static_draws.clear();
+        self.skinned_mesh_joints_buffer.clear();
+        for skinned_meshes in self.skinned_meshes.iter_mut() {
+            skinned_meshes.clear();
+        }
+    }
+
     /// Returns true if the mesh could be added to the queue. The only reason it cannot, is if the
     /// Scene has reached maximum supported draws ([`MAX_DRAWS`]).
     pub fn queue_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, transform: Mat4) -> bool {

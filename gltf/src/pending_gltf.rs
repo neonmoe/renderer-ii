@@ -69,6 +69,7 @@ impl PendingGltf<'_> {
         image_arena: &mut VulkanArena<ForImages>,
         vertex_library_builder: &mut VertexLibraryBuilder,
     ) -> Result<Gltf, GltfLoadingError> {
+        profiling::scope!("uploading gltf to vram");
         let mut gltf = self.gltf_base;
         let mut memmap_holder = None;
 
