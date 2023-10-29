@@ -215,7 +215,30 @@ impl Renderer {
                 .map_err(RendererError::FrameEndFenceWait)?;
             self.device.reset_fences(&fences).map_err(RendererError::FrameEndFenceWait)?;
         }
+
+        // TODO: This reset *could* technically not be valid, if the buffers are still in use.
         self.temp_arena.reset().map_err(RendererError::FrameLocalArenaReset)?;
+
+        // We know they aren't, since we only have one frame in flight and we've
+        // waited on the previous frame's fence, but as the user might want to
+        // drop some resources during rendering, "resources in use" would be a
+        // good thing to track.
+
+        // The idea: in render_frame, and maybe somewhere in Descriptors, clone
+        // each Rc<Buffer> and Rc<Image> being used into some
+        // ResourcesInUseDuringAFrame struct. When queueing the command buffer
+        // using these resources to be executed, save the fence from that in the
+        // struct as well. Then, the struct should be stored somewhere
+        // relatively static, which would occasionally check the fence, and if
+        // rendering has finished, it drops all the Rc's. Maybe take a &'static
+        // GpuResourceWatcher, on which you'd periodically call like,
+        // ::release_resources()?
+
+        // This is just additional overhead to what we have now, but it would
+        // make the Rc<Buffer/Image> architecture so much safer. With a similar
+        // thing for Uploader (it could use the GpuResourceWatcher as well!), we
+        // might not even invalidly destroy everything on panic, like we
+        // currently do!
 
         Ok(FrameIndex::new(image_index as usize))
     }

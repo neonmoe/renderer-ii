@@ -76,6 +76,12 @@ struct SharedState {
     refresh_rate: i32,
     frame: u64,
     running: bool,
+
+    // Perf visualization stuff
+    cumulative_render_time: Duration,
+    cumulative_render_count: u32,
+    cumulative_update_time: Duration,
+    cumulative_update_count: u32,
 }
 
 fn main_() -> anyhow::Result<()> {
@@ -90,10 +96,10 @@ fn main_() -> anyhow::Result<()> {
         sdl_context.video().map_err(SandboxError::Sdl)?
     };
 
-    let window = {
+    let mut window = {
         profiling::scope!("SDL window creation");
         video_subsystem
-            .window("neonvk sandbox", 640, 480)
+            .window("sandbox", 640, 480)
             .position_centered()
             .resizable()
             .allow_highdpi()
@@ -180,17 +186,40 @@ fn main_() -> anyhow::Result<()> {
         }
     }
 
-    profiling::scope!("event loop");
+    const FPS_COUNTER_UPDATES_PER_SECOND: usize = 20;
+    let now = Instant::now();
+    let mut fps_counter_accumulators = [(0, Duration::ZERO, Duration::ZERO); FPS_COUNTER_UPDATES_PER_SECOND];
+    let mut fps_counter_update_deadlines = [now; FPS_COUNTER_UPDATES_PER_SECOND];
+    let mut fps_counter_accumulator_index = 0;
+    let mut fps_counter_ready = false;
+    for (i, deadline) in fps_counter_update_deadlines.iter_mut().enumerate() {
+        *deadline = now + Duration::from_secs(1) * i as u32 / FPS_COUNTER_UPDATES_PER_SECOND as u32;
+    }
+
     let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
+    let mut opened_controller = None;
     'main: loop {
+        if let Some(which) = opened_controller {
+            profiling::scope!("opening controller");
+            controller = Some(controller_subsystem.open(which).unwrap());
+            opened_controller = None;
+        }
+
+        let event = {
+            profiling::scope!("waiting for an event");
+            event_pump.wait_event_timeout(2)
+        };
         profiling::scope!("handle event");
-        let event = event_pump.wait_event_timeout(2);
-        let mut state = state_mutex.lock().unwrap();
+        let mut state = {
+            profiling::scope!("waiting for lock");
+            state_mutex.lock().unwrap()
+        };
         if !state.running {
             break 'main;
         }
 
         if let Some(event) = event {
+            profiling::scope!("event-specific processing", &format!("event: {event:?}"));
             match event {
                 Event::Quit { .. } => {
                     state.running = false;
@@ -230,6 +259,7 @@ fn main_() -> anyhow::Result<()> {
                     Some(Keycode::I) => {
                         state.immediate_present = !state.immediate_present;
                         state.queued_resize = Some(Instant::now());
+                        log::info!("immediate present set to: {}", state.immediate_present);
                     }
                     Some(Keycode::W) if state.dz > 0.0 => state.dz = 0.0,
                     Some(Keycode::S) if state.dz < 0.0 => state.dz = 0.0,
@@ -289,27 +319,72 @@ fn main_() -> anyhow::Result<()> {
                 }
 
                 Event::ControllerDeviceAdded { which, .. } => {
-                    controller = Some(controller_subsystem.open(which).unwrap());
+                    opened_controller = Some(which);
                 }
 
                 _ => {}
             }
         }
 
-        state.refresh_rate = window.display_mode().map(|dm| dm.refresh_rate).unwrap_or(60);
+        state.refresh_rate = if state.immediate_present {
+            1_000_000_000
+        } else {
+            profiling::scope!("getting refresh rate");
+            window.display_mode().map(|dm| dm.refresh_rate).unwrap_or(60)
+        };
 
-        if !analog_controls && (state.dx != 0.0 || state.dy != 0.0 || state.dz != 0.0) {
-            let dl = (state.dx * state.dx + state.dy * state.dy + state.dz * state.dz).sqrt();
-            state.dx /= dl;
-            state.dy /= dl;
-            state.dz /= dl;
+        {
+            profiling::scope!("updating controls");
+            if !analog_controls && (state.dx != 0.0 || state.dy != 0.0 || state.dz != 0.0) {
+                let dl = (state.dx * state.dx + state.dy * state.dy + state.dz * state.dz).sqrt();
+                state.dx /= dl;
+                state.dy /= dl;
+                state.dz /= dl;
+            }
+
+            if analog_controls {
+                if let Some(controller) = &controller {
+                    let speed = 2.0 / state.refresh_rate as f32;
+                    state.cam_yaw_delta = -get_axis_deadzoned(controller.axis(Axis::RightX)) * speed;
+                    state.cam_pitch_delta = get_axis_deadzoned(controller.axis(Axis::RightY)) * speed;
+                }
+            }
         }
 
-        if analog_controls {
-            if let Some(controller) = &controller {
-                let speed = 2.0 / state.refresh_rate as f32;
-                state.cam_yaw_delta = -get_axis_deadzoned(controller.axis(Axis::RightX)) * speed;
-                state.cam_pitch_delta = get_axis_deadzoned(controller.axis(Axis::RightY)) * speed;
+        let next_update_time = &mut fps_counter_update_deadlines[fps_counter_accumulator_index];
+        if Instant::now() >= *next_update_time {
+            profiling::scope!("updating performance counters");
+            *next_update_time += Duration::from_secs(1);
+
+            let latest_renders = state.cumulative_render_count;
+            let latest_avg_render_time = state.cumulative_render_time / state.cumulative_render_count.max(1);
+            let latest_avg_update_time = state.cumulative_update_time / state.cumulative_update_count.max(1);
+            state.cumulative_render_count = 0;
+            state.cumulative_update_count = 0;
+            state.cumulative_render_time = Duration::ZERO;
+            state.cumulative_update_time = Duration::ZERO;
+
+            fps_counter_ready |= fps_counter_accumulator_index == fps_counter_accumulators.len() - 1;
+            fps_counter_accumulator_index = (fps_counter_accumulator_index + 1) % fps_counter_accumulators.len();
+            let (fps_store, render_time_store, update_time_store) = &mut fps_counter_accumulators[fps_counter_accumulator_index];
+            *fps_store = latest_renders;
+            *render_time_store = latest_avg_render_time;
+            *update_time_store = latest_avg_update_time;
+
+            if fps_counter_ready {
+                let (fps, render_time, update_time) = fps_counter_accumulators.iter().fold(
+                    (0, Duration::ZERO, Duration::ZERO),
+                    |(acc_fps, acc_r, acc_u), (renders, render_time, update_time)| {
+                        (acc_fps + *renders, acc_r + *render_time, acc_u + *update_time)
+                    },
+                );
+                let render_time = render_time / fps_counter_accumulators.len() as u32;
+                let update_time = update_time / fps_counter_accumulators.len() as u32;
+                let title = format!("sandbox (fps: {fps:4}, render time: {render_time:.2?}, dt: {update_time:.2?})");
+
+                drop(state);
+                profiling::scope!("updating window title (dropped state lock)");
+                let _ = window.set_title(&title);
             }
         }
     }
@@ -322,17 +397,31 @@ fn main_() -> anyhow::Result<()> {
 
 fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
     let mut last_wait_time = Instant::now();
+    let mut last_frame_start = Instant::now();
 
     loop {
-        profiling::scope!("frame");
-        let mut state = state_mutex.lock().unwrap();
-        if !state.running {
-            break;
-        }
-        let dt_duration = Duration::from_micros(1_000_000 / state.refresh_rate as u64);
-
+        let too_slow;
+        let dt_duration;
         {
             profiling::scope!("main loop update");
+
+            let mut state = {
+                profiling::scope!("waiting for lock");
+                state_mutex.lock().unwrap()
+            };
+            if !state.running {
+                break;
+            }
+
+            let frame_start = Instant::now();
+            let real_dt = frame_start - last_frame_start;
+            let fixed_dt = Duration::from_nanos(1_000_000_000 / state.refresh_rate as u64);
+            too_slow = real_dt > (fixed_dt * 12 / 10); // Too slow if last frame was 20% longer than fixed timestep,
+            dt_duration = if too_slow { real_dt } else { fixed_dt }; // fall back to variable timestep when too slow.
+            last_frame_start = frame_start;
+            state.cumulative_update_time += dt_duration;
+            state.cumulative_update_count += 1;
+
             let dt = dt_duration.as_secs_f32();
             {
                 profiling::scope!("apply rotation and movement");
@@ -353,10 +442,10 @@ fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
             }
             state.game_time += dt;
             state.frame += 1;
-            drop(state);
         }
 
-        {
+        if !too_slow {
+            profiling::scope!("sleeping until the next update");
             let deadline = last_wait_time + dt_duration;
             while let Some(wait_left) = deadline.checked_duration_since(Instant::now()) {
                 if wait_left > Duration::from_millis(2) {
@@ -367,8 +456,6 @@ fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
             }
             last_wait_time = Instant::now();
         }
-
-        profiling::finish_frame!();
     }
 }
 
@@ -538,14 +625,19 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
 
     let mut scene = renderer::Scene::new(&physical_device);
     let mut recreate_swapchain = false;
+    let mut prev_duration = Duration::ZERO;
     'running: loop {
         // Rendering preparation, which needs the SharedState:
+        let frame_start;
         let debug_value;
         {
             let mut state = {
                 profiling::scope!("waiting for the next update");
                 loop {
-                    let state = state_mutex.lock().unwrap();
+                    let state = {
+                        profiling::scope!("waiting for lock");
+                        state_mutex.lock().unwrap()
+                    };
                     if !state.running {
                         break 'running;
                     } else if state.frame != prev_frame {
@@ -558,7 +650,13 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
                 }
             };
 
-            profiling::scope!("rendering (scene creation)");
+            profiling::scope!("rendering (scene creation, state locked)");
+
+            frame_start = Instant::now();
+            state.cumulative_render_time += prev_duration;
+            state.cumulative_render_count += 1;
+
+            debug_value = state.debug_value;
 
             if let Some(resize_timestamp) = state.queued_resize {
                 let duration_since_resize = Instant::now() - resize_timestamp;
@@ -572,8 +670,6 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
                     state.queued_resize = None;
                 }
             }
-
-            debug_value = state.debug_value;
 
             scene.clear();
             scene.camera.orientation = Quat::from_rotation_y(state.cam_yaw) * Quat::from_rotation_x(state.cam_pitch);
@@ -645,6 +741,9 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
                     continue;
                 }
             }
+            profiling::finish_frame!();
+
+            prev_duration = Instant::now().duration_since(frame_start);
 
             // Update prev_frame here. If it's a new frame (i.e. prev_frame
             // actually changes its value), we overran the frame deadline.
