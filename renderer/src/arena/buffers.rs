@@ -58,43 +58,40 @@ impl VulkanArena<ForBuffers> {
 
     /// Copies from the `src` to the `dst` using the `uploader`.
     #[profiling::function]
-    pub fn copy_buffer(&mut self, src: Buffer, dst: &Buffer, uploader: &mut Uploader, name: Arguments) -> Result<(), VulkanArenaError> {
+    pub fn copy_buffer(&mut self, src: Buffer, dst: &Buffer, uploader: &mut Uploader, name: Arguments) {
         let &mut Uploader {
             graphics_queue_family,
             transfer_queue_family,
             ..
         } = uploader;
         let buffer_memory_barrier = vk::BufferMemoryBarrier2::default().buffer(dst.inner).offset(0).size(vk::WHOLE_SIZE);
-        uploader
-            .start_upload(
-                src,
-                name,
-                |device, staging_buffer, command_buffer| {
-                    let (src_buf, dst_buf) = (staging_buffer.inner, dst.inner);
-                    let copy_regions = [vk::BufferCopy::default().size(dst.size)];
-                    unsafe { device.cmd_copy_buffer(command_buffer, src_buf, dst_buf, &copy_regions) };
-                    let release_from_transfer_to_graphics = [buffer_memory_barrier
-                        .src_queue_family_index(transfer_queue_family)
-                        .dst_queue_family_index(graphics_queue_family)
-                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                        .src_stage_mask(vk::PipelineStageFlags2::COPY)];
-                    let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&release_from_transfer_to_graphics);
-                    unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
-                },
-                |device, command_buffer| {
-                    let barrier_from_transfer_to_graphics = [buffer_memory_barrier
-                        .src_queue_family_index(transfer_queue_family)
-                        .dst_queue_family_index(graphics_queue_family)
-                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                        .dst_access_mask(vk::AccessFlags2::VERTEX_ATTRIBUTE_READ) // TODO: expose as an arg?
-                        .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                        .dst_stage_mask(vk::PipelineStageFlags2::VERTEX_INPUT)];
-                    let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&barrier_from_transfer_to_graphics);
-                    unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
-                },
-            )
-            .map_err(VulkanArenaError::Upload)?;
-        Ok(())
+        uploader.start_upload(
+            src,
+            name,
+            |device, staging_buffer, command_buffer| {
+                let (src_buf, dst_buf) = (staging_buffer.inner, dst.inner);
+                let copy_regions = [vk::BufferCopy::default().size(dst.size)];
+                unsafe { device.cmd_copy_buffer(command_buffer, src_buf, dst_buf, &copy_regions) };
+                let release_from_transfer_to_graphics = [buffer_memory_barrier
+                    .src_queue_family_index(transfer_queue_family)
+                    .dst_queue_family_index(graphics_queue_family)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)];
+                let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&release_from_transfer_to_graphics);
+                unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+            },
+            |device, command_buffer| {
+                let barrier_from_transfer_to_graphics = [buffer_memory_barrier
+                    .src_queue_family_index(transfer_queue_family)
+                    .dst_queue_family_index(graphics_queue_family)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags2::VERTEX_ATTRIBUTE_READ) // TODO: expose as an arg?
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .dst_stage_mask(vk::PipelineStageFlags2::VERTEX_INPUT)];
+                let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&barrier_from_transfer_to_graphics);
+                unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+            },
+        );
     }
 
     #[profiling::function]
@@ -117,7 +114,7 @@ impl VulkanArena<ForBuffers> {
                     staging_arena.create_staging_buffer(staging_create_info, format_args!("staging buffer for {name}"))?;
                 let staging_data = staging_buffer.data_mut();
                 staging_data.copy_from_slice(src);
-                self.copy_buffer(staging_buffer.buffer, &dst_buffer, uploader, name)?;
+                self.copy_buffer(staging_buffer.buffer, &dst_buffer, uploader, name);
                 Ok(dst_buffer)
             } else {
                 return Err(VulkanArenaError::NotWritable);

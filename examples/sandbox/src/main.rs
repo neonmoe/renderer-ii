@@ -1,4 +1,5 @@
 use std::f32::consts::FRAC_PI_2;
+use std::panic;
 use std::path::Path;
 use std::sync::{Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
@@ -21,18 +22,17 @@ enum SandboxError {
     MsaaSampleCountNotSupported(renderer::vk::SampleCountFlags),
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     #[cfg(feature = "profile-with-tracy")]
     tracy_client::Client::start();
 
-    if let Err(err) = main_() {
-        let message = format!("{:?}", err);
+    panic::set_hook(Box::new(|panic_info| {
+        let message = format!("{panic_info}");
+        log::error!("{message}");
         let _ = show_simple_message_box(MessageBoxFlag::ERROR, "Fatal Error", &message, None);
-        Err(err)
-    } else {
-        // Let the OS clean up the rest.
-        std::process::exit(0);
-    }
+    }));
+
+    main_();
 }
 
 /// Shared between the three threads using a mutex, used as follows:
@@ -84,16 +84,16 @@ struct SharedState {
     cumulative_update_count: u32,
 }
 
-fn main_() -> anyhow::Result<()> {
+fn main_() {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Trace)).unwrap();
 
     let sdl_context = {
         profiling::scope!("SDL init");
-        sdl2::init().map_err(SandboxError::Sdl)?
+        sdl2::init().map_err(SandboxError::Sdl).unwrap()
     };
     let video_subsystem = {
         profiling::scope!("SDL video subsystem init");
-        sdl_context.video().map_err(SandboxError::Sdl)?
+        sdl_context.video().map_err(SandboxError::Sdl).unwrap()
     };
 
     let mut window = {
@@ -104,7 +104,8 @@ fn main_() -> anyhow::Result<()> {
             .resizable()
             .allow_highdpi()
             .vulkan()
-            .build()?
+            .build()
+            .unwrap()
     };
 
     let (width, height) = window.vulkan_drawable_size();
@@ -155,8 +156,9 @@ fn main_() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
         env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
         env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
-    )?;
-    let surface = renderer::create_surface(&instance.entry, &instance.inner, &window, &window)?;
+    )
+    .unwrap();
+    let surface = renderer::create_surface(&instance.entry, &instance.inner, &window, &window).unwrap();
     let rendering_thread = std::thread::Builder::new()
         .name(format!("{}-render", env!("CARGO_CRATE_NAME")))
         .spawn({
@@ -196,7 +198,7 @@ fn main_() -> anyhow::Result<()> {
         *deadline = now + Duration::from_secs(1) * i as u32 / FPS_COUNTER_UPDATES_PER_SECOND as u32;
     }
 
-    let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl)?;
+    let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl).unwrap();
     let mut opened_controller = None;
     'main: loop {
         if let Some(which) = opened_controller {
@@ -390,9 +392,7 @@ fn main_() -> anyhow::Result<()> {
     }
 
     game_thread.join().unwrap();
-    rendering_thread.join().unwrap()?;
-
-    Ok(())
+    rendering_thread.join().unwrap().unwrap();
 }
 
 fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
@@ -552,7 +552,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         device.transfer_queue,
         &physical_device,
         "sandbox assets",
-    )?;
+    );
 
     print_memory_usage("after arena creation");
 
@@ -582,11 +582,11 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         &mut texture_arena,
         &mut vertex_library_builder,
     )?;
-    vertex_library_builder.upload(&mut uploader, &mut buffer_arena)?;
+    vertex_library_builder.upload(&mut uploader, &mut buffer_arena);
     let upload_wait_start = Instant::now();
     {
         profiling::scope!("wait for uploads to finish");
-        assert!(uploader.wait(Some(Duration::from_secs(5)))?);
+        assert!(uploader.wait(Some(Duration::from_secs(5))));
     }
     let now = Instant::now();
     log::info!(

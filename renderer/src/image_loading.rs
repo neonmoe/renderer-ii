@@ -8,7 +8,7 @@ use crate::arena::buffers::ForBuffers;
 use crate::arena::images::ForImages;
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::TEXTURE_FORMATS;
-use crate::uploader::{UploadError, Uploader};
+use crate::uploader::Uploader;
 use crate::vulkan_raii::{Device, ImageView};
 
 pub mod ntex;
@@ -20,8 +20,6 @@ pub enum ImageLoadingError {
     StagingBufferCreation(#[source] VulkanArenaError),
     #[error("failed to create the image")]
     ImageCreation(#[source] VulkanArenaError),
-    #[error("failed to start upload for image")]
-    StartTextureUpload(#[source] UploadError),
     #[error("failed to create the image view")]
     ImageViewCreation(#[source] vk::Result),
 }
@@ -149,98 +147,96 @@ pub fn load_image(
             .map_err(ImageLoadingError::ImageCreation)?
     };
 
-    uploader
-        .start_upload(
-            staging_buffer,
-            format_args!("{debug_identifier}"),
-            |device, staging_buffer, command_buffer| {
-                let mut current_mip_level_extent = extent;
-                for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
-                    profiling::scope!("vk::cmd_copy_buffer_to_image");
-                    let subresource_range = vk::ImageSubresourceRange::default()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .base_mip_level(mip_level as u32)
-                        .level_count(1)
-                        .base_array_layer(0)
-                        .layer_count(1);
-                    let layout_to_transfer_dst = [vk::ImageMemoryBarrier2::default()
-                        .image(image_allocation.inner)
-                        .subresource_range(subresource_range)
-                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                        .old_layout(vk::ImageLayout::UNDEFINED)
-                        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                        .src_access_mask(vk::AccessFlags2::NONE)
-                        .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                        .src_stage_mask(vk::PipelineStageFlags2::NONE)
-                        .dst_stage_mask(vk::PipelineStageFlags2::COPY)];
-                    let dep_info = vk::DependencyInfo::default().image_memory_barriers(&layout_to_transfer_dst);
-                    unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+    uploader.start_upload(
+        staging_buffer,
+        format_args!("{debug_identifier}"),
+        |device, staging_buffer, command_buffer| {
+            let mut current_mip_level_extent = extent;
+            for (mip_level, mip_range) in mip_ranges.iter().enumerate() {
+                profiling::scope!("vk::cmd_copy_buffer_to_image");
+                let subresource_range = vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(mip_level as u32)
+                    .level_count(1)
+                    .base_array_layer(0)
+                    .layer_count(1);
+                let layout_to_transfer_dst = [vk::ImageMemoryBarrier2::default()
+                    .image(image_allocation.inner)
+                    .subresource_range(subresource_range)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .src_access_mask(vk::AccessFlags2::NONE)
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::COPY)];
+                let dep_info = vk::DependencyInfo::default().image_memory_barriers(&layout_to_transfer_dst);
+                unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
 
-                    let subresource_layers_dst = vk::ImageSubresourceLayers::default()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .mip_level(mip_level as u32)
-                        .base_array_layer(0)
-                        .layer_count(1);
-                    // NOTE: Only works for square block sizes. May cause issues down the line.
-                    let texel_size = (mip_range.len() as f32).sqrt() as u32;
-                    let image_copy_region = vk::BufferImageCopy::default()
-                        .buffer_offset(mip_range.start as vk::DeviceSize)
-                        .buffer_row_length(current_mip_level_extent.width.max(texel_size))
-                        .buffer_image_height(current_mip_level_extent.height.max(texel_size))
-                        .image_subresource(subresource_layers_dst)
-                        .image_extent(current_mip_level_extent);
-                    unsafe {
-                        device.cmd_copy_buffer_to_image(
-                            command_buffer,
-                            staging_buffer.inner,
-                            image_allocation.inner,
-                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                            &[image_copy_region],
-                        );
-                    }
-
-                    let release_to_graphics_queue = [vk::ImageMemoryBarrier2::default()
-                        .image(image_allocation.inner)
-                        .subresource_range(subresource_range)
-                        .src_queue_family_index(transfer_queue_family)
-                        .dst_queue_family_index(graphics_queue_family)
-                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                        .src_stage_mask(vk::PipelineStageFlags2::COPY)];
-                    let dep_info = vk::DependencyInfo::default().image_memory_barriers(&release_to_graphics_queue);
-                    unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
-
-                    current_mip_level_extent.width = (current_mip_level_extent.width / 2).max(1);
-                    current_mip_level_extent.height = (current_mip_level_extent.height / 2).max(1);
-                    current_mip_level_extent.depth = (current_mip_level_extent.depth / 2).max(1);
+                let subresource_layers_dst = vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .mip_level(mip_level as u32)
+                    .base_array_layer(0)
+                    .layer_count(1);
+                // NOTE: Only works for square block sizes. May cause issues down the line.
+                let texel_size = (mip_range.len() as f32).sqrt() as u32;
+                let image_copy_region = vk::BufferImageCopy::default()
+                    .buffer_offset(mip_range.start as vk::DeviceSize)
+                    .buffer_row_length(current_mip_level_extent.width.max(texel_size))
+                    .buffer_image_height(current_mip_level_extent.height.max(texel_size))
+                    .image_subresource(subresource_layers_dst)
+                    .image_extent(current_mip_level_extent);
+                unsafe {
+                    device.cmd_copy_buffer_to_image(
+                        command_buffer,
+                        staging_buffer.inner,
+                        image_allocation.inner,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &[image_copy_region],
+                    );
                 }
-            },
-            |device, command_buffer| {
-                for mip_level in 0..mip_ranges.len() {
-                    profiling::scope!("record transfer->shader barrier");
-                    let subresource_range = vk::ImageSubresourceRange::default()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .base_mip_level(mip_level as u32)
-                        .level_count(1)
-                        .base_array_layer(0)
-                        .layer_count(1);
-                    let layout_to_shader_and_acquire_from_transfer_queue = [vk::ImageMemoryBarrier2::default()
-                        .image(image_allocation.inner)
-                        .subresource_range(subresource_range)
-                        .src_queue_family_index(transfer_queue_family)
-                        .dst_queue_family_index(graphics_queue_family)
-                        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                        .dst_access_mask(vk::AccessFlags2::SHADER_READ)
-                        .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                        .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)];
-                    let dep_info = vk::DependencyInfo::default().image_memory_barriers(&layout_to_shader_and_acquire_from_transfer_queue);
-                    unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
-                }
-            },
-        )
-        .map_err(ImageLoadingError::StartTextureUpload)?;
+
+                let release_to_graphics_queue = [vk::ImageMemoryBarrier2::default()
+                    .image(image_allocation.inner)
+                    .subresource_range(subresource_range)
+                    .src_queue_family_index(transfer_queue_family)
+                    .dst_queue_family_index(graphics_queue_family)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)];
+                let dep_info = vk::DependencyInfo::default().image_memory_barriers(&release_to_graphics_queue);
+                unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+
+                current_mip_level_extent.width = (current_mip_level_extent.width / 2).max(1);
+                current_mip_level_extent.height = (current_mip_level_extent.height / 2).max(1);
+                current_mip_level_extent.depth = (current_mip_level_extent.depth / 2).max(1);
+            }
+        },
+        |device, command_buffer| {
+            for mip_level in 0..mip_ranges.len() {
+                profiling::scope!("record transfer->shader barrier");
+                let subresource_range = vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(mip_level as u32)
+                    .level_count(1)
+                    .base_array_layer(0)
+                    .layer_count(1);
+                let layout_to_shader_and_acquire_from_transfer_queue = [vk::ImageMemoryBarrier2::default()
+                    .image(image_allocation.inner)
+                    .subresource_range(subresource_range)
+                    .src_queue_family_index(transfer_queue_family)
+                    .dst_queue_family_index(graphics_queue_family)
+                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)];
+                let dep_info = vk::DependencyInfo::default().image_memory_barriers(&layout_to_shader_and_acquire_from_transfer_queue);
+                unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+            }
+        },
+    );
 
     let image_view = {
         let subresource_range = vk::ImageSubresourceRange::default()

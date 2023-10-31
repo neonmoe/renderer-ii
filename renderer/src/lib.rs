@@ -4,9 +4,11 @@
 //! Currently targeting the
 //! [VP_LUNARG_desktop_baseline_2023](https://vulkan.lunarg.com/doc/sdk/latest/windows/profiles_definitions.html)
 //! Vulkan Profile.
-
-// TODO: Replace map_err()?'s with unwraps where the error is not special and it isn't plausible to ignore
-// Unwraps are just less code and they still allow locating the line where it crashed.
+//!
+//! Vulkan error handling policy: if the returned error is "out of host/device
+//! memory" or "device lost", it is handled by panicking. If the function is
+//! specifically for allocating a `VkDeviceMemory`, "out of device memory" is
+//! handled by returning a Result with an appropriate error.
 
 #![warn(clippy::pedantic)]
 #![warn(clippy::std_instead_of_alloc)]
@@ -140,7 +142,7 @@ pub use renderer::pipeline_parameters::PipelineIndex;
 pub use renderer::pipelines::{PipelineCreationError, Pipelines};
 pub use renderer::scene::camera::Camera;
 pub use renderer::scene::coordinate_system::CoordinateSystem;
-pub use renderer::scene::mesh::{Mesh, IndexType};
+pub use renderer::scene::mesh::{IndexType, Mesh};
 pub use renderer::scene::{JointOffset, Scene, SkinnedModel, StaticDraws};
 pub use renderer::swapchain::{Swapchain, SwapchainBase, SwapchainError, SwapchainSettings};
 pub use renderer::{Renderer, RendererError};

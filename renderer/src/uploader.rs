@@ -6,51 +6,6 @@ use ash::vk;
 use crate::physical_device::PhysicalDevice;
 use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
 
-/// General errors related to the creation and usage of [Uploader]. The actual
-/// uploads have their own error type, [`UploadError`].
-#[derive(thiserror::Error, Debug)]
-pub enum UploaderError {
-    #[error("failed to wait for uploader's vulkan fences")]
-    FenceWait(#[source] vk::Result),
-    #[error("tried to reset uploader while some uploads are still in progress (or the device has been lost)")]
-    NotResettable,
-    #[error("failed to create uploader transfer command pool (out of memory?)")]
-    TransferCommandPoolCreation(#[source] vk::Result),
-    #[error("failed to create uploader graphics command pool (out of memory?)")]
-    GraphicsCommandPoolCreation(#[source] vk::Result),
-    #[error("failed to reset uploader transfer command pool")]
-    TransferCommandPoolReset(#[source] vk::Result),
-    #[error("failed to reset uploader graphics command pool")]
-    GraphicsCommandPoolReset(#[source] vk::Result),
-}
-
-/// Errors that may be generated when starting an upload with [Uploader].
-#[derive(thiserror::Error, Debug)]
-pub enum UploadError {
-    #[error("failed to create uploader transfer command buffer (out of memory?)")]
-    TransferCommandBufferCreation(#[source] vk::Result),
-    #[error("failed to create uploader graphics command buffer (out of memory?)")]
-    GraphicsCommandBufferCreation(#[source] vk::Result),
-    #[error("failed to reset uploader vulkan fence")]
-    FenceReset(#[source] vk::Result),
-    #[error("failed to create vulkan fence for uploader (out of memory?)")]
-    FenceCreation(#[source] vk::Result),
-    #[error("failed to create vulkan semaphore for uploader (out of memory?)")]
-    SemaphoreCreation(#[source] vk::Result),
-    #[error("failed to begin transfer command buffer for upload")]
-    TransferCommandBufferBegin(#[source] vk::Result),
-    #[error("failed to end transfer command buffer for upload")]
-    TransferCommandBufferEnd(#[source] vk::Result),
-    #[error("failed to begin graphics command buffer for upload")]
-    GraphicsCommandBufferBegin(#[source] vk::Result),
-    #[error("failed to end graphics command buffer for upload")]
-    GraphicsCommandBufferEnd(#[source] vk::Result),
-    #[error("failed to submit uploader transfer commands")]
-    TransferQueueSubmit(#[source] vk::Result),
-    #[error("failed to submit uploader graphics commands")]
-    GraphicsQueueSubmit(#[source] vk::Result),
-}
-
 pub struct Uploader {
     pub graphics_queue_family: u32,
     pub transfer_queue_family: u32,
@@ -74,7 +29,7 @@ impl Uploader {
         transfer_queue: vk::Queue,
         physical_device: &PhysicalDevice,
         debug_identifier: &'static str,
-    ) -> Result<Uploader, UploaderError> {
+    ) -> Uploader {
         profiling::scope!("uploader creation");
 
         let transfer_command_pool = {
@@ -83,7 +38,7 @@ impl Uploader {
                 .queue_family_index(physical_device.transfer_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
-                .map_err(UploaderError::TransferCommandPoolCreation)?;
+                .expect("system should have enough memory to create vulkan command pools");
             crate::name_vulkan_object(device, command_pool, format_args!("upload cmds (T) for {debug_identifier}"));
             CommandPool {
                 inner: command_pool,
@@ -97,7 +52,7 @@ impl Uploader {
                 .queue_family_index(physical_device.graphics_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
-                .map_err(UploaderError::GraphicsCommandPoolCreation)?;
+                .expect("system should have enough memory to create vulkan command pools");
             crate::name_vulkan_object(device, command_pool, format_args!("upload cmds (G) for {debug_identifier}"));
             CommandPool {
                 inner: command_pool,
@@ -105,7 +60,7 @@ impl Uploader {
             }
         };
 
-        Ok(Uploader {
+        Uploader {
             graphics_queue_family: physical_device.graphics_queue_family.index,
             transfer_queue_family: physical_device.transfer_queue_family.index,
             device: device.clone(),
@@ -119,7 +74,7 @@ impl Uploader {
             transfer_semaphores: Vec::new(),
             free_semaphores: Vec::new(),
             debug_identifier,
-        })
+        }
     }
 
     pub fn get_upload_statuses(&self) -> impl Iterator<Item = bool> + '_ {
@@ -137,7 +92,7 @@ impl Uploader {
     /// uploads as a whole, as opposed to the status of every individual upload
     /// operation with [`Uploader::get_upload_statuses`], which may be more
     /// inefficient.
-    pub fn wait(&self, timeout: Option<Duration>) -> Result<bool, UploaderError> {
+    pub fn wait(&self, timeout: Option<Duration>) -> bool {
         let timeout = if let Some(timeout) = timeout {
             timeout.as_nanos() as u64
         } else {
@@ -146,12 +101,12 @@ impl Uploader {
         profiling::scope!("waiting on uploader fences");
         let fences = self.upload_fences.iter().map(|fence| fence.inner).collect::<Vec<_>>();
         if fences.is_empty() {
-            Ok(true)
+            true
         } else {
             match unsafe { self.device.wait_for_fences(&fences, true, timeout) } {
-                Ok(()) => Ok(true),
-                Err(vk::Result::TIMEOUT) => Ok(false),
-                Err(err) => Err(UploaderError::FenceWait(err)),
+                Ok(()) => true,
+                Err(vk::Result::TIMEOUT) => false,
+                Err(err) => panic!("waiting for uploader vulkan fences should not fail: {err}"),
             }
         }
     }
@@ -162,12 +117,11 @@ impl Uploader {
         debug_identifier: Arguments,
         queue_transfer_commands: F,
         queue_graphics_commands: G,
-    ) -> Result<(), UploadError>
-    where
+    ) where
         F: Fn(&Device, &Buffer, vk::CommandBuffer),
         G: Fn(&Device, vk::CommandBuffer),
     {
-        self._start_upload(staging_buffer, debug_identifier, &queue_transfer_commands, &queue_graphics_commands)
+        self._start_upload(staging_buffer, debug_identifier, &queue_transfer_commands, &queue_graphics_commands);
     }
 
     fn _start_upload(
@@ -176,32 +130,34 @@ impl Uploader {
         debug_identifier: Arguments,
         queue_transfer_commands: &dyn Fn(&Device, &Buffer, vk::CommandBuffer),
         queue_graphics_commands: &dyn Fn(&Device, vk::CommandBuffer),
-    ) -> Result<(), UploadError> {
+    ) {
         profiling::scope!("start upload");
+        // TODO: Create command buffers on init, use the same ones for all uploads? One per thread?
         let [transfer_cmdbuf, graphics_cmdbuf] = {
             profiling::scope!("allocate command buffers");
             let transfer = vk::CommandBufferAllocateInfo::default()
                 .command_pool(self.transfer_command_pool.inner)
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
-            let transfer_buffers =
-                unsafe { self.device.allocate_command_buffers(&transfer) }.map_err(UploadError::TransferCommandBufferCreation)?;
+            let transfer_buffers = unsafe { self.device.allocate_command_buffers(&transfer) }
+                .expect("system should have enough memory to allocate vulkan command buffers");
             let graphics = vk::CommandBufferAllocateInfo::default()
                 .command_pool(self.graphics_command_pool.inner)
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
-            let graphics_buffers =
-                unsafe { self.device.allocate_command_buffers(&graphics) }.map_err(UploadError::GraphicsCommandBufferCreation)?;
+            let graphics_buffers = unsafe { self.device.allocate_command_buffers(&graphics) }
+                .expect("system should have enough memory to allocate vulkan command buffers");
             [transfer_buffers[0], graphics_buffers[0]]
         };
 
         let upload_fence = if let Some(fence) = self.free_fences.pop() {
             let fences = [fence.inner];
-            unsafe { self.device.reset_fences(&fences) }.map_err(UploadError::FenceReset)?;
+            unsafe { self.device.reset_fences(&fences) }.expect("resetting uploader vulkan fences should not fail");
             fence
         } else {
             profiling::scope!("create fence");
-            let fence = unsafe { self.device.create_fence(&vk::FenceCreateInfo::default(), None) }.map_err(UploadError::FenceCreation)?;
+            let fence = unsafe { self.device.create_fence(&vk::FenceCreateInfo::default(), None) }
+                .expect("system should have enough memory to create a vulkan fence");
             Fence {
                 inner: fence,
                 device: self.device.clone(),
@@ -221,7 +177,7 @@ impl Uploader {
         } else {
             profiling::scope!("create semaphore");
             let semaphore = unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
-                .map_err(UploadError::SemaphoreCreation)?;
+                .expect("system should have enough memory to create a vulkan semaphore");
             Semaphore {
                 inner: semaphore,
                 device: self.device.clone(),
@@ -237,28 +193,28 @@ impl Uploader {
             profiling::scope!("record commands for transfer queue");
             let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { self.device.begin_command_buffer(transfer_cmdbuf, &command_buffer_begin_info) }
-                .map_err(UploadError::TransferCommandBufferBegin)?;
+                .expect("beginning vulkan command buffer recording should not fail");
             crate::name_vulkan_object(
                 &self.device,
                 transfer_cmdbuf,
                 format_args!("upload cmds (T) for {}: {}", self.debug_identifier, debug_identifier),
             );
             queue_transfer_commands(&self.device, &staging_buffer, transfer_cmdbuf);
-            unsafe { self.device.end_command_buffer(transfer_cmdbuf) }.map_err(UploadError::TransferCommandBufferEnd)?;
+            unsafe { self.device.end_command_buffer(transfer_cmdbuf) }.expect("ending vulkan command buffer recording should not fail");
         }
 
         {
             profiling::scope!("record commands for graphics queue");
             let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe { self.device.begin_command_buffer(graphics_cmdbuf, &command_buffer_begin_info) }
-                .map_err(UploadError::GraphicsCommandBufferBegin)?;
+                .expect("beginning vulkan command buffer recording should not fail");
             crate::name_vulkan_object(
                 &self.device,
                 graphics_cmdbuf,
                 format_args!("upload cmds (G) for {}: {}", self.debug_identifier, debug_identifier),
             );
             queue_graphics_commands(&self.device, graphics_cmdbuf);
-            unsafe { self.device.end_command_buffer(graphics_cmdbuf) }.map_err(UploadError::GraphicsCommandBufferEnd)?;
+            unsafe { self.device.end_command_buffer(graphics_cmdbuf) }.expect("ending vulkan command buffer recording should not fail");
         }
 
         {
@@ -271,8 +227,8 @@ impl Uploader {
             unsafe {
                 self.device
                     .queue_submit(self.transfer_queue, &submit_infos, vk::Fence::null())
-                    .map_err(UploadError::TransferQueueSubmit)
-            }?;
+                    .expect("vulkan queue submission should not fail");
+            }
         }
 
         {
@@ -287,20 +243,21 @@ impl Uploader {
             unsafe {
                 self.device
                     .queue_submit(self.graphics_queue, &submit_infos, upload_fence.inner)
-                    .map_err(UploadError::GraphicsQueueSubmit)
-            }?;
+                    .expect("vulkan queue submission should not fail");
+            }
         }
 
         self.staging_buffers.push(staging_buffer);
         self.upload_fences.push(upload_fence);
         self.transfer_semaphores.push(transfer_signal_semaphore);
-        Ok(())
     }
 
-    pub fn reset(&mut self) -> Result<(), UploaderError> {
+    /// Resets the uploader if all uploads have finished, and returns true.
+    /// Returns false if there are still uploads in progress.
+    pub fn reset(&mut self) -> bool {
         profiling::scope!("uploader reset");
         if self.get_upload_statuses().any(|uploaded| !uploaded) {
-            return Err(UploaderError::NotResettable);
+            return false;
         }
         self.staging_buffers.clear();
         self.free_fences.append(&mut self.upload_fences);
@@ -308,13 +265,11 @@ impl Uploader {
         unsafe {
             self.device
                 .reset_command_pool(self.transfer_command_pool.inner, vk::CommandPoolResetFlags::empty())
-                .map_err(UploaderError::TransferCommandPoolReset)
-        }?;
-        unsafe {
+                .expect("resetting a vulkan command pool should not fail");
             self.device
                 .reset_command_pool(self.graphics_command_pool.inner, vk::CommandPoolResetFlags::empty())
-                .map_err(UploaderError::GraphicsCommandPoolReset)
-        }?;
-        Ok(())
+                .expect("resetting a vulkan command pool should not fail");
+        }
+        true
     }
 }

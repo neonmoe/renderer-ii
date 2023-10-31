@@ -67,8 +67,7 @@ fn main() {
         device.transfer_queue,
         &physical_device,
         "triangle assets",
-    )
-    .unwrap();
+    );
 
     let pbr_defaults =
         renderer::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena).unwrap();
@@ -102,7 +101,7 @@ fn main() {
             renderer::VertexLibraryBuilder::new(&mut staging_arena, &mut buffer_arena, measurer, format_args!("triangle mesh")).unwrap();
         let mesh1 = builder.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
         let mesh2 = builder.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
-        builder.upload(&mut uploader, &mut buffer_arena).unwrap();
+        builder.upload(&mut uploader, &mut buffer_arena);
         (mesh1, mesh2)
     };
 
@@ -125,7 +124,7 @@ fn main() {
     )
     .unwrap();
 
-    uploader.wait(None).unwrap();
+    uploader.wait(None);
     drop(uploader);
     drop(staging_arena);
 

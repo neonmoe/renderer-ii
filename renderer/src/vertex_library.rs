@@ -180,20 +180,19 @@ impl VertexLibraryBuilder<'_> {
         }
     }
 
-    pub fn upload(self, uploader: &mut Uploader, arena: &mut VulkanArena<ForBuffers>) -> Result<(), VulkanArenaError> {
+    pub fn upload(self, uploader: &mut Uploader, arena: &mut VulkanArena<ForBuffers>) {
         arena.copy_buffer(
             self.vertex_staging.buffer,
             &self.library.vertex_buffer,
             uploader,
             format_args!("{} (vertex buffer)", self.debug_id),
-        )?;
+        );
         arena.copy_buffer(
             self.index_staging.buffer,
             &self.library.index_buffer,
             uploader,
             format_args!("{} (index buffer)", self.debug_id),
-        )?;
-        Ok(())
+        );
     }
 }
 

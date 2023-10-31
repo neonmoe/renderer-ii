@@ -8,7 +8,6 @@ use core::sync::atomic::Ordering;
 use ash::{vk, Instance};
 
 use crate::physical_device::PhysicalDevice;
-use crate::uploader::UploadError;
 use crate::vulkan_raii::{Buffer, Device, DeviceMemory};
 
 pub(crate) mod buffers;
@@ -35,8 +34,6 @@ pub enum VulkanArenaError {
     },
     #[error("tried to write to arena without HOST_VISIBLE | HOST_COHERENT without providing an uploader and/or staging memory")]
     NotWritable,
-    #[error("failed to start upload for transferring the staging memory to device local memory")]
-    Upload(#[source] UploadError),
     #[error("failed to create buffer {0:?} (probably out of host or device memory)")]
     BufferCreation(#[source] vk::Result),
     #[error("failed to bind buffer to arena memory (probably out of host or device memory)")]
