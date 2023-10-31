@@ -15,7 +15,8 @@ impl ArenaType for ForImages {
 impl VulkanArena<ForImages> {
     pub fn create_image(&mut self, image_create_info: vk::ImageCreateInfo, name: Arguments) -> Result<Image, VulkanArenaError> {
         profiling::scope!("vulkan image creation");
-        let image = unsafe { self.device.create_image(&image_create_info, None) }.map_err(VulkanArenaError::ImageCreation)?;
+        let image = unsafe { self.device.create_image(&image_create_info, None) }
+            .expect("system should have enough memory to allocate vulkan images");
         let image_memory_requirements = unsafe { self.device.get_image_memory_requirements(image) };
         let alignment = image_memory_requirements.alignment;
 
@@ -32,11 +33,11 @@ impl VulkanArena<ForImages> {
             });
         }
 
-        match unsafe { self.device.bind_image_memory(image, self.memory.inner, offset) }.map_err(VulkanArenaError::ImageBinding) {
+        match unsafe { self.device.bind_image_memory(image, self.memory.inner, offset) } {
             Ok(()) => {}
             Err(err) => {
                 unsafe { self.device.destroy_image(image, None) };
-                return Err(err);
+                panic!("vulkan image memory binding should not fail: {err}");
             }
         }
 

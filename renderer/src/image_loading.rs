@@ -20,8 +20,6 @@ pub enum ImageLoadingError {
     StagingBufferCreation(#[source] VulkanArenaError),
     #[error("failed to create the image")]
     ImageCreation(#[source] VulkanArenaError),
-    #[error("failed to create the image view")]
-    ImageViewCreation(#[source] vk::Result),
 }
 
 pub struct ImageData<'a> {
@@ -252,7 +250,7 @@ pub fn load_image(
             .subresource_range(subresource_range);
 
         let image_view =
-            unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(ImageLoadingError::ImageViewCreation)?;
+            unsafe { device.create_image_view(&image_view_create_info, None) }.expect("vulkan image view creation should not fail");
         ImageView {
             inner: image_view,
             device: device.clone(),

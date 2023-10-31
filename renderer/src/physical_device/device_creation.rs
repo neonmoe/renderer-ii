@@ -12,8 +12,6 @@ use crate::vulkan_raii::Device;
 pub enum DeviceError {
     #[error("vulkan device creation failed")]
     DeviceCreation(#[source] vk::Result),
-    #[error("waiting for vulkan device to become idle failed")]
-    DeviceWaitIdle(#[source] vk::Result),
 }
 
 impl PhysicalDevice {

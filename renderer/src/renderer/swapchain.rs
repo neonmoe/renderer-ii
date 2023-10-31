@@ -11,14 +11,10 @@ use crate::vulkan_raii::{self, AnyImage, Device, Surface};
 pub enum SwapchainError {
     #[error("the old swapchain is still in use")]
     OldSwapchainInUse,
-    #[error("failed to get swapchain images")]
-    GetSwapchainImages(#[source] vk::Result),
-    #[error("failed to get present modes supported by the physical device")]
-    GetPhysicalDevicePresentModes(#[source] vk::Result),
-    #[error("failed to get surface capabilities (for resolution) from the physical device")]
-    GetPhysicalDeviceSurfaceCapabilities(#[source] vk::Result),
+    #[error("surface needs to be recreated")]
+    SurfaceRecreationRequired(#[source] vk::Result),
     #[error("failed to create swapchain (window issues?)")]
-    SwapchainCreation(#[source] vk::Result),
+    CreationFailed(#[source] vk::Result),
 }
 
 pub struct SwapchainSettings {
@@ -66,7 +62,7 @@ impl Swapchain {
         });
 
         let images = unsafe { device.swapchain.get_swapchain_images(swapchain.inner) }
-            .map_err(SwapchainError::GetSwapchainImages)?
+            .expect("system should return swapchain images for presenting")
             .into_iter()
             .map(|image| Rc::new(AnyImage::Swapchain(image, swapchain.clone())))
             .collect::<ArrayVec<_, 8>>();
@@ -116,7 +112,7 @@ impl Swapchain {
 
         self.images.extend(
             unsafe { device.swapchain.get_swapchain_images(self.swapchain.inner) }
-                .map_err(SwapchainError::GetSwapchainImages)?
+                .expect("system should return swapchain images for presenting")
                 .into_iter()
                 .map(|image| Rc::new(AnyImage::Swapchain(image, self.swapchain.clone()))),
         );
@@ -165,8 +161,11 @@ fn create_swapchain(
     queue_family_indices: &[u32],
     settings: &SwapchainSettings,
 ) -> Result<(vk::SwapchainKHR, vk::Extent2D), SwapchainError> {
-    let present_modes = unsafe { surface_ext.get_physical_device_surface_present_modes(physical_device.inner, surface) }
-        .map_err(SwapchainError::GetPhysicalDevicePresentModes)?;
+    let present_modes = match unsafe { surface_ext.get_physical_device_surface_present_modes(physical_device.inner, surface) } {
+        Ok(modes) => modes,
+        Err(err @ vk::Result::ERROR_SURFACE_LOST_KHR) => return Err(SwapchainError::SurfaceRecreationRequired(err)),
+        Err(err) => panic!("enumerating vulkan surface present modes should not fail: {err}"),
+    };
     let mut present_mode = vk::PresentModeKHR::FIFO;
     if settings.immediate_present {
         if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
@@ -176,11 +175,11 @@ fn create_swapchain(
         }
     }
 
-    let surface_capabilities = unsafe {
-        surface_ext
-            .get_physical_device_surface_capabilities(physical_device.inner, surface)
-            .map_err(SwapchainError::GetPhysicalDeviceSurfaceCapabilities)
-    }?;
+    let surface_capabilities = match unsafe { surface_ext.get_physical_device_surface_capabilities(physical_device.inner, surface) } {
+        Ok(caps) => caps,
+        Err(err @ vk::Result::ERROR_SURFACE_LOST_KHR) => return Err(SwapchainError::SurfaceRecreationRequired(err)),
+        Err(err) => panic!("enumerating vulkan surface capabilities should not fail: {err}"),
+    };
     let unset_extent = vk::Extent2D {
         width: u32::MAX,
         height: u32::MAX,
@@ -217,7 +216,13 @@ fn create_swapchain(
     if let Some(old_swapchain) = old_swapchain {
         swapchain_create_info = swapchain_create_info.old_swapchain(old_swapchain);
     }
-    let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) }.map_err(SwapchainError::SwapchainCreation)?;
+    let swapchain = match unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) } {
+        Ok(swapchain) => swapchain,
+        Err(err @ (vk::Result::ERROR_SURFACE_LOST_KHR | vk::Result::ERROR_NATIVE_WINDOW_IN_USE_KHR)) => {
+            return Err(SwapchainError::SurfaceRecreationRequired(err))
+        }
+        Err(err) => return Err(SwapchainError::CreationFailed(err)),
+    };
 
     Ok((swapchain, swapchain_create_info.image_extent))
 }

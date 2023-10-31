@@ -7,16 +7,6 @@ use crate::renderer::pipeline_parameters::render_passes::{AttachmentFormats, Att
 use crate::renderer::pipeline_parameters::{PipelineMap, Shader, ALL_PIPELINES, PIPELINE_COUNT, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout};
 
-#[derive(thiserror::Error, Debug, Clone, Copy)]
-pub enum PipelineCreationError {
-    #[error("failed to create vulkan render pass object")]
-    RenderPass(#[source] vk::Result),
-    #[error("failed to create shader module (compilation issue?)")]
-    ShaderModule(#[source] vk::Result),
-    #[error("failed to create vulkan pipeline object")]
-    Object(#[source] vk::Result),
-}
-
 pub struct Pipelines {
     pub(crate) pipelines: PipelineMap<vulkan_raii::Pipeline>,
     pub(crate) attachment_sample_count: vk::SampleCountFlags,
@@ -31,7 +21,7 @@ impl Pipelines {
         attachment_sample_count: vk::SampleCountFlags,
         attachment_formats: &AttachmentFormats,
         old_pipelines: Option<Pipelines>,
-    ) -> Result<Pipelines, PipelineCreationError> {
+    ) -> Pipelines {
         let (vk_pipelines, pipeline_cache) = create_pipelines(
             device,
             &descriptors.pipeline_layouts,
@@ -39,22 +29,22 @@ impl Pipelines {
             attachment_formats,
             extent,
             old_pipelines.and_then(|pipelines| pipelines.pipeline_cache),
-        )?;
+        );
         let mut vk_pipelines_iter = vk_pipelines.into_iter();
-        let pipelines = PipelineMap::new::<PipelineCreationError, _>(|name| {
+        let pipelines = PipelineMap::from_infallible(|name| {
             let pipeline = vk_pipelines_iter.next().unwrap();
             crate::name_vulkan_object(device, pipeline, format_args!("{name:?}"));
-            Ok(vulkan_raii::Pipeline {
+            vulkan_raii::Pipeline {
                 inner: pipeline,
                 device: device.clone(),
-            })
-        })?;
+            }
+        });
 
-        Ok(Pipelines {
+        Pipelines {
             pipelines,
             attachment_sample_count,
             pipeline_cache,
-        })
+        }
     }
 }
 
@@ -66,28 +56,30 @@ fn create_pipelines(
     attachment_formats: &AttachmentFormats,
     extent: vk::Extent2D,
     mut pipeline_cache: Option<PipelineCache>,
-) -> Result<(Vec<vk::Pipeline>, Option<PipelineCache>), PipelineCreationError> {
+) -> (Vec<vk::Pipeline>, Option<PipelineCache>) {
     let mut all_shader_modules = HashMap::with_capacity(PIPELINE_PARAMETERS.len() * 2);
-    let mut create_shader_module = |(filename, spirv): (&'static str, &'static [u32])| -> Result<vk::ShaderModule, PipelineCreationError> {
+    let mut create_shader_module = |(filename, spirv): (&'static str, &'static [u32])| -> vk::ShaderModule {
         *all_shader_modules.entry((filename, spirv)).or_insert_with(|| {
             #[cfg(target_endian = "big")]
             let spirv = &ash::util::read_spv(&mut std::io::Cursor::new(bytemuck::cast_slice(spirv))).unwrap();
             let create_info = vk::ShaderModuleCreateInfo::default().code(spirv);
-            let shader_module = unsafe { device.create_shader_module(&create_info, None) }.map_err(PipelineCreationError::ShaderModule)?;
+            // VK_ERROR_INVALID_SHADER_NV seems to only apply to glsl shaders, so this can only fail when oom
+            let shader_module = unsafe { device.create_shader_module(&create_info, None) }
+                .expect("system should have enough memory to allocate vulkan shader modules");
             crate::name_vulkan_object(device, shader_module, format_args!("{filename}"));
-            Ok(shader_module)
+            shader_module
         })
     };
 
-    let shader_stages_per_pipeline = PipelineMap::new(|pipeline| {
+    let shader_stages_per_pipeline = PipelineMap::from_infallible(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         let multisampled = attachment_sample_count != vk::SampleCountFlags::TYPE_1;
         let mut create_from_shader_variant = |shader| match shader {
             Shader::MsaaVariants { multi_sample: shader, .. } if multisampled => create_shader_module(shader),
             Shader::SingleVariant(shader) | Shader::MsaaVariants { single_sample: shader, .. } => create_shader_module(shader),
         };
-        let vertex_module = create_from_shader_variant(params.vertex_shader)?;
-        let fragment_module = create_from_shader_variant(params.fragment_shader)?;
+        let vertex_module = create_from_shader_variant(params.vertex_shader);
+        let fragment_module = create_from_shader_variant(params.fragment_shader);
         let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vertex_module)
@@ -96,40 +88,40 @@ fn create_pipelines(
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(fragment_module)
             .name(cstr!("main"));
-        Ok([vert_shader_stage_create_info, frag_shader_stage_create_info])
-    })?;
+        [vert_shader_stage_create_info, frag_shader_stage_create_info]
+    });
 
-    let vertex_input_per_pipeline = PipelineMap::new(|pipeline| {
+    let vertex_input_per_pipeline = PipelineMap::from_infallible(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
-        Ok(vk::PipelineVertexInputStateCreateInfo::default()
+        vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(params.bindings)
-            .vertex_attribute_descriptions(params.attributes))
-    })?;
+            .vertex_attribute_descriptions(params.attributes)
+    });
 
-    let multisample_create_infos = PipelineMap::new(|pipeline| {
+    let multisample_create_infos = PipelineMap::from_infallible(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
-        Ok(vk::PipelineMultisampleStateCreateInfo::default()
+        vk::PipelineMultisampleStateCreateInfo::default()
             .rasterization_samples(attachment_sample_count)
             .alpha_to_coverage_enable(params.alpha_to_coverage)
             .sample_shading_enable(params.sample_shading)
-            .min_sample_shading(params.min_sample_shading_factor))
-    })?;
+            .min_sample_shading(params.min_sample_shading_factor)
+    });
 
-    let color_attachment_formats = PipelineMap::new(|pipeline| {
+    let color_attachment_formats = PipelineMap::from_infallible(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
-        Ok(params.render_pass.color_attachment_formats(attachment_formats))
-    })?;
-    let depth_attachment_formats = PipelineMap::new(|pipeline| {
+        params.render_pass.color_attachment_formats(attachment_formats)
+    });
+    let depth_attachment_formats = PipelineMap::from_infallible(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
-        Ok(params.render_pass.depth_attachment_format(attachment_formats))
-    })?;
-    let mut pipeline_rendering_create_infos = PipelineMap::new(|pipeline| {
-        Ok(vk::PipelineRenderingCreateInfoKHR::default()
+        params.render_pass.depth_attachment_format(attachment_formats)
+    });
+    let mut pipeline_rendering_create_infos = PipelineMap::from_infallible(|pipeline| {
+        vk::PipelineRenderingCreateInfoKHR::default()
             .color_attachment_formats(&color_attachment_formats[pipeline])
-            .depth_attachment_format(depth_attachment_formats[pipeline]))
-    })?;
+            .depth_attachment_format(depth_attachment_formats[pipeline])
+    });
 
-    let color_blend_attachment_states_per_pipeline = PipelineMap::new(|pipeline| {
+    let color_blend_attachment_states_per_pipeline = PipelineMap::from_infallible(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         let rgba_mask = vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A;
         let mut blend_attachment_state = vk::PipelineColorBlendAttachmentState::default()
@@ -149,14 +141,14 @@ fn create_pipelines(
         while blend_attachment_states.len() < color_attachment_formats[pipeline].len() {
             blend_attachment_states.push(blend_attachment_state);
         }
-        Ok(blend_attachment_states)
-    })?;
+        blend_attachment_states
+    });
 
-    let color_blend_create_infos = PipelineMap::new(|pipeline| {
-        Ok(vk::PipelineColorBlendStateCreateInfo::default()
+    let color_blend_create_infos = PipelineMap::from_infallible(|pipeline| {
+        vk::PipelineColorBlendStateCreateInfo::default()
             .logic_op_enable(false)
-            .attachments(&color_blend_attachment_states_per_pipeline[pipeline]))
-    })?;
+            .attachments(&color_blend_attachment_states_per_pipeline[pipeline])
+    });
 
     let input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
@@ -168,13 +160,13 @@ fn create_pipelines(
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .line_width(1.0);
 
-    let pipeline_depth_stencil_create_infos = PipelineMap::new(|pipeline| {
+    let pipeline_depth_stencil_create_infos = PipelineMap::from_infallible(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
-        Ok(vk::PipelineDepthStencilStateCreateInfo::default()
+        vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(params.depth_test)
             .depth_write_enable(params.depth_write)
-            .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL))
-    })?;
+            .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL)
+    });
 
     let viewports = [vk::Viewport::default()
         .width(extent.width as f32)
@@ -217,12 +209,13 @@ fn create_pipelines(
     }
 
     let vk_pipeline_cache = pipeline_cache.as_ref().map_or_else(vk::PipelineCache::null, |pc| pc.inner);
+    // VK_ERROR_INVALID_SHADER_NV seems to only apply to glsl shaders, so this can only fail when oom
     let pipelines = unsafe { device.create_graphics_pipelines(vk_pipeline_cache, &pipeline_create_infos, None) }
-        .map_err(|(_, err)| PipelineCreationError::Object(err))?;
+        .expect("system should have enough memory to allocate vulkan graphics pipelines");
 
-    for shader_module in all_shader_modules.values().flatten() {
+    for shader_module in all_shader_modules.values() {
         unsafe { device.destroy_shader_module(*shader_module, None) };
     }
 
-    Ok((pipelines, pipeline_cache))
+    (pipelines, pipeline_cache)
 }

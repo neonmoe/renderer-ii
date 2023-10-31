@@ -127,7 +127,7 @@ pub use instance::Instance;
 
 mod memory_measurement;
 
-pub use memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
+pub use memory_measurement::VulkanArenaMeasurer;
 
 mod physical_device;
 
@@ -139,7 +139,7 @@ pub use renderer::descriptors::material::{AlphaMode, Material, PbrFactors, Pipel
 pub use renderer::descriptors::{DescriptorError, Descriptors, PbrDefaults};
 pub use renderer::framebuffers::{FramebufferCreationError, Framebuffers};
 pub use renderer::pipeline_parameters::PipelineIndex;
-pub use renderer::pipelines::{PipelineCreationError, Pipelines};
+pub use renderer::pipelines::Pipelines;
 pub use renderer::scene::camera::Camera;
 pub use renderer::scene::coordinate_system::CoordinateSystem;
 pub use renderer::scene::mesh::{IndexType, Mesh};

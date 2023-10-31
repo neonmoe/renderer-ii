@@ -80,7 +80,7 @@ fn main() {
     };
 
     let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings).unwrap();
-    let mut pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None).unwrap();
+    let mut pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None);
     let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain).unwrap();
     let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device).unwrap();
 
@@ -171,8 +171,7 @@ fn main() {
                     msaa_samples,
                     attachment_formats,
                     Some(pipelines),
-                )
-                .unwrap();
+                );
                 framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain).unwrap();
             }
         }

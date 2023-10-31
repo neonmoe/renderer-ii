@@ -129,7 +129,8 @@ impl VulkanArena<ForBuffers> {
 
     pub fn create_empty_buffer(&mut self, buffer_create_info: vk::BufferCreateInfo, name: Arguments) -> Result<Buffer, VulkanArenaError> {
         profiling::scope!("vulkan buffer creation");
-        let buffer = unsafe { self.device.create_buffer(&buffer_create_info, None) }.map_err(VulkanArenaError::BufferCreation)?;
+        let buffer = unsafe { self.device.create_buffer(&buffer_create_info, None) }
+            .expect("system should have enough memory to allocate vulkan buffers");
         let buffer_memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
         let alignment = buffer_memory_requirements.alignment;
 
@@ -146,11 +147,11 @@ impl VulkanArena<ForBuffers> {
             });
         }
 
-        match unsafe { self.device.bind_buffer_memory(buffer, self.memory.inner, offset) }.map_err(VulkanArenaError::BufferBinding) {
+        match unsafe { self.device.bind_buffer_memory(buffer, self.memory.inner, offset) } {
             Ok(()) => {}
             Err(err) => {
                 unsafe { self.device.destroy_buffer(buffer, None) };
-                return Err(err);
+                panic!("vulkan buffer memory binding should not fail: {err}");
             }
         }
 

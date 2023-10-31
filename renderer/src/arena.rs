@@ -34,14 +34,6 @@ pub enum VulkanArenaError {
     },
     #[error("tried to write to arena without HOST_VISIBLE | HOST_COHERENT without providing an uploader and/or staging memory")]
     NotWritable,
-    #[error("failed to create buffer {0:?} (probably out of host or device memory)")]
-    BufferCreation(#[source] vk::Result),
-    #[error("failed to bind buffer to arena memory (probably out of host or device memory)")]
-    BufferBinding(#[source] vk::Result),
-    #[error("failed to create image {0:?} (probably out of host or device memory)")]
-    ImageCreation(#[source] vk::Result),
-    #[error("failed to bind image to arena memory (probably out of host or device memory)")]
-    ImageBinding(#[source] vk::Result),
 }
 
 pub trait ArenaType {

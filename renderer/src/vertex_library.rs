@@ -10,7 +10,7 @@ use ash::vk::Handle;
 
 use crate::arena::buffers::{ForBuffers, MappedBuffer};
 use crate::arena::{VulkanArena, VulkanArenaError};
-use crate::memory_measurement::{VulkanArenaMeasurementError, VulkanArenaMeasurer};
+use crate::memory_measurement::VulkanArenaMeasurer;
 use crate::renderer::pipeline_parameters::{
     PipelineIndex, PipelineMap, ALL_PIPELINES, PIPELINE_COUNT, PIPELINE_PARAMETERS, VERTEX_BINDING_COUNT,
 };
@@ -221,15 +221,14 @@ impl VertexLibraryMeasurer {
         self.index_counts_per_binding[binding_set_idx] += index_buffer.len();
     }
 
-    pub fn measure_required_arena(&self, arena_measurer: &mut VulkanArenaMeasurer<ForBuffers>) -> Result<(), VulkanArenaMeasurementError> {
+    pub fn measure_required_arena(&self, arena_measurer: &mut VulkanArenaMeasurer<ForBuffers>) {
         let MeasurementResults {
             vertex_buffer_info,
             index_buffer_info,
             ..
         } = self.measure();
-        arena_measurer.add_buffer(vertex_buffer_info)?;
-        arena_measurer.add_buffer(index_buffer_info)?;
-        Ok(())
+        arena_measurer.add_buffer(vertex_buffer_info);
+        arena_measurer.add_buffer(index_buffer_info);
     }
 
     fn measure(&self) -> MeasurementResults {

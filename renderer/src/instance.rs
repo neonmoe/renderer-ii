@@ -6,6 +6,9 @@ use ash::extensions::ext::DebugUtils;
 use ash::{vk, Entry};
 use raw_window_handle::HasRawDisplayHandle;
 
+/// Max 2 from [`ash_window::enumerate_required_extensions`] + debug utils.
+const MAX_INSTANCE_EXTENSIONS: usize = 2 + 1;
+
 #[derive(thiserror::Error, Debug)]
 pub enum InstanceCreationError {
     #[error("failed to enumerate vulkan extensions required to create a surface from a window")]
@@ -69,7 +72,7 @@ impl Instance {
                 }
                 cs
             })
-            .collect::<ArrayVec<*const c_char, 4>>();
+            .collect::<ArrayVec<*const c_char, MAX_INSTANCE_EXTENSIONS>>();
         #[cfg(feature = "vulkan-debug-utils")]
         let mut debug_utils_enabled = false;
         #[cfg(feature = "vulkan-debug-utils")]

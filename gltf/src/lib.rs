@@ -11,10 +11,7 @@ use glam::{Mat4, Quat, Vec3};
 use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
 use renderer::image_loading::{ntex, ImageLoadingError, TextureKind};
-use renderer::{
-    DescriptorError, ForImages, Material, Mesh, PipelineIndex, VertexLibraryMeasurer, VulkanArenaError, VulkanArenaMeasurementError,
-    VulkanArenaMeasurer,
-};
+use renderer::{DescriptorError, ForImages, Material, Mesh, PipelineIndex, VertexLibraryMeasurer, VulkanArenaError, VulkanArenaMeasurer};
 
 mod gltf_json;
 mod mesh_iter;
@@ -74,8 +71,6 @@ pub enum GltfLoadingError {
     MaterialCreation(#[source] DescriptorError),
     #[error("failed to load image {1}")]
     ImageLoading(#[source] ImageLoadingError, String),
-    #[error("failed to measure texture vram usage")]
-    TextureMeasurement(#[source] VulkanArenaMeasurementError),
     #[error("gltf node has multiple parents, which is not allowed by the 2.0 spec")]
     InvalidNodeGraph,
     #[error("gltf has an out-of-bounds index ({0})")]
@@ -414,9 +409,7 @@ fn create_gltf<'a>(
         let kind = image_texture_kinds.get(&i).copied().unwrap_or(TextureKind::LinearColor);
         let image_header = ntex::decode_header(bytes).map_err(|err| GltfLoadingError::NtexDecoding(err, name.clone()))?;
         let image_create_info = image_header.get_create_info(kind);
-        texture_measurer
-            .add_image(image_create_info)
-            .map_err(GltfLoadingError::TextureMeasurement)?;
+        texture_measurer.add_image(image_create_info);
         images.push(ImageParameters {
             data,
             name,

@@ -14,14 +14,6 @@ use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
 use sdl2::mouse::MouseButton;
 static LOGGER: Logger = Logger;
 
-#[derive(thiserror::Error, Debug)]
-enum SandboxError {
-    #[error("sdl error: {0}")]
-    Sdl(String),
-    #[error("MSAA sample count not supported: {0:?}")]
-    MsaaSampleCountNotSupported(renderer::vk::SampleCountFlags),
-}
-
 fn main() {
     #[cfg(feature = "profile-with-tracy")]
     tracy_client::Client::start();
@@ -89,11 +81,11 @@ fn main_() {
 
     let sdl_context = {
         profiling::scope!("SDL init");
-        sdl2::init().map_err(SandboxError::Sdl).unwrap()
+        sdl2::init().unwrap()
     };
     let video_subsystem = {
         profiling::scope!("SDL video subsystem init");
-        sdl_context.video().map_err(SandboxError::Sdl).unwrap()
+        sdl_context.video().unwrap()
     };
 
     let mut window = {
@@ -163,14 +155,7 @@ fn main_() {
         .name(format!("{}-render", env!("CARGO_CRATE_NAME")))
         .spawn({
             let state_mutex = state_mutex.clone();
-            move || match rendering_main(instance, surface, state_mutex.clone()) {
-                Ok(()) => Ok(()),
-                Err(err) => {
-                    let mut state = state_mutex.lock().unwrap();
-                    state.running = false;
-                    Err(err)
-                }
-            }
+            move || rendering_main(instance, surface, state_mutex.clone())
         })
         .unwrap();
 
@@ -198,7 +183,7 @@ fn main_() {
         *deadline = now + Duration::from_secs(1) * i as u32 / FPS_COUNTER_UPDATES_PER_SECOND as u32;
     }
 
-    let mut event_pump = sdl_context.event_pump().map_err(SandboxError::Sdl).unwrap();
+    let mut event_pump = sdl_context.event_pump().unwrap();
     let mut opened_controller = None;
     'main: loop {
         if let Some(which) = opened_controller {
@@ -392,7 +377,7 @@ fn main_() {
     }
 
     game_thread.join().unwrap();
-    rendering_thread.join().unwrap().unwrap();
+    rendering_thread.join().unwrap();
 }
 
 fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
@@ -459,10 +444,10 @@ fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
     }
 }
 
-fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, state_mutex: Arc<Mutex<SharedState>>) -> anyhow::Result<()> {
+fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, state_mutex: Arc<Mutex<SharedState>>) {
     let mut physical_devices = renderer::get_physical_devices(&instance.entry, &instance.inner, surface.inner);
-    let physical_device = physical_devices.remove(0)?;
-    let device = physical_device.create_device(&instance.entry, &instance.inner)?;
+    let physical_device = physical_devices.remove(0).unwrap();
+    let device = physical_device.create_device(&instance.entry, &instance.inner).unwrap();
 
     let attachment_formats = physical_device.attachment_formats();
     let msaa_samples = renderer::vk::SampleCountFlags::TYPE_4;
@@ -472,7 +457,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         .framebuffer_color_sample_counts
         .contains(msaa_samples)
     {
-        return Err(SandboxError::MsaaSampleCountNotSupported(msaa_samples).into());
+        panic!("msaa sample count not supported: {msaa_samples:?}");
     }
 
     fn print_memory_usage(when: &str) {
@@ -501,7 +486,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
     let mut assets_buffers_measurer = renderer::VulkanArenaMeasurer::new(&device);
     let mut assets_textures_measurer = renderer::VulkanArenaMeasurer::new(&device);
     for image_create_info in renderer::image_loading::pbr_defaults::all_defaults_create_infos() {
-        assets_textures_measurer.add_image(image_create_info)?;
+        assets_textures_measurer.add_image(image_create_info);
     }
     let mut vertex_library_measurer = renderer::VertexLibraryMeasurer::default();
     let sponza_json = std::fs::read_to_string(resources_path.join("sponza/glTF/Sponza.gltf")).unwrap();
@@ -510,13 +495,15 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         &sponza_json,
         resources_path.join("sponza/glTF"),
         (&mut assets_textures_measurer, &mut vertex_library_measurer),
-    )?;
+    )
+    .unwrap();
     let smol_ame_pending = gltf::Gltf::preload_gltf(
         &smol_ame_json,
         resources_path.join("smol-ame-by-seafoam"),
         (&mut assets_textures_measurer, &mut vertex_library_measurer),
-    )?;
-    vertex_library_measurer.measure_required_arena(&mut assets_buffers_measurer)?;
+    )
+    .unwrap();
+    vertex_library_measurer.measure_required_arena(&mut assets_buffers_measurer);
 
     print_memory_usage("after measurements");
 
@@ -529,7 +516,8 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         assets_textures_measurer.measured_size,
         renderer::MemoryProps::for_textures(),
         format_args!("sandbox assets (textures)"),
-    )?;
+    )
+    .unwrap();
     let mut buffer_arena = renderer::VulkanArena::new(
         &instance.inner,
         &device,
@@ -537,7 +525,8 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         assets_buffers_measurer.measured_size,
         renderer::MemoryProps::for_buffers(),
         format_args!("sandbox assets (buffers)"),
-    )?;
+    )
+    .unwrap();
     let mut staging_arena = renderer::VulkanArena::new(
         &instance.inner,
         &device,
@@ -545,7 +534,8 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         assets_buffers_measurer.measured_size + assets_textures_measurer.measured_size,
         renderer::MemoryProps::for_staging(),
         format_args!("sandbox assets (staging)"),
-    )?;
+    )
+    .unwrap();
     let mut uploader = renderer::Uploader::new(
         &device,
         device.graphics_queue,
@@ -556,32 +546,38 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
 
     print_memory_usage("after arena creation");
 
-    let pbr_defaults = renderer::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena)?;
-    let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults)?;
+    let pbr_defaults =
+        renderer::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena).unwrap();
+    let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults).unwrap();
     let mut vertex_library_builder = renderer::VertexLibraryBuilder::new(
         &mut staging_arena,
         &mut buffer_arena,
         vertex_library_measurer,
         format_args!("vertex library of babel"),
-    )?;
+    )
+    .unwrap();
 
     let upload_start = Instant::now();
-    let sponza_model = sponza_pending.upload(
-        &device,
-        &mut staging_arena,
-        &mut uploader,
-        &mut descriptors,
-        &mut texture_arena,
-        &mut vertex_library_builder,
-    )?;
-    let smol_ame_model = smol_ame_pending.upload(
-        &device,
-        &mut staging_arena,
-        &mut uploader,
-        &mut descriptors,
-        &mut texture_arena,
-        &mut vertex_library_builder,
-    )?;
+    let sponza_model = sponza_pending
+        .upload(
+            &device,
+            &mut staging_arena,
+            &mut uploader,
+            &mut descriptors,
+            &mut texture_arena,
+            &mut vertex_library_builder,
+        )
+        .unwrap();
+    let smol_ame_model = smol_ame_pending
+        .upload(
+            &device,
+            &mut staging_arena,
+            &mut uploader,
+            &mut descriptors,
+            &mut texture_arena,
+            &mut vertex_library_builder,
+        )
+        .unwrap();
     vertex_library_builder.upload(&mut uploader, &mut buffer_arena);
     let upload_wait_start = Instant::now();
     {
@@ -614,13 +610,13 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         prev_frame = state.frame;
     }
 
-    let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings)?;
+    let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings).unwrap();
     print_memory_usage("after swapchain creation");
-    let mut pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None)?;
+    let mut pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None);
     print_memory_usage("after pipelines creation");
-    let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
+    let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain).unwrap();
     print_memory_usage("after framebuffers creation");
-    let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device)?;
+    let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device).unwrap();
     print_memory_usage("after renderer creation");
 
     let mut scene = renderer::Scene::new(&physical_device);
@@ -690,7 +686,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
                     Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2),
                     Vec3::new(3.0, 0.0, -0.5),
                 );
-                smol_ame_model.queue_animated(&mut scene, smol_ame_transform, &animations)?;
+                smol_ame_model.queue_animated(&mut scene, smol_ame_transform, &animations).unwrap();
             }
         }
 
@@ -698,7 +694,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
             profiling::scope!("handle resize");
             device.wait_idle();
             drop(framebuffers);
-            swapchain.recreate(&device, &physical_device, &swapchain_settings)?;
+            swapchain.recreate(&device, &physical_device, &swapchain_settings).unwrap();
             pipelines = renderer::Pipelines::new(
                 &device,
                 &descriptors,
@@ -706,8 +702,8 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
                 msaa_samples,
                 attachment_formats,
                 Some(pipelines),
-            )?;
-            framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain)?;
+            );
+            framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain).unwrap();
             recreate_swapchain = false;
         }
 
@@ -766,8 +762,6 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
     }
 
     print_memory_usage("after ending the rendering loop");
-
-    Ok(())
 }
 
 mod logger {
