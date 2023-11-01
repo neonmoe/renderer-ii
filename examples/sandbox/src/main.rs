@@ -19,9 +19,9 @@ fn main() {
     tracy_client::Client::start();
 
     panic::set_hook(Box::new(|panic_info| {
-        let message = format!("{panic_info}");
+        let message = format!("Unexpected crash! Error details below.\n\n{panic_info}");
         log::error!("{message}");
-        let _ = show_simple_message_box(MessageBoxFlag::ERROR, "Fatal Error", &message, None);
+        let _ = show_simple_message_box(MessageBoxFlag::ERROR, "Crash!", &message, None);
     }));
 
     main_();
@@ -548,7 +548,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
 
     let pbr_defaults =
         renderer::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena).unwrap();
-    let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults).unwrap();
+    let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults);
     let mut vertex_library_builder = renderer::VertexLibraryBuilder::new(
         &mut staging_arena,
         &mut buffer_arena,

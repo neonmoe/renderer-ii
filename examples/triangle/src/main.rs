@@ -71,7 +71,7 @@ fn main() {
 
     let pbr_defaults =
         renderer::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena).unwrap();
-    let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults).unwrap();
+    let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults);
 
     let (width, height) = window.vulkan_drawable_size();
     let mut swapchain_settings = renderer::SwapchainSettings {

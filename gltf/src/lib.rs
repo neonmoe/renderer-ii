@@ -10,8 +10,8 @@ use arrayvec::{ArrayString, ArrayVec};
 use glam::{Mat4, Quat, Vec3};
 use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
-use renderer::image_loading::{ntex, ImageLoadingError, TextureKind};
-use renderer::{DescriptorError, ForImages, Material, Mesh, PipelineIndex, VertexLibraryMeasurer, VulkanArenaError, VulkanArenaMeasurer};
+use renderer::image_loading::{ntex, TextureKind};
+use renderer::{ForImages, Material, Mesh, PipelineIndex, VertexLibraryMeasurer, VulkanArenaError, VulkanArenaMeasurer};
 
 mod gltf_json;
 mod mesh_iter;
@@ -67,10 +67,10 @@ pub enum GltfLoadingError {
     BufferCreationFromMaterialParameters(#[source] VulkanArenaError),
     #[error("failed to decode ntex {1}")]
     NtexDecoding(#[source] ntex::NtexDecodeError, String),
-    #[error("failed to create material")]
-    MaterialCreation(#[source] DescriptorError),
+    #[error("failed to create material, ran out of material slots")]
+    NotEnoughMaterialSlots,
     #[error("failed to load image {1}")]
-    ImageLoading(#[source] ImageLoadingError, String),
+    ImageLoading(#[source] VulkanArenaError, String),
     #[error("gltf node has multiple parents, which is not allowed by the 2.0 spec")]
     InvalidNodeGraph,
     #[error("gltf has an out-of-bounds index ({0})")]

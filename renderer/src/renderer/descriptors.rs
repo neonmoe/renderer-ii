@@ -19,24 +19,6 @@ pub(crate) mod material;
 
 use material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
 
-#[derive(thiserror::Error, Debug)]
-pub enum DescriptorError {
-    #[error("material indices have been exhausted (max: {MAX_TEXTURE_COUNT}), cannot create more materials before releasing old ones")]
-    MaterialIndexReserve,
-    #[error("failed to create immutable sampler")]
-    ImmutableSamplerCreation(#[source] vk::Result),
-    #[error("failed to create descriptor set layout")]
-    DescriptorSetLayoutCreation(#[source] vk::Result),
-    #[error("failed to create pipeline layout")]
-    PipelineLayoutCreation(#[source] vk::Result),
-    #[error("failed to create descriptor pool")]
-    DescriptorPoolCreation(#[source] vk::Result),
-    #[error("failed to allocate descriptor sets")]
-    AllocateDescriptorSets(#[source] vk::Result),
-    #[error("failed to create buffer for per-frame material data")]
-    CreateMaterialBuffer(#[source] VulkanArenaError),
-}
-
 pub(crate) const MAX_PIPELINES_PER_MATERIAL: usize = 2;
 
 fn get_pipelines(data: &PipelineSpecificData) -> ArrayVec<PipelineIndex, MAX_PIPELINES_PER_MATERIAL> {
@@ -94,30 +76,29 @@ pub struct Descriptors {
 }
 
 impl Material {
-    pub fn new(descriptors: &mut Descriptors, data: PipelineSpecificData, name: ArrayString<64>) -> Result<Rc<Material>, DescriptorError> {
+    /// Reserves a new Material, if there's space.
+    pub fn new(descriptors: &mut Descriptors, data: PipelineSpecificData, name: ArrayString<64>) -> Option<Rc<Material>> {
         profiling::scope!("material slot reservation");
         let array_indices = get_pipelines(&data)
             .iter()
             .map(|&pipeline| {
-                let (i, _) = descriptors.material_slots_per_pipeline[pipeline]
+                let i = descriptors.material_slots_per_pipeline[pipeline]
                     .iter_mut()
-                    .enumerate()
-                    .find(|(_, slot)| slot.is_none())
-                    .ok_or(DescriptorError::MaterialIndexReserve)?;
-                Ok((pipeline, i as u32))
+                    .position(|slot| slot.is_none())?;
+                Some((pipeline, i as u32))
             })
-            .collect::<Result<ArrayVec<(PipelineIndex, u32), MAX_PIPELINES_PER_MATERIAL>, _>>()?;
+            .collect::<Option<ArrayVec<(PipelineIndex, u32), MAX_PIPELINES_PER_MATERIAL>>>()?;
         let material = Rc::new(Material { name, array_indices, data });
         for &(pipeline, index) in &material.array_indices {
             descriptors.material_slots_per_pipeline[pipeline][index as usize] = Some(Rc::downgrade(&material));
             descriptors.material_updated_per_pipeline[pipeline][index as usize] = false;
         }
-        Ok(material)
+        Some(material)
     }
 }
 
 impl Descriptors {
-    pub fn new(device: &Device, physical_device: &PhysicalDevice, pbr_defaults: PbrDefaults) -> Result<Descriptors, DescriptorError> {
+    pub fn new(device: &Device, physical_device: &PhysicalDevice, pbr_defaults: PbrDefaults) -> Descriptors {
         profiling::scope!("creating descriptor sets");
         let sampler_create_info = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::LINEAR)
@@ -131,72 +112,71 @@ impl Descriptors {
             .address_mode_w(vk::SamplerAddressMode::REPEAT)
             .anisotropy_enable(true)
             .max_anisotropy(physical_device.properties.limits.max_sampler_anisotropy);
-        let sampler = unsafe { device.create_sampler(&sampler_create_info, None) }.map_err(DescriptorError::ImmutableSamplerCreation)?;
+        let sampler = unsafe { device.create_sampler(&sampler_create_info, None) }
+            .expect("system should have enough memory to create vulkan samplers");
         crate::name_vulkan_object(device, sampler, format_args!("immutable default sampler"));
         let sampler = Rc::new(Sampler {
             inner: sampler,
             device: device.clone(),
         });
 
-        let create_descriptor_set_layouts =
-            |pl: PipelineIndex, sets: &[&[DescriptorSetLayoutParams]]| -> Result<DescriptorSetLayouts, DescriptorError> {
-                let samplers_vk = [sampler.inner];
-                let samplers_rc = [sampler.clone()].into();
+        let create_descriptor_set_layouts = |pl: PipelineIndex, sets: &[&[DescriptorSetLayoutParams]]| -> DescriptorSetLayouts {
+            let samplers_vk = [sampler.inner];
+            let samplers_rc = [sampler.clone()].into();
 
-                let descriptor_set_layouts = sets
-                    .iter()
-                    .enumerate()
-                    .map(|(i, bindings)| {
-                        let binding_flags = bindings
-                            .iter()
-                            .map(|params| params.binding_flags)
-                            .collect::<ArrayVec<vk::DescriptorBindingFlags, 8>>();
-                        let bindings = bindings
-                            .iter()
-                            .map(|params| {
-                                let mut binding = vk::DescriptorSetLayoutBinding::default()
-                                    .descriptor_type(params.descriptor_type)
-                                    .descriptor_count(params.descriptor_count)
-                                    .stage_flags(params.stage_flags)
-                                    .binding(params.binding);
-                                if params.descriptor_type == vk::DescriptorType::SAMPLER {
-                                    binding = binding.immutable_samplers(&samplers_vk);
-                                }
-                                binding
-                            })
-                            .collect::<ArrayVec<vk::DescriptorSetLayoutBinding, 8>>();
-                        let mut binding_flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
-                        let create_info = vk::DescriptorSetLayoutCreateInfo::default()
-                            .push_next(&mut binding_flags)
-                            .bindings(&bindings);
-                        let dsl = unsafe { device.create_descriptor_set_layout(&create_info, None) }
-                            .map_err(DescriptorError::DescriptorSetLayoutCreation)?;
-                        crate::name_vulkan_object(device, dsl, format_args!("set {i} for pipeline {pl:?}"));
-                        Ok(dsl)
-                    })
-                    .collect::<Result<ArrayVec<_, 8>, DescriptorError>>()?;
-
-                Ok(DescriptorSetLayouts {
-                    inner: descriptor_set_layouts,
-                    device: device.clone(),
-                    immutable_samplers: samplers_rc,
+            let descriptor_set_layouts = sets
+                .iter()
+                .enumerate()
+                .map(|(i, bindings)| {
+                    let binding_flags = bindings
+                        .iter()
+                        .map(|params| params.binding_flags)
+                        .collect::<ArrayVec<vk::DescriptorBindingFlags, 8>>();
+                    let bindings = bindings
+                        .iter()
+                        .map(|params| {
+                            let mut binding = vk::DescriptorSetLayoutBinding::default()
+                                .descriptor_type(params.descriptor_type)
+                                .descriptor_count(params.descriptor_count)
+                                .stage_flags(params.stage_flags)
+                                .binding(params.binding);
+                            if params.descriptor_type == vk::DescriptorType::SAMPLER {
+                                binding = binding.immutable_samplers(&samplers_vk);
+                            }
+                            binding
+                        })
+                        .collect::<ArrayVec<vk::DescriptorSetLayoutBinding, 8>>();
+                    let mut binding_flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
+                    let create_info = vk::DescriptorSetLayoutCreateInfo::default()
+                        .push_next(&mut binding_flags)
+                        .bindings(&bindings);
+                    let dsl = unsafe { device.create_descriptor_set_layout(&create_info, None) }
+                        .expect("system should have enough memory to create vulkan descriptor set layouts");
+                    crate::name_vulkan_object(device, dsl, format_args!("set {i} for pipeline {pl:?}"));
+                    dsl
                 })
-            };
+                .collect::<ArrayVec<_, 8>>();
 
-        let pipeline_layouts = PipelineMap::new::<DescriptorError, _>(|pipeline| {
+            DescriptorSetLayouts {
+                inner: descriptor_set_layouts,
+                device: device.clone(),
+                immutable_samplers: samplers_rc,
+            }
+        };
+
+        let pipeline_layouts = PipelineMap::from_infallible(|pipeline| {
             let PipelineParameters { descriptor_sets, .. } = &PIPELINE_PARAMETERS[pipeline];
-            let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline, descriptor_sets)?);
+            let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline, descriptor_sets));
             let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_set_layouts.inner);
             let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_create_info, None) }
-                .map_err(DescriptorError::PipelineLayoutCreation)?;
+                .expect("system should have enough memory to create vulkan pipeline layouts");
             crate::name_vulkan_object(device, pipeline_layout, format_args!("for pipeline {pipeline:?}"));
-            let pipeline_layout = PipelineLayout {
+            PipelineLayout {
                 inner: pipeline_layout,
                 device: device.clone(),
                 descriptor_set_layouts: descriptor_set_layouts.clone(),
-            };
-            Ok(pipeline_layout)
-        })?;
+            }
+        });
 
         let pool_sizes = PIPELINE_PARAMETERS
             .iter()
@@ -215,8 +195,8 @@ impl Descriptors {
         let descriptor_pool = unsafe {
             device
                 .create_descriptor_pool(&descriptor_pool_create_info, None)
-                .map_err(DescriptorError::DescriptorPoolCreation)
-        }?;
+                .expect("system should have enough memory to create vulkan descriptor pools")
+        };
         crate::name_vulkan_object(device, descriptor_pool, format_args!("the descriptor pool"));
         let descriptor_pool = Rc::new(DescriptorPool {
             inner: descriptor_pool,
@@ -224,32 +204,31 @@ impl Descriptors {
         });
 
         let mut descriptor_set_layouts_per_pipeline = pipeline_layouts.iter().map(|pl| &pl.descriptor_set_layouts);
-        let descriptor_sets = PipelineMap::new::<DescriptorError, _>(|pl| {
+        let descriptor_sets = PipelineMap::from_infallible(|pl| {
             let descriptor_set_layouts = descriptor_set_layouts_per_pipeline.next().unwrap();
             let create_info = vk::DescriptorSetAllocateInfo::default()
                 .descriptor_pool(descriptor_pool.inner)
                 .set_layouts(&descriptor_set_layouts.inner);
-            let descriptor_sets =
-                unsafe { device.allocate_descriptor_sets(&create_info) }.map_err(DescriptorError::AllocateDescriptorSets)?;
+            let descriptor_sets = unsafe { device.allocate_descriptor_sets(&create_info) }
+                .expect("system should have enough memory to allocate descriptor sets");
             for (i, descriptor_set) in descriptor_sets.iter().enumerate() {
                 crate::name_vulkan_object(device, *descriptor_set, format_args!("set {i} for pipeline {pl:?}"));
             }
-            Ok(DescriptorSets {
-                inner: ArrayVec::from_iter(descriptor_sets.into_iter()),
+            DescriptorSets {
+                inner: ArrayVec::from_iter(descriptor_sets),
                 device: device.clone(),
                 descriptor_pool: descriptor_pool.clone(),
-            })
-        })?;
+            }
+        });
         drop(descriptor_set_layouts_per_pipeline);
 
-        let material_slots_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| {
-            Ok(ArrayVec::from_iter([None].into_iter().cycle().take(MAX_TEXTURE_COUNT as usize)))
-        })?;
-        let material_updated_per_pipeline = PipelineMap::new::<DescriptorError, _>(|_| Ok([true; MAX_TEXTURE_COUNT as usize].into()))?;
+        let material_slots_per_pipeline =
+            PipelineMap::from_infallible(|_| ArrayVec::from_iter([None].into_iter().cycle().take(MAX_TEXTURE_COUNT as usize)));
+        let material_updated_per_pipeline = PipelineMap::from_infallible(|_| [true; MAX_TEXTURE_COUNT as usize].into());
 
         let uniform_buffer_offset_alignment = physical_device.properties.limits.min_uniform_buffer_offset_alignment;
 
-        Ok(Descriptors {
+        Descriptors {
             pipeline_layouts,
             descriptor_sets,
             device: device.clone(),
@@ -257,13 +236,13 @@ impl Descriptors {
             material_updated_per_pipeline,
             pbr_defaults,
             uniform_buffer_offset_alignment,
-        })
+        }
     }
 
     pub(crate) fn create_materials_temp_uniform(
         &mut self,
         temp_arena: &mut VulkanArena<ForBuffers>,
-    ) -> Result<MaterialTempUniforms, DescriptorError> {
+    ) -> Result<MaterialTempUniforms, VulkanArenaError> {
         profiling::scope!("creating material temp buffer");
 
         let mut factors_bytes = Vec::with_capacity(PBR_PIPELINES.len() * mem::size_of::<PbrFactorsSoa>());
@@ -305,15 +284,13 @@ impl Descriptors {
             .size(factors_bytes.len() as u64)
             .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let buffer = temp_arena
-            .create_buffer(
-                buffer_create_info,
-                &factors_bytes,
-                None,
-                None,
-                format_args!("uniform (temp material buffer)"),
-            )
-            .map_err(DescriptorError::CreateMaterialBuffer)?;
+        let buffer = temp_arena.create_buffer(
+            buffer_create_info,
+            &factors_bytes,
+            None,
+            None,
+            format_args!("uniform (temp material buffer)"),
+        )?;
 
         Ok(MaterialTempUniforms {
             buffer,

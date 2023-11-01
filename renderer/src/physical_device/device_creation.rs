@@ -8,15 +8,9 @@ use ash::{vk, Entry, Instance};
 use crate::physical_device::{physical_device_features, PhysicalDevice, QueueFamily};
 use crate::vulkan_raii::Device;
 
-#[derive(thiserror::Error, Debug)]
-pub enum DeviceError {
-    #[error("vulkan device creation failed")]
-    DeviceCreation(#[source] vk::Result),
-}
-
 impl PhysicalDevice {
     /// Creates a new `VkDevice`. It only needs to be destroyed if creating a new one.
-    pub fn create_device(&self, entry: &Entry, instance: &Instance) -> Result<Device, DeviceError> {
+    pub fn create_device(&self, entry: &Entry, instance: &Instance) -> Result<Device, vk::Result> {
         profiling::scope!("vulkan device creation");
 
         // Just to have an array to point at for the queue priorities.
@@ -40,8 +34,7 @@ impl PhysicalDevice {
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&extensions);
-        let device = physical_device_features::create_with_features(instance, self.inner, device_create_info)
-            .map_err(DeviceError::DeviceCreation)?;
+        let device = physical_device_features::create_with_features(instance, self.inner, device_create_info)?;
 
         let mut queues = [vk::Queue::default(); 3];
         get_device_queues(&device, &queue_families, &mut queues);

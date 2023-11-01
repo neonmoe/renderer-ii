@@ -11,20 +11,6 @@ use crate::renderer::pipelines::Pipelines;
 use crate::renderer::swapchain::Swapchain;
 use crate::vulkan_raii::{AnyImage, Device, ImageView};
 
-#[derive(thiserror::Error, Debug)]
-pub enum FramebufferCreationError {
-    #[error("failed to create vulkan arena for storing framebuffer images")]
-    Arena(#[source] VulkanArenaError),
-    #[error("failed to create temp image to query framebuffer memory requirements")]
-    QueryImage(#[source] vk::Result),
-    #[error("failed to create image view from framebuffer image")]
-    ImageView(#[source] vk::Result),
-    #[error("failed to create and allocate framebuffer image")]
-    Image(#[source] VulkanArenaError),
-    #[error("failed to create framebuffer object")]
-    ObjectCreation(#[source] vk::Result),
-}
-
 pub struct Framebuffers {
     pub extent: vk::Extent2D,
     pub hdr_image: ImageView,
@@ -40,7 +26,7 @@ impl Framebuffers {
         physical_device: &PhysicalDevice,
         pipelines: &Pipelines,
         swapchain: &Swapchain,
-    ) -> Result<Framebuffers, FramebufferCreationError> {
+    ) -> Result<Framebuffers, VulkanArenaError> {
         profiling::scope!("framebuffers creation");
 
         let vk::Extent2D { width, height } = swapchain.extent;
@@ -71,7 +57,7 @@ impl Framebuffers {
             profiling::scope!("framebuffer memory requirements querying");
             for attachment in &allocated_image_infos {
                 let framebuffer_image_info = image_info(*attachment);
-                let image = unsafe { device.create_image(&framebuffer_image_info, None) }.map_err(FramebufferCreationError::QueryImage)?;
+                let image = unsafe { device.create_image(&framebuffer_image_info, None) }.expect("vulkan image creation should not fail");
                 crate::name_vulkan_object(device, image, format_args!("memory requirement querying temp image"));
                 let reqs = unsafe { device.get_image_memory_requirements(image) };
                 framebuffer_size += reqs.size.next_multiple_of(reqs.alignment);
@@ -86,45 +72,39 @@ impl Framebuffers {
             framebuffer_size,
             MemoryProps::for_framebuffers(),
             format_args!("framebuffer arena ({width}x{height})"),
-        )
-        .map_err(FramebufferCreationError::Arena)?;
+        )?;
 
-        let create_image_view = |image: Rc<AnyImage>,
-                                 aspect_mask: vk::ImageAspectFlags,
-                                 format: vk::Format,
-                                 debug_identifier: Arguments|
-         -> Result<ImageView, FramebufferCreationError> {
-            let subresource_range = vk::ImageSubresourceRange::default()
-                .aspect_mask(aspect_mask)
-                .level_count(1)
-                .layer_count(1);
-            let image_view_create_info = vk::ImageViewCreateInfo::default()
-                .image(image.inner())
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(format)
-                .subresource_range(subresource_range);
-            let image_view =
-                unsafe { device.create_image_view(&image_view_create_info, None) }.map_err(FramebufferCreationError::ImageView)?;
-            crate::name_vulkan_object(device, image_view, debug_identifier);
-            crate::name_vulkan_object(device, image.inner(), debug_identifier);
-            Ok(ImageView {
-                inner: image_view,
-                device: device.clone(),
-                image,
-            })
-        };
+        let create_image_view =
+            |image: Rc<AnyImage>, aspect_mask: vk::ImageAspectFlags, format: vk::Format, debug_identifier: Arguments| -> ImageView {
+                let subresource_range = vk::ImageSubresourceRange::default()
+                    .aspect_mask(aspect_mask)
+                    .level_count(1)
+                    .layer_count(1);
+                let image_view_create_info = vk::ImageViewCreateInfo::default()
+                    .image(image.inner())
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(format)
+                    .subresource_range(subresource_range);
+                let image_view =
+                    unsafe { device.create_image_view(&image_view_create_info, None) }.expect("vulkan image view creation should not fail");
+                crate::name_vulkan_object(device, image_view, debug_identifier);
+                crate::name_vulkan_object(device, image.inner(), debug_identifier);
+                ImageView {
+                    inner: image_view,
+                    device: device.clone(),
+                    image,
+                }
+            };
 
         let mut create_attachment_image = |attachment: Attachment| {
             let image_info = image_info(attachment);
-            let image = framebuffer_arena
-                .create_image(image_info, format_args!("{attachment:?} attachment"))
-                .map_err(FramebufferCreationError::Image)?;
+            let image = framebuffer_arena.create_image(image_info, format_args!("{attachment:?} attachment"))?;
             let image_view = create_image_view(
                 Rc::new(AnyImage::Regular(image)),
                 attachment.aspect(),
                 attachment.format(pd_formats),
                 format_args!("{attachment:?} render target"),
-            )?;
+            );
             Ok(image_view)
         };
 
@@ -145,7 +125,7 @@ impl Framebuffers {
                 vk::ImageAspectFlags::COLOR,
                 physical_device.swapchain_format,
                 format_args!("Swapchain render target {n}/{m}"),
-            )?;
+            );
             swapchain_images.push(image_view);
         }
 

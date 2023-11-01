@@ -20,7 +20,7 @@ pub(crate) mod pipelines;
 pub(crate) mod scene;
 pub(crate) mod swapchain;
 
-use descriptors::{DescriptorError, Descriptors};
+use descriptors::Descriptors;
 use framebuffers::Framebuffers;
 use pipeline_parameters::constants::MAX_BONE_COUNT;
 use pipeline_parameters::render_passes::{Attachment, RenderPass};
@@ -33,50 +33,14 @@ use self::pipeline_parameters::VERTEX_BINDING_COUNT;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RendererError {
-    #[error("failed to create semaphore for renderer signalling present")]
-    PresentReadySemaphoreCreation(#[source] vk::Result),
-    #[error("failed to create semaphore for renderer signalling frame start")]
-    FrameStartSemaphoreCreation(#[source] vk::Result),
-    #[error("failed to create fence for renderer signalling frame end")]
-    FrameEndFenceCreation(#[source] vk::Result),
-    #[error("failed to create command pools for renderer")]
-    CommandPoolCreation(#[source] vk::Result),
-    #[error("failed to create frame-local vulkan arenas")]
-    FrameLocalArenaCreation(#[source] VulkanArenaError),
-    #[error("failed to acquire next frame's swapchain image (window issues?)")]
-    AcquireImage(#[source] vk::Result),
-    #[error("failed to wait for the frame end fence")]
-    FrameEndFenceWait(#[source] vk::Result),
-    #[error("failed to rest the frame-local vulkan arena")]
-    FrameLocalArenaReset(#[source] VulkanArenaError),
-    #[error("failed to create uniform buffer for camera transforms")]
-    CameraTransformUniformCreation(#[source] VulkanArenaError),
-    #[error("failed to create uniform buffer for render settings")]
-    RenderSettingsUniformCreation(#[source] VulkanArenaError),
-    #[error("failed to create uniform buffer for skinned meshes' joint transforms")]
-    JointTransformUniformCreation(#[source] VulkanArenaError),
-    #[error("failed to create per-frame material uniforms")]
-    MaterialsUniformCreation(#[source] DescriptorError),
-    #[error("failed to create draw call parameters uniform")]
-    DrawCallParamsUniformCreation(#[source] VulkanArenaError),
-    #[error("failed to submit rendering command buffers to the graphics queue (device lost or out of memory?)")]
-    RenderQueueSubmit(#[source] vk::Result),
     #[error("present was successful, but may display oddly; swapchain is out of date")]
     SwapchainOutOfDate,
     #[error("failed to present to the surface queue (window issues?)")]
     RenderQueuePresent(#[source] vk::Result),
-    #[error("failed to reset command pools for rendering")]
-    CommandPoolReset(#[source] vk::Result),
-    #[error("failed to allocate command buffers for rendering")]
-    CommandBufferAllocation(#[source] vk::Result),
-    #[error("failed to begin command buffer for rendering")]
-    CommandBufferBegin(#[source] vk::Result),
-    #[error("failed to create transform buffer")]
-    TransformBufferCreation(#[source] VulkanArenaError),
-    #[error("failed to create indirect draw command buffer")]
-    IndirectCmdBufferCreation(#[source] VulkanArenaError),
-    #[error("failed to end rendering command buffer")]
-    CommandBufferEnd(#[source] vk::Result),
+    #[error("failed to acquire next frame's swapchain image (window issues?)")]
+    AcquireImage(#[source] vk::Result),
+    #[error("failed to rest the frame-local vulkan arena")]
+    FrameLocalArenaReset(#[source] VulkanArenaError),
 }
 
 /// Get from [`Renderer::wait_frame`].
@@ -115,12 +79,12 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(instance: &Instance, device: &Device, physical_device: &PhysicalDevice) -> Result<Renderer, RendererError> {
+    pub fn new(instance: &Instance, device: &Device, physical_device: &PhysicalDevice) -> Result<Renderer, VulkanArenaError> {
         profiling::scope!("renderer creation (per-frame-stuff)");
 
         let ready_for_present = {
             let semaphore = unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
-                .map_err(RendererError::PresentReadySemaphoreCreation)?;
+                .expect("system should have enough memory to create vulkan semaphores");
             crate::name_vulkan_object(device, semaphore, format_args!("render finish semaphore"));
             Semaphore {
                 inner: semaphore,
@@ -128,9 +92,20 @@ impl Renderer {
             }
         };
 
+        let frame_start_fence = {
+            let fence = unsafe { device.create_fence(&vk::FenceCreateInfo::default(), None) }
+                .expect("system should have enough memory to create vulkan fences");
+            crate::name_vulkan_object(device, fence, format_args!("wait_frame fence"));
+            Fence {
+                inner: fence,
+                device: device.clone(),
+            }
+        };
+
         let frame_end_fence = {
             let fence_create_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-            let fence = unsafe { device.create_fence(&fence_create_info, None) }.map_err(RendererError::FrameEndFenceCreation)?;
+            let fence =
+                unsafe { device.create_fence(&fence_create_info, None) }.expect("system should have enough memory to create vulkan fences");
             crate::name_vulkan_object(device, fence, format_args!("frame end fence"));
             Fence {
                 inner: fence,
@@ -142,8 +117,8 @@ impl Renderer {
             let command_pool_create_info = vk::CommandPoolCreateInfo::default()
                 .queue_family_index(physical_device.graphics_queue_family.index)
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT);
-            let command_pool =
-                unsafe { device.create_command_pool(&command_pool_create_info, None) }.map_err(RendererError::CommandPoolCreation)?;
+            let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
+                .expect("system should have enough memory to create vulkan command pools");
             crate::name_vulkan_object(device, command_pool, format_args!("rendering cmds"));
             Rc::new(CommandPool {
                 inner: command_pool,
@@ -158,19 +133,7 @@ impl Renderer {
             10_000_000,
             MemoryProps::for_buffers(),
             format_args!("frame local arena"),
-        )
-        .map_err(RendererError::FrameLocalArenaCreation)?;
-
-        let frame_start_fence = unsafe {
-            device
-                .create_fence(&vk::FenceCreateInfo::default(), None)
-                .map_err(RendererError::FrameStartSemaphoreCreation)
-        }?;
-        crate::name_vulkan_object(device, frame_start_fence, format_args!("wait_frame fence"));
-        let frame_start_fence = Fence {
-            inner: frame_start_fence,
-            device: device.clone(),
-        };
+        )?;
 
         let draw_call_parameters = DrawCallParameters {
             data: DrawCallParametersSoa::zeroed(),
@@ -212,8 +175,8 @@ impl Renderer {
             profiling::scope!("wait for the image and for the previous frame to finish");
             self.device
                 .wait_for_fences(&fences, true, u64::MAX)
-                .map_err(RendererError::FrameEndFenceWait)?;
-            self.device.reset_fences(&fences).map_err(RendererError::FrameEndFenceWait)?;
+                .expect("waiting for vulkan fences should not fail");
+            self.device.reset_fences(&fences).expect("resetting vulkan fences should not fail");
         }
 
         // TODO: This reset *could* technically not be valid, if the buffers are still in use.
@@ -243,6 +206,10 @@ impl Renderer {
         Ok(FrameIndex::new(image_index as usize))
     }
 
+    /// Starts rendering the frame. Returns a VulkanArenaError if the internal
+    /// temporary memory arena fills up.
+    ///
+    /// TODO: Unwrap the arena errors?
     #[profiling::function]
     pub fn render_frame(
         &mut self,
@@ -252,7 +219,7 @@ impl Renderer {
         framebuffers: &Framebuffers,
         scene: &mut Scene,
         debug_value: u32,
-    ) -> Result<(), RendererError> {
+    ) -> Result<(), VulkanArenaError> {
         fn create_uniform_buffer<T: bytemuck::Pod>(
             temp_arena: &mut VulkanArena<ForBuffers>,
             buffer: &[T],
@@ -311,8 +278,7 @@ impl Renderer {
                 .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
             self.temp_arena
-                .create_buffer(buffer_create_info, transforms_bytes, None, None, format_args!("transforms"))
-                .map_err(RendererError::TransformBufferCreation)?
+                .create_buffer(buffer_create_info, transforms_bytes, None, None, format_args!("transforms"))?
         };
 
         // Create and update descriptors (buffer allocations and then desc writes):
@@ -320,12 +286,10 @@ impl Renderer {
         let global_transforms = &[scene
             .camera
             .create_proj_view_transforms(width as f32, height as f32, scene.world_space)];
-        let global_transforms_buffer = create_uniform_buffer(&mut self.temp_arena, global_transforms, "view+proj matrices")
-            .map_err(RendererError::CameraTransformUniformCreation)?;
+        let global_transforms_buffer = create_uniform_buffer(&mut self.temp_arena, global_transforms, "view+proj matrices")?;
 
         let render_settings = &[RenderSettings { debug_value }];
-        let render_settings_buffer = create_uniform_buffer(&mut self.temp_arena, render_settings, "render settings")
-            .map_err(RendererError::RenderSettingsUniformCreation)?;
+        let render_settings_buffer = create_uniform_buffer(&mut self.temp_arena, render_settings, "render settings")?;
 
         let skinned_mesh_joints = &mut scene.skinned_mesh_joints_buffer;
         // The joint buffer needs to have backing memory for the entire uniform
@@ -333,18 +297,14 @@ impl Renderer {
         // (few) skeletons would overflow the buffer's end.
         let empty_full_length_skeleton = &[Mat4::ZERO; MAX_BONE_COUNT as usize];
         skinned_mesh_joints.extend_from_slice(bytemuck::cast_slice(empty_full_length_skeleton));
-        let skinned_mesh_joints_buffer = create_uniform_buffer(&mut self.temp_arena, skinned_mesh_joints, "joint transforms")
-            .map_err(RendererError::JointTransformUniformCreation)?;
+        let skinned_mesh_joints_buffer = create_uniform_buffer(&mut self.temp_arena, skinned_mesh_joints, "joint transforms")?;
 
-        let materials_temp_uniform = descriptors
-            .create_materials_temp_uniform(&mut self.temp_arena)
-            .map_err(RendererError::MaterialsUniformCreation)?;
+        let materials_temp_uniform = descriptors.create_materials_temp_uniform(&mut self.temp_arena)?;
 
         let mut draw_call_params_update_ranges = [(0, 0); 1];
         let draw_call_params = if self.draw_call_parameters.instance_count > 0 {
             let draw_call_parameters = &[self.draw_call_parameters.data];
-            let draw_call_params_buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")
-                .map_err(RendererError::DrawCallParamsUniformCreation)?;
+            let draw_call_params_buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")?;
             draw_call_params_update_ranges[0] = (
                 DrawCallParametersSoa::MATERIAL_INDEX_OFFSET,
                 self.draw_call_parameters.instance_count * DrawCallParametersSoa::MATERIAL_INDEX_ELEMENT_SIZE,
@@ -389,8 +349,9 @@ impl Renderer {
             self.device
                 .sync2
                 .queue_submit2(self.device.graphics_queue, &submit_infos, self.frame_end_fence.inner)
-                .map_err(RendererError::RenderQueueSubmit)
+                .expect("vulkan queue submission should not fail");
         }
+        Ok(())
     }
 
     #[profiling::function]
@@ -423,14 +384,14 @@ impl Renderer {
         framebuffers: &Framebuffers,
         draws: &PipelineMap<HashMap<&VertexLibrary, Vec<DrawIndexedIndirectCommand>>>,
         transforms_buffer: &Buffer,
-    ) -> Result<vk::CommandBuffer, RendererError> {
+    ) -> Result<vk::CommandBuffer, VulkanArenaError> {
         let command_pool = self.command_pool.inner;
         unsafe {
             profiling::scope!("reset command pool");
             self.device
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
-                .map_err(RendererError::CommandPoolReset)
-        }?;
+                .expect("beginning vulkan command buffer recording should not fail");
+        };
 
         let command_buffer = if let Some(command_buffer) = &self.command_buffer {
             command_buffer.inner
@@ -441,7 +402,7 @@ impl Renderer {
                 .level(vk::CommandBufferLevel::PRIMARY)
                 .command_buffer_count(1);
             let command_buffers = unsafe { self.device.allocate_command_buffers(&command_buffer_allocate_info) }
-                .map_err(RendererError::CommandBufferAllocation)?;
+                .expect("system should have enough memory to allocate vulkan command buffers");
             self.command_buffer = Some(CommandBuffer {
                 inner: command_buffers[0],
                 device: self.device.clone(),
@@ -455,7 +416,7 @@ impl Renderer {
             profiling::scope!("begin command buffer");
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)
-                .map_err(RendererError::CommandBufferBegin)?;
+                .expect("beginning vulkan command buffer recording should not fail");
         }
         crate::name_vulkan_object(&self.device, command_buffer, format_args!("one frame's rendering cmds"));
 
@@ -534,15 +495,13 @@ impl Renderer {
                         .size(transforms_bytes.len() as vk::DeviceSize)
                         .usage(vk::BufferUsageFlags::INDIRECT_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
-                    self.temp_arena
-                        .create_buffer(
-                            buffer_create_info,
-                            transforms_bytes,
-                            None,
-                            None,
-                            format_args!("indirect draw command buffer ({static_pl:?})"),
-                        )
-                        .map_err(RendererError::IndirectCmdBufferCreation)?
+                    self.temp_arena.create_buffer(
+                        buffer_create_info,
+                        transforms_bytes,
+                        None,
+                        None,
+                        format_args!("indirect draw command buffer ({static_pl:?})"),
+                    )?
                 };
                 unsafe {
                     self.device.cmd_draw_indexed_indirect(
@@ -625,7 +584,7 @@ impl Renderer {
             profiling::scope!("end command buffer");
             self.device
                 .end_command_buffer(command_buffer)
-                .map_err(RendererError::CommandBufferEnd)?;
+                .expect("ending vulkan command buffer recording should not fail");
         }
 
         Ok(command_buffer)

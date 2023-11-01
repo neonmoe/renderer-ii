@@ -3,8 +3,8 @@ use ash::vk;
 
 use crate::arena::buffers::ForBuffers;
 use crate::arena::images::ForImages;
-use crate::arena::VulkanArena;
-use crate::image_loading::{self, ImageData, ImageLoadingError, TextureKind};
+use crate::arena::{VulkanArena, VulkanArenaError};
+use crate::image_loading::{self, ImageData, TextureKind};
 use crate::uploader::Uploader;
 use crate::vulkan_raii::{Device, ImageView};
 
@@ -18,7 +18,7 @@ pub fn all_defaults(
     staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
-) -> Result<crate::PbrDefaults, ImageLoadingError> {
+) -> Result<crate::PbrDefaults, VulkanArenaError> {
     Ok(crate::PbrDefaults {
         base_color: base_color(device, staging_arena, uploader, arena)?,
         metallic_roughness: metallic_roughness(device, staging_arena, uploader, arena)?,
@@ -33,7 +33,7 @@ pub fn base_color(
     staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
-) -> Result<ImageView, ImageLoadingError> {
+) -> Result<ImageView, VulkanArenaError> {
     image_loading::create_pixel(
         device,
         staging_arena,
@@ -50,7 +50,7 @@ pub fn metallic_roughness(
     staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
-) -> Result<ImageView, ImageLoadingError> {
+) -> Result<ImageView, VulkanArenaError> {
     image_loading::create_pixel(
         device,
         staging_arena,
@@ -67,7 +67,7 @@ pub fn normal(
     staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
-) -> Result<ImageView, ImageLoadingError> {
+) -> Result<ImageView, VulkanArenaError> {
     image_loading::create_pixel(
         device,
         staging_arena,
@@ -84,7 +84,7 @@ pub fn occlusion(
     staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
-) -> Result<ImageView, ImageLoadingError> {
+) -> Result<ImageView, VulkanArenaError> {
     image_loading::create_pixel(
         device,
         staging_arena,
@@ -101,7 +101,7 @@ pub fn emissive(
     staging_arena: &mut VulkanArena<ForBuffers>,
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
-) -> Result<ImageView, ImageLoadingError> {
+) -> Result<ImageView, VulkanArenaError> {
     image_loading::create_pixel(
         device,
         staging_arena,

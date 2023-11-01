@@ -204,7 +204,7 @@ fn create_materials(
             },
         };
         let name = mat.name.unwrap_or_else(|| ArrayString::from("unnamed material").unwrap());
-        materials.push(Material::new(descriptors, pipeline_specific_data, name).map_err(GltfLoadingError::MaterialCreation)?);
+        materials.push(Material::new(descriptors, pipeline_specific_data, name).ok_or(GltfLoadingError::NotEnoughMaterialSlots)?);
     }
     Ok(materials)
 }

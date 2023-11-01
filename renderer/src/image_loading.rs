@@ -14,14 +14,6 @@ use crate::vulkan_raii::{Device, ImageView};
 pub mod ntex;
 pub mod pbr_defaults;
 
-#[derive(thiserror::Error, Debug)]
-pub enum ImageLoadingError {
-    #[error("failed to create staging buffer for the image")]
-    StagingBufferCreation(#[source] VulkanArenaError),
-    #[error("failed to create the image")]
-    ImageCreation(#[source] VulkanArenaError),
-}
-
 pub struct ImageData<'a> {
     pub width: u32,
     pub height: u32,
@@ -81,7 +73,7 @@ pub fn create_pixel(
     pixels: [u8; 4],
     kind: TextureKind,
     debug_identifier: &str,
-) -> Result<ImageView, ImageLoadingError> {
+) -> Result<ImageView, VulkanArenaError> {
     let pixel_mip_range = 0..pixels.len();
     let image_data = ImageData {
         width: 1,
@@ -102,7 +94,7 @@ pub fn load_image(
     image_data: &ImageData,
     kind: TextureKind,
     debug_identifier: &str,
-) -> Result<ImageView, ImageLoadingError> {
+) -> Result<ImageView, VulkanArenaError> {
     let ImageData { width, height, format, .. } = *image_data;
     let pixels = &image_data.pixels;
     let mip_ranges = &image_data.mip_ranges;
@@ -126,23 +118,19 @@ pub fn load_image(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        staging_arena
-            .create_buffer(
-                buffer_create_info,
-                pixels,
-                None,
-                None,
-                format_args!("staging buffer for {debug_identifier}"),
-            )
-            .map_err(ImageLoadingError::StagingBufferCreation)?
+        staging_arena.create_buffer(
+            buffer_create_info,
+            pixels,
+            None,
+            None,
+            format_args!("staging buffer for {debug_identifier}"),
+        )?
     };
 
     let image_allocation = {
         profiling::scope!("allocate gpu texture");
         let image_info = image_data.get_create_info(kind);
-        arena
-            .create_image(image_info, format_args!("{debug_identifier}"))
-            .map_err(ImageLoadingError::ImageCreation)?
+        arena.create_image(image_info, format_args!("{debug_identifier}"))?
     };
 
     uploader.start_upload(
