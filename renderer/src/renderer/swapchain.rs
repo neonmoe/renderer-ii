@@ -9,12 +9,8 @@ use crate::vulkan_raii::{self, AnyImage, Device, Surface};
 
 #[derive(thiserror::Error, Debug)]
 pub enum SwapchainError {
-    #[error("the old swapchain is still in use")]
-    OldSwapchainInUse,
-    #[error("surface needs to be recreated")]
-    SurfaceRecreationRequired(#[source] vk::Result),
-    #[error("failed to create swapchain (window issues?)")]
-    CreationFailed(#[source] vk::Result),
+    #[error("vulkan swapchain is out of date, needs to be recreated")]
+    OutOfDate,
 }
 
 pub struct SwapchainSettings {
@@ -34,12 +30,9 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-    pub fn new(
-        device: &Device,
-        physical_device: &PhysicalDevice,
-        surface: Surface,
-        settings: &SwapchainSettings,
-    ) -> Result<Swapchain, SwapchainError> {
+    /// Creates a new [`Swapchain`], or returns a
+    /// [`SwapchainError::SurfaceLost`] error if it fails.
+    pub fn new(device: &Device, physical_device: &PhysicalDevice, surface: Surface, settings: &SwapchainSettings) -> Swapchain {
         profiling::scope!("swapchain creation");
 
         let queue_family_indices = [
@@ -54,7 +47,7 @@ impl Swapchain {
             physical_device,
             &queue_family_indices,
             settings,
-        )?;
+        );
         let swapchain = Rc::new(vulkan_raii::Swapchain {
             inner: swapchain,
             device: device.swapchain.clone(),
@@ -76,21 +69,17 @@ impl Swapchain {
             format_args!("{width}x{height}, {swapchain_format:?}, {frame_count} frames"),
         );
 
-        Ok(Swapchain { extent, images, swapchain })
+        Swapchain { extent, images, swapchain }
     }
 
-    pub fn recreate(
-        &mut self,
-        device: &Device,
-        physical_device: &PhysicalDevice,
-        settings: &SwapchainSettings,
-    ) -> Result<(), SwapchainError> {
+    /// Recreates the swapchain with the new settings. The existing swapchain
+    /// must not be in use at this time, and all references to it should've been
+    /// cleaned up, otherwise this will panic.
+    pub fn recreate(&mut self, device: &Device, physical_device: &PhysicalDevice, settings: &SwapchainSettings) {
         profiling::scope!("swapchain re-creation");
 
         self.images.clear();
-        let Some(swapchain_holder) = Rc::get_mut(&mut self.swapchain) else {
-            return Err(SwapchainError::OldSwapchainInUse);
-        };
+        let swapchain_holder = Rc::get_mut(&mut self.swapchain).expect("swapchain should not be in use during recreation");
         let queue_family_indices = [
             physical_device.graphics_queue_family.index,
             physical_device.surface_queue_family.index,
@@ -103,7 +92,7 @@ impl Swapchain {
             physical_device,
             &queue_family_indices,
             settings,
-        )?;
+        );
         // The mutable borrow of self.inner ensures that this won't leave any dangling swapchains.
         unsafe { device.swapchain.destroy_swapchain(swapchain_holder.inner, None) };
         // And now swapchain.inner is a valid swapchain again.
@@ -125,7 +114,6 @@ impl Swapchain {
             self.swapchain.inner,
             format_args!("{width}x{height}, {swapchain_format:?}, {frame_count} frames"),
         );
-        Ok(())
     }
 
     pub fn frame_count(&self) -> u32 {
@@ -160,10 +148,9 @@ fn create_swapchain(
     physical_device: &PhysicalDevice,
     queue_family_indices: &[u32],
     settings: &SwapchainSettings,
-) -> Result<(vk::SwapchainKHR, vk::Extent2D), SwapchainError> {
+) -> (vk::SwapchainKHR, vk::Extent2D) {
     let present_modes = match unsafe { surface_ext.get_physical_device_surface_present_modes(physical_device.inner, surface) } {
         Ok(modes) => modes,
-        Err(err @ vk::Result::ERROR_SURFACE_LOST_KHR) => return Err(SwapchainError::SurfaceRecreationRequired(err)),
         Err(err) => panic!("enumerating vulkan surface present modes should not fail: {err}"),
     };
     let mut present_mode = vk::PresentModeKHR::FIFO;
@@ -177,7 +164,6 @@ fn create_swapchain(
 
     let surface_capabilities = match unsafe { surface_ext.get_physical_device_surface_capabilities(physical_device.inner, surface) } {
         Ok(caps) => caps,
-        Err(err @ vk::Result::ERROR_SURFACE_LOST_KHR) => return Err(SwapchainError::SurfaceRecreationRequired(err)),
         Err(err) => panic!("enumerating vulkan surface capabilities should not fail: {err}"),
     };
     let unset_extent = vk::Extent2D {
@@ -218,11 +204,8 @@ fn create_swapchain(
     }
     let swapchain = match unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None) } {
         Ok(swapchain) => swapchain,
-        Err(err @ (vk::Result::ERROR_SURFACE_LOST_KHR | vk::Result::ERROR_NATIVE_WINDOW_IN_USE_KHR)) => {
-            return Err(SwapchainError::SurfaceRecreationRequired(err))
-        }
-        Err(err) => return Err(SwapchainError::CreationFailed(err)),
+        Err(err) => panic!("vulkan swapchain errors should've been handled: {err}"),
     };
 
-    Ok((swapchain, swapchain_create_info.image_extent))
+    (swapchain, swapchain_create_info.image_extent)
 }

@@ -79,10 +79,10 @@ fn main() {
         immediate_present: false,
     };
 
-    let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings).unwrap();
+    let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings);
     let mut pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None);
-    let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain).unwrap();
-    let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device).unwrap();
+    let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain);
+    let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device);
 
     let (triangle_mesh1, triangle_mesh2) = {
         let positions = [Vec3::new(-0.5, 0.5, 0.8), Vec3::new(0.5, 0.5, 0.8), Vec3::new(-0.1, -0.5, 0.8)];
@@ -163,7 +163,7 @@ fn main() {
                 swapchain_recreation_requested = None;
                 device.wait_idle();
                 drop(framebuffers);
-                swapchain.recreate(&device, &physical_device, &swapchain_settings).unwrap();
+                swapchain.recreate(&device, &physical_device, &swapchain_settings);
                 pipelines = renderer::Pipelines::new(
                     &device,
                     &descriptors,
@@ -172,7 +172,7 @@ fn main() {
                     attachment_formats,
                     Some(pipelines),
                 );
-                framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain).unwrap();
+                framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain);
             }
         }
 
@@ -181,13 +181,10 @@ fn main() {
         scene.queue_mesh(&triangle_mesh2, &triangle_material, Mat4::from_scale(Vec3::new(2.0, 0.5, 1.0)));
 
         let frame_index = renderer.wait_frame(&swapchain).unwrap();
-        renderer
-            .render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, 3)
-            .unwrap();
+        renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, 3);
         match { renderer.present_frame(frame_index, &swapchain) } {
             Ok(_) => {}
-            Err(renderer::RendererError::SwapchainOutOfDate) => swapchain_recreation_requested = Some(time.ticks()),
-            Err(err) => panic!("{err}"),
+            Err(renderer::SwapchainError::OutOfDate) => swapchain_recreation_requested = Some(time.ticks()),
         }
 
         let now = time.ticks();

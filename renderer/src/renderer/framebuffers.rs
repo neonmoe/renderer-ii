@@ -4,7 +4,7 @@ use core::fmt::Arguments;
 use arrayvec::ArrayVec;
 use ash::{vk, Instance};
 
-use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
+use crate::arena::{MemoryProps, VulkanArena};
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::pipeline_parameters::render_passes::{Attachment, AttachmentVec};
 use crate::renderer::pipelines::Pipelines;
@@ -20,13 +20,14 @@ pub struct Framebuffers {
 }
 
 impl Framebuffers {
+    // TODO: Add framebuffer measurement function and take in the arena as a param
     pub fn new(
         instance: &Instance,
         device: &Device,
         physical_device: &PhysicalDevice,
         pipelines: &Pipelines,
         swapchain: &Swapchain,
-    ) -> Result<Framebuffers, VulkanArenaError> {
+    ) -> Framebuffers {
         profiling::scope!("framebuffers creation");
 
         let vk::Extent2D { width, height } = swapchain.extent;
@@ -72,7 +73,8 @@ impl Framebuffers {
             framebuffer_size,
             MemoryProps::for_framebuffers(),
             format_args!("framebuffer arena ({width}x{height})"),
-        )?;
+        )
+        .expect("system should have enough memory to hold the framebuffers");
 
         let create_image_view =
             |image: Rc<AnyImage>, aspect_mask: vk::ImageAspectFlags, format: vk::Format, debug_identifier: Arguments| -> ImageView {
@@ -98,20 +100,22 @@ impl Framebuffers {
 
         let mut create_attachment_image = |attachment: Attachment| {
             let image_info = image_info(attachment);
-            let image = framebuffer_arena.create_image(image_info, format_args!("{attachment:?} attachment"))?;
+            let image = framebuffer_arena
+                .create_image(image_info, format_args!("{attachment:?} attachment"))
+                .expect("framebuffer arena should fit all attachments");
             let image_view = create_image_view(
                 Rc::new(AnyImage::Regular(image)),
                 attachment.aspect(),
                 attachment.format(pd_formats),
                 format_args!("{attachment:?} render target"),
             );
-            Ok(image_view)
+            image_view
         };
 
-        let hdr_image = create_attachment_image(Attachment::Hdr)?;
-        let depth_image = create_attachment_image(Attachment::Depth)?;
+        let hdr_image = create_attachment_image(Attachment::Hdr);
+        let depth_image = create_attachment_image(Attachment::Depth);
         let multisampled_final_image = if multisampled {
-            Some(create_attachment_image(Attachment::PostProcess)?)
+            Some(create_attachment_image(Attachment::PostProcess))
         } else {
             None
         };
@@ -129,13 +133,13 @@ impl Framebuffers {
             swapchain_images.push(image_view);
         }
 
-        Ok(Framebuffers {
+        Framebuffers {
             extent: vk::Extent2D { width, height },
             hdr_image,
             depth_image,
             multisampled_final_image,
             swapchain_images,
-        })
+        }
     }
 
     pub(crate) fn attachment_image_views(&self, frame_index: usize) -> [vk::ImageView; Attachment::COUNT] {

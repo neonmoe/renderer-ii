@@ -13,7 +13,7 @@ const MAX_INSTANCE_EXTENSIONS: usize = 2 + 1;
 pub enum InstanceCreationError {
     #[error("failed to enumerate vulkan extensions required to create a surface from a window")]
     WindowExtensionEnumeration(#[source] vk::Result),
-    #[error("failed to create vulkan window")]
+    #[error("failed to create vulkan instance")]
     InstanceCreation(#[source] vk::Result),
 }
 

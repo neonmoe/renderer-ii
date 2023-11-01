@@ -313,9 +313,7 @@ fn main_() {
             }
         }
 
-        state.refresh_rate = if state.immediate_present {
-            1_000_000_000
-        } else {
+        state.refresh_rate = {
             profiling::scope!("getting refresh rate");
             window.display_mode().map(|dm| dm.refresh_rate).unwrap_or(60)
         };
@@ -610,13 +608,13 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         prev_frame = state.frame;
     }
 
-    let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings).unwrap();
+    let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings);
     print_memory_usage("after swapchain creation");
     let mut pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None);
     print_memory_usage("after pipelines creation");
-    let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain).unwrap();
+    let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain);
     print_memory_usage("after framebuffers creation");
-    let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device).unwrap();
+    let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device);
     print_memory_usage("after renderer creation");
 
     let mut scene = renderer::Scene::new(&physical_device);
@@ -636,7 +634,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
                     };
                     if !state.running {
                         break 'running;
-                    } else if state.frame != prev_frame {
+                    } else if state.frame != prev_frame || state.immediate_present {
                         prev_frame = state.frame;
                         break state;
                     } else {
@@ -694,7 +692,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
             profiling::scope!("handle resize");
             device.wait_idle();
             drop(framebuffers);
-            swapchain.recreate(&device, &physical_device, &swapchain_settings).unwrap();
+            swapchain.recreate(&device, &physical_device, &swapchain_settings);
             pipelines = renderer::Pipelines::new(
                 &device,
                 &descriptors,
@@ -703,41 +701,25 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
                 attachment_formats,
                 Some(pipelines),
             );
-            framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain).unwrap();
+            framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain);
             recreate_swapchain = false;
         }
 
         {
             profiling::scope!("rendering (vulkan calls)");
-            let frame_index = match renderer.wait_frame(&swapchain) {
-                Ok(i) => i,
-                Err(renderer::RendererError::SwapchainOutOfDate) => {
+            match renderer.wait_frame(&swapchain) {
+                Ok(frame_index) => {
+                    renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, debug_value);
+                    match { renderer.present_frame(frame_index, &swapchain) } {
+                        Ok(()) => {}
+                        Err(renderer::SwapchainError::OutOfDate) => recreate_swapchain = true,
+                    }
+                    profiling::finish_frame!();
+                }
+                Err(renderer::SwapchainError::OutOfDate) => {
                     recreate_swapchain = true;
-                    continue;
-                }
-                Err(err) => {
-                    log::error!("Error during regular frame wait: {}", err);
-                    std::thread::sleep(Duration::from_millis(30));
-                    continue;
-                }
-            };
-            match renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, debug_value) {
-                Ok(_) => {}
-                Err(err) => {
-                    log::warn!("Error during regular frame rendering: {}", err);
-                    std::thread::sleep(Duration::from_millis(30));
                 }
             }
-            match { renderer.present_frame(frame_index, &swapchain) } {
-                Ok(_) => {}
-                Err(renderer::RendererError::SwapchainOutOfDate) => recreate_swapchain = true,
-                Err(err) => {
-                    log::error!("Error during regular frame present: {}", err);
-                    std::thread::sleep(Duration::from_millis(30));
-                    continue;
-                }
-            }
-            profiling::finish_frame!();
 
             prev_duration = Instant::now().duration_since(frame_start);
 

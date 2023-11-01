@@ -6,9 +6,9 @@
 //! Vulkan Profile.
 //!
 //! Vulkan error handling policy: if the returned error is "out of host/device
-//! memory" or "device lost", it is handled by panicking. If the function is
-//! specifically for allocating a `VkDeviceMemory`, "out of device memory" is
-//! handled by returning a Result with an appropriate error.
+//! memory", "surface lost", or "device lost", it is handled by panicking. If
+//! the function is specifically for allocating a `VkDeviceMemory`, "out of
+//! device memory" is handled by returning a Result with an appropriate error.
 
 #![warn(clippy::pedantic)]
 #![warn(clippy::std_instead_of_alloc)]
@@ -145,7 +145,7 @@ pub use renderer::scene::coordinate_system::CoordinateSystem;
 pub use renderer::scene::mesh::{IndexType, Mesh};
 pub use renderer::scene::{JointOffset, Scene, SkinnedModel, StaticDraws};
 pub use renderer::swapchain::{Swapchain, SwapchainBase, SwapchainError, SwapchainSettings};
-pub use renderer::{Renderer, RendererError};
+pub use renderer::Renderer;
 
 mod surface {
     use ash::extensions::khr;
