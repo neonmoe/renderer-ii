@@ -59,11 +59,7 @@ impl VulkanArena<ForBuffers> {
     /// Copies from the `src` to the `dst` using the `uploader`.
     #[profiling::function]
     pub fn copy_buffer(&mut self, src: Buffer, dst: &Buffer, uploader: &mut Uploader, name: Arguments) {
-        let &mut Uploader {
-            graphics_queue_family,
-            transfer_queue_family,
-            ..
-        } = uploader;
+        let &mut Uploader { graphics_queue_family, transfer_queue_family, .. } = uploader;
         let buffer_memory_barrier = vk::BufferMemoryBarrier2::default().buffer(dst.inner).offset(0).size(vk::WHOLE_SIZE);
         uploader.start_upload(
             src,
@@ -163,12 +159,6 @@ impl VulkanArena<ForBuffers> {
         }
         self.offset = new_offset;
 
-        Ok(Buffer {
-            inner: buffer,
-            device: self.device.clone(),
-            memory: self.memory.clone(),
-            offset,
-            size: buffer_create_info.size,
-        })
+        Ok(Buffer { inner: buffer, device: self.device.clone(), memory: self.memory.clone(), offset, size: buffer_create_info.size })
     }
 }

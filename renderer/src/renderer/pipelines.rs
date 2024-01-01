@@ -34,17 +34,10 @@ impl Pipelines {
         let pipelines = PipelineMap::from_infallible(|name| {
             let pipeline = vk_pipelines_iter.next().unwrap();
             crate::name_vulkan_object(device, pipeline, format_args!("{name:?}"));
-            vulkan_raii::Pipeline {
-                inner: pipeline,
-                device: device.clone(),
-            }
+            vulkan_raii::Pipeline { inner: pipeline, device: device.clone() }
         });
 
-        Pipelines {
-            pipelines,
-            attachment_sample_count,
-            pipeline_cache,
-        }
+        Pipelines { pipelines, attachment_sample_count, pipeline_cache }
     }
 }
 
@@ -80,14 +73,10 @@ fn create_pipelines(
         };
         let vertex_module = create_from_shader_variant(params.vertex_shader);
         let fragment_module = create_from_shader_variant(params.fragment_shader);
-        let vert_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::VERTEX)
-            .module(vertex_module)
-            .name(cstr!("main"));
-        let frag_shader_stage_create_info = vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::FRAGMENT)
-            .module(fragment_module)
-            .name(cstr!("main"));
+        let vert_shader_stage_create_info =
+            vk::PipelineShaderStageCreateInfo::default().stage(vk::ShaderStageFlags::VERTEX).module(vertex_module).name(cstr!("main"));
+        let frag_shader_stage_create_info =
+            vk::PipelineShaderStageCreateInfo::default().stage(vk::ShaderStageFlags::FRAGMENT).module(fragment_module).name(cstr!("main"));
         [vert_shader_stage_create_info, frag_shader_stage_create_info]
     });
 
@@ -124,9 +113,8 @@ fn create_pipelines(
     let color_blend_attachment_states_per_pipeline = PipelineMap::from_infallible(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         let rgba_mask = vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A;
-        let mut blend_attachment_state = vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(rgba_mask)
-            .blend_enable(params.blended);
+        let mut blend_attachment_state =
+            vk::PipelineColorBlendAttachmentState::default().color_write_mask(rgba_mask).blend_enable(params.blended);
         if params.blended {
             blend_attachment_state = blend_attachment_state
                 .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
@@ -150,9 +138,8 @@ fn create_pipelines(
             .attachments(&color_blend_attachment_states_per_pipeline[pipeline])
     });
 
-    let input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
-        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
-        .primitive_restart_enable(false);
+    let input_assembly_create_info =
+        vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST).primitive_restart_enable(false);
 
     let rasterization_create_info = vk::PipelineRasterizationStateCreateInfo::default()
         .polygon_mode(vk::PolygonMode::FILL)
@@ -168,15 +155,9 @@ fn create_pipelines(
             .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL)
     });
 
-    let viewports = [vk::Viewport::default()
-        .width(extent.width as f32)
-        .height(extent.height as f32)
-        .min_depth(0.0)
-        .max_depth(1.0)];
+    let viewports = [vk::Viewport::default().width(extent.width as f32).height(extent.height as f32).min_depth(0.0).max_depth(1.0)];
     let scissors = [vk::Rect2D::default().extent(extent)];
-    let viewport_create_info = vk::PipelineViewportStateCreateInfo::default()
-        .viewports(&viewports)
-        .scissors(&scissors);
+    let viewport_create_info = vk::PipelineViewportStateCreateInfo::default().viewports(&viewports).scissors(&scissors);
 
     pipeline_cache = pipeline_cache.or_else(|| {
         // NOTE: Access to the PipelineCache is synchronized because
@@ -187,10 +168,7 @@ fn create_pipelines(
         let create_info = vk::PipelineCacheCreateInfo::default().flags(vk::PipelineCacheCreateFlags::EXTERNALLY_SYNCHRONIZED);
         let pipeline_cache = unsafe { device.create_pipeline_cache(&create_info, None) }.ok()?;
         crate::name_vulkan_object(device, pipeline_cache, format_args!("all pipelines"));
-        Some(PipelineCache {
-            inner: pipeline_cache,
-            device: device.clone(),
-        })
+        Some(PipelineCache { inner: pipeline_cache, device: device.clone() })
     });
     let mut pipeline_create_infos = ArrayVec::<_, PIPELINE_COUNT>::new();
     for (&i, pipeline_rendering_create_info) in ALL_PIPELINES.iter().zip(pipeline_rendering_create_infos.iter_mut()) {

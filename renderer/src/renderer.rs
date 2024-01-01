@@ -59,6 +59,10 @@ unsafe impl Pod for DrawIndexedIndirectCommand {}
 
 pub struct Renderer {
     device: Device,
+    // TODO: Create an "queue submission" interface for uploaders and renderer to use (one per frame in flight?)
+    // they should at least hold the command pool, have a way to submit the
+    // commands (with it internally tracking the submission with a fence), and
+    // expose a "done yet?" function (using the fence)
     frame_start_fence: Fence,
     ready_for_present: Semaphore,
     frame_end_fence: Fence,
@@ -76,20 +80,14 @@ impl Renderer {
             let semaphore = unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
                 .expect("system should have enough memory to create vulkan semaphores");
             crate::name_vulkan_object(device, semaphore, format_args!("render finish semaphore"));
-            Semaphore {
-                inner: semaphore,
-                device: device.clone(),
-            }
+            Semaphore { inner: semaphore, device: device.clone() }
         };
 
         let frame_start_fence = {
             let fence = unsafe { device.create_fence(&vk::FenceCreateInfo::default(), None) }
                 .expect("system should have enough memory to create vulkan fences");
             crate::name_vulkan_object(device, fence, format_args!("wait_frame fence"));
-            Fence {
-                inner: fence,
-                device: device.clone(),
-            }
+            Fence { inner: fence, device: device.clone() }
         };
 
         let frame_end_fence = {
@@ -97,10 +95,7 @@ impl Renderer {
             let fence =
                 unsafe { device.create_fence(&fence_create_info, None) }.expect("system should have enough memory to create vulkan fences");
             crate::name_vulkan_object(device, fence, format_args!("frame end fence"));
-            Fence {
-                inner: fence,
-                device: device.clone(),
-            }
+            Fence { inner: fence, device: device.clone() }
         };
 
         let command_pool = {
@@ -110,26 +105,14 @@ impl Renderer {
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
                 .expect("system should have enough memory to create vulkan command pools");
             crate::name_vulkan_object(device, command_pool, format_args!("rendering cmds"));
-            Rc::new(CommandPool {
-                inner: command_pool,
-                device: device.clone(),
-            })
+            Rc::new(CommandPool { inner: command_pool, device: device.clone() })
         };
 
-        let temp_arena = VulkanArena::new(
-            instance,
-            device,
-            physical_device,
-            10_000_000,
-            MemoryProps::for_buffers(),
-            format_args!("frame local arena"),
-        )
-        .expect("system should have enough memory for the renderer's temp arena");
+        let temp_arena =
+            VulkanArena::new(instance, device, physical_device, 10_000_000, MemoryProps::for_buffers(), format_args!("frame local arena"))
+                .expect("system should have enough memory for the renderer's temp arena");
 
-        let draw_call_parameters = DrawCallParameters {
-            data: DrawCallParametersSoa::zeroed(),
-            instance_count: 0,
-        };
+        let draw_call_parameters = DrawCallParameters { data: DrawCallParametersSoa::zeroed(), instance_count: 0 };
 
         Renderer {
             device: device.clone(),
@@ -153,10 +136,7 @@ impl Renderer {
             profiling::scope!("acquire next image");
             let fence = self.frame_start_fence.inner;
             loop {
-                match swapchain
-                    .device()
-                    .acquire_next_image(swapchain.inner(), u64::MAX, vk::Semaphore::null(), fence)
-                {
+                match swapchain.device().acquire_next_image(swapchain.inner(), u64::MAX, vk::Semaphore::null(), fence) {
                     Ok(result) => break result,
                     Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Err(SwapchainError::OutOfDate),
                     Err(vk::Result::TIMEOUT | vk::Result::NOT_READY) => {
@@ -172,16 +152,12 @@ impl Renderer {
         let fences = [self.frame_start_fence.inner, self.frame_end_fence.inner];
         unsafe {
             profiling::scope!("wait for the image and for the previous frame to finish");
-            self.device
-                .wait_for_fences(&fences, true, u64::MAX)
-                .expect("waiting for vulkan fences should not fail");
+            self.device.wait_for_fences(&fences, true, u64::MAX).expect("waiting for vulkan fences should not fail");
             self.device.reset_fences(&fences).expect("resetting vulkan fences should not fail");
         }
 
         // TODO: This reset *could* technically not be valid, if the buffers are still in use.
-        self.temp_arena
-            .reset()
-            .expect("renderer's temp arena should not have any hanging buffers at this point");
+        self.temp_arena.reset().expect("renderer's temp arena should not have any hanging buffers at this point");
 
         // We know they aren't, since we only have one frame in flight and we've
         // waited on the previous frame's fence, but as the user might want to
@@ -285,9 +261,7 @@ impl Renderer {
 
         // Create and update descriptors (buffer allocations and then desc writes):
 
-        let global_transforms = &[scene
-            .camera
-            .create_proj_view_transforms(width as f32, height as f32, scene.world_space)];
+        let global_transforms = &[scene.camera.create_proj_view_transforms(width as f32, height as f32, scene.world_space)];
         let global_transforms_buffer = create_uniform_buffer(&mut self.temp_arena, global_transforms, "view+proj matrices")
             .expect("renderer's temp arena should have enough memory for the view+proj matrices buffer");
 
@@ -344,14 +318,10 @@ impl Renderer {
         self.temp_arena.add_buffer(transforms_buffer);
 
         let signal_semaphores = [
-            vk::SemaphoreSubmitInfo::default()
-                .semaphore(self.ready_for_present.inner)
-                .stage_mask(vk::PipelineStageFlags2::NONE), // this signals vkQueuePresent, which does not need synchronization nor have a stage
+            vk::SemaphoreSubmitInfo::default().semaphore(self.ready_for_present.inner).stage_mask(vk::PipelineStageFlags2::NONE), // this signals vkQueuePresent, which does not need synchronization nor have a stage
         ];
         let command_buffers = [vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)];
-        let submit_infos = [vk::SubmitInfo2::default()
-            .signal_semaphore_infos(&signal_semaphores)
-            .command_buffer_infos(&command_buffers)];
+        let submit_infos = [vk::SubmitInfo2::default().signal_semaphore_infos(&signal_semaphores).command_buffer_infos(&command_buffers)];
         unsafe {
             profiling::scope!("queue render");
             self.device
@@ -366,10 +336,8 @@ impl Renderer {
         let wait_semaphores = [self.ready_for_present.inner];
         let swapchains = [swapchain.inner()];
         let image_indices = [frame_index.index as u32];
-        let present_info = vk::PresentInfoKHR::default()
-            .wait_semaphores(&wait_semaphores)
-            .swapchains(&swapchains)
-            .image_indices(&image_indices);
+        let present_info =
+            vk::PresentInfoKHR::default().wait_semaphores(&wait_semaphores).swapchains(&swapchains).image_indices(&image_indices);
         let present_result = unsafe {
             profiling::scope!("queue present");
             swapchain.device().queue_present(self.device.surface_queue, &present_info)
@@ -410,11 +378,8 @@ impl Renderer {
                 .command_buffer_count(1);
             let command_buffers = unsafe { self.device.allocate_command_buffers(&command_buffer_allocate_info) }
                 .expect("system should have enough memory to allocate vulkan command buffers");
-            self.command_buffer = Some(CommandBuffer {
-                inner: command_buffers[0],
-                device: self.device.clone(),
-                command_pool: self.command_pool.clone(),
-            });
+            self.command_buffer =
+                Some(CommandBuffer { inner: command_buffers[0], device: self.device.clone(), command_pool: self.command_pool.clone() });
             command_buffers[0]
         };
 
@@ -472,16 +437,13 @@ impl Renderer {
             let bind_point = vk::PipelineBindPoint::GRAPHICS;
             unsafe { self.device.cmd_bind_pipeline(command_buffer, bind_point, pipeline) };
             unsafe {
-                self.device
-                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[]);
+                self.device.cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[]);
             }
             for (vertex_library, draws) in &draws[static_pl] {
                 const VERTEX_BUFFERS: usize = VERTEX_BINDING_COUNT + 1;
                 let mut vertex_offsets = ArrayVec::<vk::DeviceSize, VERTEX_BUFFERS>::new();
                 vertex_offsets.push(0);
-                vertex_offsets
-                    .try_extend_from_slice(&vertex_library.vertex_buffer_offsets[static_pl])
-                    .unwrap();
+                vertex_offsets.try_extend_from_slice(&vertex_library.vertex_buffer_offsets[static_pl]).unwrap();
                 let mut vertex_buffers = ArrayVec::<vk::Buffer, VERTEX_BUFFERS>::new();
                 vertex_buffers.push(transforms_buffer.inner);
                 for _ in 1..vertex_offsets.len() {
@@ -489,10 +451,8 @@ impl Renderer {
                 }
 
                 unsafe {
-                    self.device
-                        .cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
-                    self.device
-                        .cmd_bind_index_buffer(command_buffer, vertex_library.index_buffer.inner, 0, VERTEX_LIBRARY_INDEX_TYPE);
+                    self.device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
+                    self.device.cmd_bind_index_buffer(command_buffer, vertex_library.index_buffer.inner, 0, VERTEX_LIBRARY_INDEX_TYPE);
                 }
 
                 let indirect_draws_buffer = {
@@ -512,14 +472,11 @@ impl Renderer {
                         )
                         .expect("renderer's temp arena should have enough memory for the indirect draws buffer")
                 };
+                let draw_count = draws.len() as u32;
+                let stride = mem::size_of::<DrawIndexedIndirectCommand>() as u32;
                 unsafe {
-                    self.device.cmd_draw_indexed_indirect(
-                        command_buffer,
-                        indirect_draws_buffer.inner,
-                        0,
-                        draws.len() as u32,
-                        mem::size_of::<DrawIndexedIndirectCommand>() as u32,
-                    );
+                    profiling::scope!("draw indexed indirect");
+                    self.device.cmd_draw_indexed_indirect(command_buffer, indirect_draws_buffer.inner, 0, draw_count, stride);
                 }
                 self.temp_arena.add_buffer(indirect_draws_buffer);
             }
@@ -566,14 +523,12 @@ impl Renderer {
             let pl_index = PipelineIndex::RenderResolutionPostProcess;
             let bind_point = vk::PipelineBindPoint::GRAPHICS;
             unsafe {
-                self.device
-                    .cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines[pl_index].inner);
+                self.device.cmd_bind_pipeline(command_buffer, bind_point, pipelines.pipelines[pl_index].inner);
             }
             let layout = descriptors.pipeline_layouts[pl_index].inner;
             let descriptors = &descriptors.descriptor_sets(pl_index)[1..];
             unsafe {
-                self.device
-                    .cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, descriptors, &[]);
+                self.device.cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, descriptors, &[]);
             }
             unsafe { self.device.cmd_draw(command_buffer, 3, 1, 0, 0) };
         }
@@ -591,9 +546,7 @@ impl Renderer {
 
         unsafe {
             profiling::scope!("end command buffer");
-            self.device
-                .end_command_buffer(command_buffer)
-                .expect("ending vulkan command buffer recording should not fail");
+            self.device.end_command_buffer(command_buffer).expect("ending vulkan command buffer recording should not fail");
         }
 
         command_buffer

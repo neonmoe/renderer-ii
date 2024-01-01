@@ -102,11 +102,8 @@ pub const ALL_PIPELINES: [PipelineIndex; PIPELINE_COUNT] = [
     PipelineIndex::RenderResolutionPostProcess,
 ];
 
-pub const SKINNED_PIPELINES: [PipelineIndex; 3] = [
-    PipelineIndex::PbrSkinnedOpaque,
-    PipelineIndex::PbrSkinnedAlphaToCoverage,
-    PipelineIndex::PbrSkinnedBlended,
-];
+pub const SKINNED_PIPELINES: [PipelineIndex; 3] =
+    [PipelineIndex::PbrSkinnedOpaque, PipelineIndex::PbrSkinnedAlphaToCoverage, PipelineIndex::PbrSkinnedBlended];
 
 pub const PBR_PIPELINES: [PipelineIndex; 6] = [
     PipelineIndex::PbrOpaque,
@@ -216,10 +213,7 @@ pub(crate) struct DescriptorSetLayoutParams {
 #[derive(Clone, Copy)]
 pub(crate) enum Shader {
     SingleVariant((&'static str, &'static [u32])),
-    MsaaVariants {
-        single_sample: (&'static str, &'static [u32]),
-        multi_sample: (&'static str, &'static [u32]),
-    },
+    MsaaVariants { single_sample: (&'static str, &'static [u32]), multi_sample: (&'static str, &'static [u32]) },
 }
 macro_rules! shader {
     ($shader_name:literal) => {{
@@ -446,13 +440,7 @@ static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     render_pass: RenderPass::Geometry,
     vertex_shader: Shader::SingleVariant(shader!("variants/main-static.vert")),
     fragment_shader: Shader::SingleVariant(shader!("main.frag")),
-    bindings: &[
-        INSTANCED_TRANSFORM_BINDING_0,
-        POSITION_BINDING_1,
-        TEXCOORD0_BINDING_2,
-        NORMAL_BINDING_3,
-        TANGENT_BINDING_4,
-    ],
+    bindings: &[INSTANCED_TRANSFORM_BINDING_0, POSITION_BINDING_1, TEXCOORD0_BINDING_2, NORMAL_BINDING_3, TANGENT_BINDING_4],
     attributes: &[
         INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
         INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
@@ -511,25 +499,13 @@ static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     ],
 };
 
-static CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
-    alpha_to_coverage: true,
-    ..OPAQUE_PARAMETERS
-};
+static CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters { alpha_to_coverage: true, ..OPAQUE_PARAMETERS };
 
-static SKINNED_CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters {
-    alpha_to_coverage: true,
-    ..SKINNED_OPAQUE_PARAMETERS
-};
+static SKINNED_CLIPPED_PARAMETERS: PipelineParameters = PipelineParameters { alpha_to_coverage: true, ..SKINNED_OPAQUE_PARAMETERS };
 
-static BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
-    blended: true,
-    ..OPAQUE_PARAMETERS
-};
+static BLENDED_PARAMETERS: PipelineParameters = PipelineParameters { blended: true, ..OPAQUE_PARAMETERS };
 
-static SKINNED_BLENDED_PARAMETERS: PipelineParameters = PipelineParameters {
-    blended: true,
-    ..SKINNED_OPAQUE_PARAMETERS
-};
+static SKINNED_BLENDED_PARAMETERS: PipelineParameters = PipelineParameters { blended: true, ..SKINNED_OPAQUE_PARAMETERS };
 
 static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,

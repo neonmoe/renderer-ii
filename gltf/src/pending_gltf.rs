@@ -179,11 +179,7 @@ fn create_materials(
         let em_factor = Vec3::from(mat.emissive_factor);
         let norm_factor = mat.normal_texture.as_ref().map(|t| t.scale).unwrap_or(1.0);
         let occl_factor = mat.occlusion_texture.as_ref().map(|t| t.strength).unwrap_or(1.0);
-        let alpha_cutoff = if mat.alpha_mode == gltf_json::AlphaMode::Mask {
-            mat.alpha_cutoff
-        } else {
-            0.0
-        };
+        let alpha_cutoff = if mat.alpha_mode == gltf_json::AlphaMode::Mask { mat.alpha_cutoff } else { 0.0 };
         let factors = PbrFactors {
             base_color: Vec4::from(pbr.base_color_factor),
             emissive_and_occlusion: Vec4::from((em_factor, occl_factor)),

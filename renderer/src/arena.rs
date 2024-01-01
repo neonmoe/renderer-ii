@@ -26,12 +26,7 @@ pub enum VulkanArenaError {
     #[error("tried to reset arena while some resources allocated from it are still in use ({0} refs)")]
     NotResettable(usize),
     #[error("arena {identifier} ({used}/{total} used) cannot fit {required}")]
-    OutOfMemory {
-        identifier: String,
-        used: crate::Bytes,
-        total: crate::Bytes,
-        required: crate::Bytes,
-    },
+    OutOfMemory { identifier: String, used: crate::Bytes, total: crate::Bytes, required: crate::Bytes },
     #[error("tried to write to arena without HOST_VISIBLE | HOST_COHERENT without providing an uploader and/or staging memory")]
     NotWritable,
 }
@@ -77,9 +72,7 @@ impl<T: ArenaType> VulkanArena<T> {
         let debug_identifier = format!("{debug_identifier_args}");
         let (memory_type_index, memory_flags) =
             get_memory_type_index(instance, physical_device, memory_properties, size, &debug_identifier)?;
-        let alloc_info = vk::MemoryAllocateInfo::default()
-            .allocation_size(size)
-            .memory_type_index(memory_type_index);
+        let alloc_info = vk::MemoryAllocateInfo::default().allocation_size(size).memory_type_index(memory_type_index);
         let memory = {
             profiling::scope!("vk::allocate_memory");
             log::trace!("vk::allocate_memory({} bytes, index {})", size, memory_type_index);
@@ -168,11 +161,7 @@ fn get_memory_type_index(
     for (i, memory_type) in types.iter().enumerate() {
         let heap_index = memory_type.heap_index as usize;
         let prop_flags = memory_type.property_flags;
-        let budget = if budget_supported {
-            budget_props.heap_budget[heap_index]
-        } else {
-            heaps[heap_index].size
-        };
+        let budget = if budget_supported { budget_props.heap_budget[heap_index] } else { heaps[heap_index].size };
         if prop_flags.contains(flags.optimal) && !prop_flags.intersects(flags.unwanted) {
             valid_type_found = true;
             if budget >= size {
@@ -182,11 +171,7 @@ fn get_memory_type_index(
     }
     for (i, memory_type) in types.iter().enumerate() {
         let heap_index = memory_type.heap_index as usize;
-        let budget = if budget_supported {
-            budget_props.heap_budget[heap_index]
-        } else {
-            heaps[heap_index].size
-        };
+        let budget = if budget_supported { budget_props.heap_budget[heap_index] } else { heaps[heap_index].size };
         if memory_type.property_flags.contains(flags.fallback) {
             valid_type_found = true;
             if budget >= size {
@@ -196,11 +181,7 @@ fn get_memory_type_index(
     }
 
     if valid_type_found {
-        Err(VulkanArenaError::HeapsOutOfMemory(
-            debug_identifier.to_string(),
-            flags.fallback,
-            crate::Bytes(size),
-        ))
+        Err(VulkanArenaError::HeapsOutOfMemory(debug_identifier.to_string(), flags.fallback, crate::Bytes(size)))
     } else {
         Err(VulkanArenaError::MissingMemoryType(debug_identifier.to_string(), flags.fallback))
     }

@@ -21,10 +21,7 @@ fn main() {
     compile_shaders(PathBuf::from("shaders/glsl"), PathBuf::from("shaders/spirv"), &mut shaders);
 
     if shaders.first_compile || shaders.src_modified > shaders.dst_modified {
-        println!(
-            "cargo:warning={}: spirv out-of-date, recompiling shaders using glslc",
-            env!("CARGO_PKG_NAME"),
-        );
+        println!("cargo:warning={}: spirv out-of-date, recompiling shaders using glslc", env!("CARGO_PKG_NAME"),);
         for (src_path, dst_path) in shaders.shader_srcs_and_dsts {
             fs::create_dir_all(dst_path.parent().unwrap()).unwrap();
             let _ = fs::remove_file(&dst_path);

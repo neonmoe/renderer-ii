@@ -34,15 +34,7 @@ pub fn base_color(
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
 ) -> Result<ImageView, VulkanArenaError> {
-    image_loading::create_pixel(
-        device,
-        staging_arena,
-        uploader,
-        arena,
-        WHITE,
-        TextureKind::SrgbColor,
-        "default pbr base color",
-    )
+    image_loading::create_pixel(device, staging_arena, uploader, arena, WHITE, TextureKind::SrgbColor, "default pbr base color")
 }
 
 pub fn metallic_roughness(
@@ -51,15 +43,7 @@ pub fn metallic_roughness(
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
 ) -> Result<ImageView, VulkanArenaError> {
-    image_loading::create_pixel(
-        device,
-        staging_arena,
-        uploader,
-        arena,
-        M_AND_R,
-        TextureKind::LinearColor,
-        "default pbr metallic/roughness",
-    )
+    image_loading::create_pixel(device, staging_arena, uploader, arena, M_AND_R, TextureKind::LinearColor, "default pbr metallic/roughness")
 }
 
 pub fn normal(
@@ -68,15 +52,7 @@ pub fn normal(
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
 ) -> Result<ImageView, VulkanArenaError> {
-    image_loading::create_pixel(
-        device,
-        staging_arena,
-        uploader,
-        arena,
-        NORMAL_Z,
-        TextureKind::NormalMap,
-        "default pbr normals",
-    )
+    image_loading::create_pixel(device, staging_arena, uploader, arena, NORMAL_Z, TextureKind::NormalMap, "default pbr normals")
 }
 
 pub fn occlusion(
@@ -85,15 +61,7 @@ pub fn occlusion(
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
 ) -> Result<ImageView, VulkanArenaError> {
-    image_loading::create_pixel(
-        device,
-        staging_arena,
-        uploader,
-        arena,
-        WHITE,
-        TextureKind::LinearColor,
-        "default pbr occlusion",
-    )
+    image_loading::create_pixel(device, staging_arena, uploader, arena, WHITE, TextureKind::LinearColor, "default pbr occlusion")
 }
 
 pub fn emissive(
@@ -102,15 +70,7 @@ pub fn emissive(
     uploader: &mut Uploader,
     arena: &mut VulkanArena<ForImages>,
 ) -> Result<ImageView, VulkanArenaError> {
-    image_loading::create_pixel(
-        device,
-        staging_arena,
-        uploader,
-        arena,
-        BLACK,
-        TextureKind::SrgbColor,
-        "default pbr emissive",
-    )
+    image_loading::create_pixel(device, staging_arena, uploader, arena, BLACK, TextureKind::SrgbColor, "default pbr emissive")
 }
 
 /// Returns the image creation structs which can be used to

@@ -19,11 +19,7 @@ pub(crate) struct MeshIter<'a> {
 
 impl MeshIter<'_> {
     pub(crate) fn new(gltf: &Gltf, node_queue: Vec<usize>) -> MeshIter {
-        MeshIter {
-            gltf,
-            node_queue,
-            current_sub_iter: None,
-        }
+        MeshIter { gltf, node_queue, current_sub_iter: None }
     }
 }
 
@@ -74,12 +70,6 @@ impl<'a> Iterator for InnerMeshIter<'a> {
         let (mesh, material_index) = meshes.get(self.primitive_index)?;
         let material = self.gltf.materials.get(*material_index).unwrap();
         self.primitive_index += 1;
-        Some(MeshIterItem {
-            node_index: self.node_index,
-            mesh,
-            material,
-            skin: self.skin,
-            transform: self.transform,
-        })
+        Some(MeshIterItem { node_index: self.node_index, mesh, material, skin: self.skin, transform: self.transform })
     }
 }

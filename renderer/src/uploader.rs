@@ -40,10 +40,7 @@ impl Uploader {
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
                 .expect("system should have enough memory to create vulkan command pools");
             crate::name_vulkan_object(device, command_pool, format_args!("upload cmds (T) for {debug_identifier}"));
-            CommandPool {
-                inner: command_pool,
-                device: device.clone(),
-            }
+            CommandPool { inner: command_pool, device: device.clone() }
         };
 
         let graphics_command_pool = {
@@ -54,10 +51,7 @@ impl Uploader {
             let command_pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }
                 .expect("system should have enough memory to create vulkan command pools");
             crate::name_vulkan_object(device, command_pool, format_args!("upload cmds (G) for {debug_identifier}"));
-            CommandPool {
-                inner: command_pool,
-                device: device.clone(),
-            }
+            CommandPool { inner: command_pool, device: device.clone() }
         };
 
         Uploader {
@@ -79,9 +73,7 @@ impl Uploader {
 
     pub fn get_upload_statuses(&self) -> impl Iterator<Item = bool> + '_ {
         profiling::scope!("uploader fence status enumeration");
-        self.upload_fences
-            .iter()
-            .map(move |fence| unsafe { self.device.get_fence_status(fence.inner) }.unwrap_or(false))
+        self.upload_fences.iter().map(move |fence| unsafe { self.device.get_fence_status(fence.inner) }.unwrap_or(false))
     }
 
     /// Waits `timeout` for the uploads to finish, then returns true if the
@@ -93,11 +85,7 @@ impl Uploader {
     /// operation with [`Uploader::get_upload_statuses`], which may be more
     /// inefficient.
     pub fn wait(&self, timeout: Option<Duration>) -> bool {
-        let timeout = if let Some(timeout) = timeout {
-            timeout.as_nanos() as u64
-        } else {
-            u64::MAX
-        };
+        let timeout = if let Some(timeout) = timeout { timeout.as_nanos() as u64 } else { u64::MAX };
         profiling::scope!("waiting on uploader fences");
         let fences = self.upload_fences.iter().map(|fence| fence.inner).collect::<Vec<_>>();
         if fences.is_empty() {
@@ -158,10 +146,7 @@ impl Uploader {
             profiling::scope!("create fence");
             let fence = unsafe { self.device.create_fence(&vk::FenceCreateInfo::default(), None) }
                 .expect("system should have enough memory to create a vulkan fence");
-            Fence {
-                inner: fence,
-                device: self.device.clone(),
-            }
+            Fence { inner: fence, device: self.device.clone() }
         };
         crate::name_vulkan_object(
             &self.device,
@@ -178,10 +163,7 @@ impl Uploader {
             profiling::scope!("create semaphore");
             let semaphore = unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
                 .expect("system should have enough memory to create a vulkan semaphore");
-            Semaphore {
-                inner: semaphore,
-                device: self.device.clone(),
-            }
+            Semaphore { inner: semaphore, device: self.device.clone() }
         };
         crate::name_vulkan_object(
             &self.device,
@@ -221,9 +203,7 @@ impl Uploader {
             profiling::scope!("submit transfer command buffer");
             let command_buffers = [transfer_cmdbuf];
             let signal_semaphores = [transfer_signal_semaphore.inner];
-            let submit_infos = [vk::SubmitInfo::default()
-                .command_buffers(&command_buffers)
-                .signal_semaphores(&signal_semaphores)];
+            let submit_infos = [vk::SubmitInfo::default().command_buffers(&command_buffers).signal_semaphores(&signal_semaphores)];
             unsafe {
                 self.device
                     .queue_submit(self.transfer_queue, &submit_infos, vk::Fence::null())

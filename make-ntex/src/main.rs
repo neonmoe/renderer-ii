@@ -157,11 +157,7 @@ fn convert(opts: &Opts, path: &str, counter: &AtomicUsize, count: usize) -> Resu
     let start_time = Instant::now();
 
     let input_bytes = fs::read(path).map_err(Error::ReadFile)?;
-    let image = image::io::Reader::new(Cursor::new(input_bytes))
-        .with_guessed_format()
-        .unwrap()
-        .decode()
-        .map_err(Error::ImageDecode)?;
+    let image = image::io::Reader::new(Cursor::new(input_bytes)).with_guessed_format().unwrap().decode().map_err(Error::ImageDecode)?;
     let mip_levels = (0..)
         .take_while(|i| {
             let d = 4 * (1 << i);
@@ -198,15 +194,7 @@ fn convert(opts: &Opts, path: &str, counter: &AtomicUsize, count: usize) -> Resu
     output_bytes.extend_from_slice(&(128u32 /* 128 bits */ / 8).to_le_bytes());
     assert_eq!(output_bytes.len(), 1024);
     // the rest of the bytes: the raw images for each mip level with no padding
-    print(
-        opts,
-        format_args!(
-            "Compressing {mip_levels} mips of {} ({}x{}).",
-            dst_path.display(),
-            image.width(),
-            image.height(),
-        ),
-    );
+    print(opts, format_args!("Compressing {mip_levels} mips of {} ({}x{}).", dst_path.display(), image.width(), image.height(),));
     let compressed_images = (0..mip_levels)
         .collect::<Vec<u32>>()
         .into_par_iter()
@@ -247,17 +235,8 @@ fn compress_image(image: DynamicImage) -> Vec<u8> {
     let height = image.height();
     let stride = image.width() * 4;
     let pixels = image.into_raw();
-    let surface = intel_tex::RgbaSurface {
-        width,
-        height,
-        stride,
-        data: &pixels,
-    };
-    let settings = if alpha {
-        intel_tex::bc7::alpha_slow_settings()
-    } else {
-        intel_tex::bc7::opaque_slow_settings()
-    };
+    let surface = intel_tex::RgbaSurface { width, height, stride, data: &pixels };
+    let settings = if alpha { intel_tex::bc7::alpha_slow_settings() } else { intel_tex::bc7::opaque_slow_settings() };
     let compressed_bytes = intel_tex::bc7::compress_blocks(&settings, &surface);
     // The size of the image according to the format spec (from HEADER):
     // ceil(width / block width) * ceil(height / block height) * (size of one block in bytes)

@@ -146,11 +146,7 @@ impl DeviceMemory {
         let new_allocated = crate::vram_usage::ALLOCATED.fetch_add(device_local_size, Ordering::Relaxed) + device_local_size;
         crate::vram_usage::IN_USE.fetch_add(device_local_size, Ordering::Relaxed);
         crate::vram_usage::ALLOCATED_PEAK.fetch_max(new_allocated, Ordering::Relaxed);
-        DeviceMemory {
-            inner,
-            device,
-            device_local_size,
-        }
+        DeviceMemory { inner, device, device_local_size }
     }
 }
 

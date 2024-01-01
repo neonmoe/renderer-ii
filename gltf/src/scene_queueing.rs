@@ -26,9 +26,7 @@ impl Gltf {
             if let Some(skin_index) = mesh.skin {
                 profiling::scope!("skinned mesh");
                 let pipeline = mesh.material.pipeline(true);
-                if let Some(skinned_model) = skinned_models
-                    .iter_mut()
-                    .find(|model| model.skin == skin_index && model.pipeline == pipeline)
+                if let Some(skinned_model) = skinned_models.iter_mut().find(|model| model.skin == skin_index && model.pipeline == pipeline)
                 {
                     skinned_model.meshes.push((mesh.mesh, mesh.material));
                 } else {

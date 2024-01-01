@@ -22,12 +22,7 @@ fn name_vulkan_object_impl(device: &Device, object_type: vk::ObjectType, object_
     if let Some(debug_utils) = unsafe { DEBUG_UTILS.as_ref() } {
         let object_name = format_object_name(format!("{object_type:?}"));
         let name = CString::from_vec_with_nul(format!("{object_name}: {name}\0").into_bytes()).unwrap();
-        let name_info = vk::DebugUtilsObjectNameInfoEXT {
-            object_type,
-            object_handle,
-            p_object_name: name.as_ptr(),
-            ..Default::default()
-        };
+        let name_info = vk::DebugUtilsObjectNameInfoEXT { object_type, object_handle, p_object_name: name.as_ptr(), ..Default::default() };
         let _ = unsafe { debug_utils.set_debug_utils_object_name(device.handle(), &name_info) };
     }
 }
@@ -91,11 +86,7 @@ unsafe extern "system" fn debug_utils_messenger_callback(
         return vk::FALSE;
     }
     let ptr_to_str = |ptr: *const c_char| {
-        if ptr.is_null() {
-            String::from("-")
-        } else {
-            CStr::from_ptr(ptr).to_string_lossy().to_string()
-        }
+        if ptr.is_null() { String::from("-") } else { CStr::from_ptr(ptr).to_string_lossy().to_string() }
     };
     let message_id = ptr_to_str((*p_callback_data).p_message_id_name);
     let message = ptr_to_str((*p_callback_data).p_message);

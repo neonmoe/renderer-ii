@@ -18,6 +18,8 @@ use crate::renderer::scene::mesh::{IndexType, Mesh};
 use crate::uploader::Uploader;
 use crate::vulkan_raii::Buffer;
 
+// TODO: Packed vertex attributes (uvs don't need so much precision, etc.)
+
 pub type VertexLibraryIndexType = u32;
 
 pub const VERTEX_LIBRARY_INDEX_TYPE: vk::IndexType = vk::IndexType::UINT32;
@@ -116,11 +118,7 @@ impl VertexLibraryBuilder<'_> {
                 .collect::<ArrayVec<vk::DeviceSize, VERTEX_BINDING_COUNT>>()
         });
 
-        let library = Rc::new(VertexLibrary {
-            vertex_buffer,
-            index_buffer,
-            vertex_buffer_offsets,
-        });
+        let library = Rc::new(VertexLibrary { vertex_buffer, index_buffer, vertex_buffer_offsets });
         let vertices_allocated = distinct_binding_sets.binding_sets.iter().map(|_| 0).collect();
         let indices_allocated = distinct_binding_sets.binding_sets.iter().map(|_| 0).collect();
         let builder = VertexLibraryBuilder {
@@ -157,9 +155,8 @@ impl VertexLibraryBuilder<'_> {
             *dst_index = index;
         }
 
-        let vertex_buffer_offset_params = self.binding_offsets[binding_set_idx]
-            .iter()
-            .filter(|offs| offs.description.input_rate == vk::VertexInputRate::VERTEX);
+        let vertex_buffer_offset_params =
+            self.binding_offsets[binding_set_idx].iter().filter(|offs| offs.description.input_rate == vk::VertexInputRate::VERTEX);
         for (src, dst_offset) in vertex_buffers.iter().zip(vertex_buffer_offset_params) {
             let stride = dst_offset.description.stride as usize;
             let offset_into_buffer = dst_offset.offset + vertex_offset as usize * stride;
@@ -222,11 +219,7 @@ impl VertexLibraryMeasurer {
     }
 
     pub fn measure_required_arena(&self, arena_measurer: &mut VulkanArenaMeasurer<ForBuffers>) {
-        let MeasurementResults {
-            vertex_buffer_info,
-            index_buffer_info,
-            ..
-        } = self.measure();
+        let MeasurementResults { vertex_buffer_info, index_buffer_info, .. } = self.measure();
         arena_measurer.add_buffer(vertex_buffer_info);
         arena_measurer.add_buffer(index_buffer_info);
     }
@@ -244,20 +237,14 @@ impl VertexLibraryMeasurer {
                 let offset = vertex_buffer_size;
                 let size = binding.stride as usize * vertex_count;
                 vertex_buffer_size += size;
-                offsets.push(BindingOffset {
-                    offset,
-                    size,
-                    description: *binding,
-                });
+                offsets.push(BindingOffset { offset, size, description: *binding });
             }
             binding_offsets.push(offsets);
         }
-        let vertex_buffer_info_base = vk::BufferCreateInfo::default()
-            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .size(vertex_buffer_size as vk::DeviceSize);
-        let index_buffer_info_base = vk::BufferCreateInfo::default()
-            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .size(index_buffer_size as vk::DeviceSize);
+        let vertex_buffer_info_base =
+            vk::BufferCreateInfo::default().sharing_mode(vk::SharingMode::EXCLUSIVE).size(vertex_buffer_size as vk::DeviceSize);
+        let index_buffer_info_base =
+            vk::BufferCreateInfo::default().sharing_mode(vk::SharingMode::EXCLUSIVE).size(index_buffer_size as vk::DeviceSize);
         MeasurementResults {
             staging_vertex_buffer_info: vertex_buffer_info_base.usage(vk::BufferUsageFlags::TRANSFER_SRC),
             staging_index_buffer_info: index_buffer_info_base.usage(vk::BufferUsageFlags::TRANSFER_SRC),
@@ -273,11 +260,7 @@ impl Default for VertexLibraryMeasurer {
         let distinct_binding_sets = DistinctBindingSets::default();
         let vertex_counts_per_binding = distinct_binding_sets.binding_sets.iter().map(|_| 0).collect();
         let index_counts_per_binding = distinct_binding_sets.binding_sets.iter().map(|_| 0).collect();
-        VertexLibraryMeasurer {
-            distinct_binding_sets,
-            vertex_counts_per_binding,
-            index_counts_per_binding,
-        }
+        VertexLibraryMeasurer { distinct_binding_sets, vertex_counts_per_binding, index_counts_per_binding }
     }
 }
 
@@ -291,11 +274,7 @@ impl DistinctBindingSets {
         let binding_set_idx = self.binding_set_indices[pipeline];
         let descriptions = self.binding_sets[binding_set_idx];
         let mut vertex_count = None;
-        for (i, desc) in descriptions
-            .iter()
-            .filter(|desc| desc.input_rate == vk::VertexInputRate::VERTEX)
-            .enumerate()
-        {
+        for (i, desc) in descriptions.iter().filter(|desc| desc.input_rate == vk::VertexInputRate::VERTEX).enumerate() {
             assert!(
                 i < vertex_buffer_lengths.len(),
                 "provided only {i} vertex buffers, but pipeline {pipeline:?} has a binding at index {i}"
@@ -332,10 +311,7 @@ impl Default for DistinctBindingSets {
                 bindings.push(PIPELINE_PARAMETERS[pipeline].bindings);
             }
         }
-        DistinctBindingSets {
-            binding_sets: bindings,
-            binding_set_indices: binding_indices,
-        }
+        DistinctBindingSets { binding_sets: bindings, binding_set_indices: binding_indices }
     }
 }
 

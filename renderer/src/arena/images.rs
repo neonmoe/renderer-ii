@@ -49,10 +49,6 @@ impl VulkanArena<ForImages> {
         }
         self.offset = new_offset;
 
-        Ok(Image {
-            inner: image,
-            device: self.device.clone(),
-            memory: self.memory.clone(),
-        })
+        Ok(Image { inner: image, device: self.device.clone(), memory: self.memory.clone() })
     }
 }

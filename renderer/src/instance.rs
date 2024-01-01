@@ -35,10 +35,8 @@ impl Instance {
         let entry = Entry::linked();
         // NOTE: The API version given to VkApplicationInfo is a maximum, not a minimum.
         // UNASSIGNED-BestPractices-vkCreateDevice-API-version-mismatch is expected.
-        let app_info = vk::ApplicationInfo::default()
-            .application_name(app_name)
-            .application_version(version)
-            .api_version(vk::API_VERSION_1_3);
+        let app_info =
+            vk::ApplicationInfo::default().application_name(app_name).application_version(version).api_version(vk::API_VERSION_1_3);
         let app_name = app_name.to_str().unwrap_or("<invalid utf-8>");
         log::debug!(
             "Creating Vulkan instance with application name: \"{app_name}\", version: {major_version}.{minor_version}.{patch_version} (0x{version:X})"
@@ -82,10 +80,8 @@ impl Instance {
             log::debug!("Instance extension (optional): {}", DebugUtils::NAME.to_str().unwrap());
         }
 
-        let mut create_info = vk::InstanceCreateInfo::default()
-            .application_info(&app_info)
-            .enabled_layer_names(&layers)
-            .enabled_extension_names(&extensions);
+        let mut create_info =
+            vk::InstanceCreateInfo::default().application_info(&app_info).enabled_layer_names(&layers).enabled_extension_names(&extensions);
 
         let enabled_validation_features = [
             vk::ValidationFeatureEnableEXT::BEST_PRACTICES,
@@ -101,10 +97,7 @@ impl Instance {
         if profiles_layer_enabled {
             // ash doesn't have VkProfileLayerSettingsEXT, if/when that's
             // available, prefer include_str!ing the JSON here.
-            std::env::set_var(
-                "VK_KHRONOS_PROFILES_PROFILE_FILE",
-                "renderer/src/vk-profiles/VP_LUNARG_desktop_baseline_2023.json",
-            );
+            std::env::set_var("VK_KHRONOS_PROFILES_PROFILE_FILE", "renderer/src/vk-profiles/VP_LUNARG_desktop_baseline_2023.json");
         }
 
         #[cfg(feature = "vulkan-debug-utils")]

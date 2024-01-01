@@ -9,20 +9,12 @@ use sdl2::keyboard::Keycode;
 fn main() {
     use logger::Logger;
     static LOGGER: Logger = Logger;
-    log::set_logger(&LOGGER)
-        .map(|()| log::set_max_level(log::LevelFilter::Trace))
-        .unwrap();
+    log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).unwrap();
 
     let sdl = sdl2::init().unwrap();
     let time = sdl.timer().unwrap();
     let video = sdl.video().unwrap();
-    let mut window = video
-        .window("Hello, Triangles!", 640, 480)
-        .vulkan()
-        .allow_highdpi()
-        .resizable()
-        .build()
-        .unwrap();
+    let mut window = video.window("Hello, Triangles!", 640, 480).vulkan().allow_highdpi().resizable().build().unwrap();
     let app_name = unsafe { CStr::from_bytes_with_nul_unchecked(b"triangle example application\0") };
     let instance = renderer::Instance::new(&window, app_name, 0, 1, 0).unwrap();
     let surface = renderer::create_surface(&instance.entry, &instance.inner, &window, &window).unwrap();
@@ -61,23 +53,14 @@ fn main() {
         format_args!("triangle staging"),
     )
     .unwrap();
-    let mut uploader = renderer::Uploader::new(
-        &device,
-        device.graphics_queue,
-        device.transfer_queue,
-        &physical_device,
-        "triangle assets",
-    );
+    let mut uploader = renderer::Uploader::new(&device, device.graphics_queue, device.transfer_queue, &physical_device, "triangle assets");
 
     let pbr_defaults =
         renderer::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena).unwrap();
     let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults);
 
     let (width, height) = window.vulkan_drawable_size();
-    let mut swapchain_settings = renderer::SwapchainSettings {
-        extent: renderer::vk::Extent2D { width, height },
-        immediate_present: false,
-    };
+    let mut swapchain_settings = renderer::SwapchainSettings { extent: renderer::vk::Extent2D { width, height }, immediate_present: false };
 
     let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings);
     let mut pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None);
@@ -137,20 +120,13 @@ fn main() {
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'main,
-                Event::Window {
-                    win_event: WindowEvent::SizeChanged(_, _),
-                    ..
-                } => {
+                Event::Window { win_event: WindowEvent::SizeChanged(_, _), .. } => {
                     let (w, h) = window.vulkan_drawable_size();
                     swapchain_settings.extent.width = w;
                     swapchain_settings.extent.height = h;
                     swapchain_recreation_requested = Some(time.ticks());
                 }
-                Event::KeyDown {
-                    keycode: Some(Keycode::I),
-                    repeat: false,
-                    ..
-                } => {
+                Event::KeyDown { keycode: Some(Keycode::I), repeat: false, .. } => {
                     swapchain_settings.immediate_present = !swapchain_settings.immediate_present;
                     swapchain_recreation_requested = Some(time.ticks());
                 }
@@ -164,14 +140,8 @@ fn main() {
                 device.wait_idle();
                 drop(framebuffers);
                 swapchain.recreate(&device, &physical_device, &swapchain_settings);
-                pipelines = renderer::Pipelines::new(
-                    &device,
-                    &descriptors,
-                    swapchain.extent,
-                    msaa_samples,
-                    attachment_formats,
-                    Some(pipelines),
-                );
+                pipelines =
+                    renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, Some(pipelines));
                 framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain);
             }
         }

@@ -100,12 +100,7 @@ impl<'a> Scene<'a> {
         if self.total_draws < MAX_DRAWS {
             // TODO: Check mesh's vertex layout and material's pipeline compatibility
             self.static_draws.push(StaticDraw {
-                tag: DrawCallTag {
-                    pipeline: material.pipeline(false),
-                    vertex_library: &mesh.library,
-                    mesh,
-                    material,
-                },
+                tag: DrawCallTag { pipeline: material.pipeline(false), vertex_library: &mesh.library, mesh, material },
                 transform,
             });
             self.total_draws += 1;
@@ -120,9 +115,6 @@ impl<'a> Scene<'a> {
         let aligned_offset = current_allocated.next_multiple_of(self.joints_alignment as usize);
         let new_allocated = aligned_offset + size;
         self.skinned_mesh_joints_buffer.resize(new_allocated, 0);
-        (
-            JointOffset(aligned_offset as u32),
-            &mut self.skinned_mesh_joints_buffer[aligned_offset..new_allocated],
-        )
+        (JointOffset(aligned_offset as u32), &mut self.skinned_mesh_joints_buffer[aligned_offset..new_allocated])
     }
 }

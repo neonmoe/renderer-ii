@@ -58,17 +58,14 @@ impl RenderPass {
     /// render pass (used at render time).
     pub fn depth_attachment_info(self, attachment_images: &[vk::ImageView; Attachment::COUNT]) -> vk::RenderingAttachmentInfoKHR<'static> {
         self.depth_attachment()
-            .map_or_else(vk::RenderingAttachmentInfoKHR::default, |attachment| {
-                attachment.attachment_info(attachment_images)
-            })
+            .map_or_else(vk::RenderingAttachmentInfoKHR::default, |attachment| attachment.attachment_info(attachment_images))
     }
 
     /// Returns the format of the depth attachment of this render pass (used at
     /// pipeline creation time). This is [`vk::Format::UNDEFINED`] if the render
     /// pass does not use depth.
     pub fn depth_attachment_format(self, formats: &AttachmentFormats) -> vk::Format {
-        self.depth_attachment()
-            .map_or(vk::Format::UNDEFINED, |attachment| attachment.format(formats))
+        self.depth_attachment().map_or(vk::Format::UNDEFINED, |attachment| attachment.format(formats))
     }
 
     fn depth_attachment(self) -> Option<Attachment> {
@@ -81,10 +78,8 @@ impl RenderPass {
     /// Returns the [`ImageMemoryBarriers`] that should be placed before the
     /// draw commands of this render pass.
     pub fn barriers(self, attachment_images: &[vk::Image; Attachment::COUNT]) -> AttachmentVec<vk::ImageMemoryBarrier2<'static>> {
-        let color_subresource_range = vk::ImageSubresourceRange::default()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .level_count(1)
-            .layer_count(1);
+        let color_subresource_range =
+            vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR).level_count(1).layer_count(1);
         let depth_subresource_range = vk::ImageSubresourceRange::default()
             .aspect_mask(vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL)
             .level_count(1)
@@ -199,9 +194,7 @@ impl Attachment {
                 .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
                 .store_op(vk::AttachmentStoreOp::DONT_CARE)
-                .clear_value(vk::ClearValue {
-                    depth_stencil: vk::ClearDepthStencilValue::default().depth(0.0),
-                }),
+                .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue::default().depth(0.0) }),
             Attachment::PostProcess => vk::RenderingAttachmentInfoKHR::default()
                 .image_view(attachment_images[self as usize])
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)

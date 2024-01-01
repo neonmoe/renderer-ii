@@ -21,13 +21,7 @@ pub enum NtexDecodeError {
 
 #[profiling::function]
 pub fn decode(bytes: &[u8]) -> Result<ImageData, NtexDecodeError> {
-    let ImageData {
-        width,
-        height,
-        format,
-        pixels: _,
-        mip_ranges,
-    } = decode_header(bytes)?;
+    let ImageData { width, height, format, pixels: _, mip_ranges } = decode_header(bytes)?;
 
     let pixels_len = mip_ranges[mip_ranges.len() - 1].end;
     let bytes_len = pixels_len + 1024;
@@ -38,19 +32,10 @@ pub fn decode(bytes: &[u8]) -> Result<ImageData, NtexDecodeError> {
         });
     }
     if bytes.len() != bytes_len {
-        return Err(NtexDecodeError::FileLength {
-            expected: bytes_len,
-            actual: bytes.len(),
-        });
+        return Err(NtexDecodeError::FileLength { expected: bytes_len, actual: bytes.len() });
     }
 
-    Ok(ImageData {
-        width,
-        height,
-        format,
-        pixels: &bytes[1024..1024 + pixels_len],
-        mip_ranges,
-    })
+    Ok(ImageData { width, height, format, pixels: &bytes[1024..1024 + pixels_len], mip_ranges })
 }
 
 /// Like [`decode`], but [`ImageData::pixels`] is empty.
@@ -83,11 +68,5 @@ pub fn decode_header(bytes: &[u8]) -> Result<ImageData<'static>, NtexDecodeError
         prev_mip_end += mip_size;
     }
 
-    Ok(ImageData {
-        width,
-        height,
-        format: vk::Format::from_raw(format as i32),
-        pixels: &[],
-        mip_ranges,
-    })
+    Ok(ImageData { width, height, format: vk::Format::from_raw(format as i32), pixels: &[], mip_ranges })
 }

@@ -2,11 +2,8 @@ use core::ffi::CStr;
 
 use ash::{vk, Instance};
 
-pub const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] = &[
-    cstr!("VK_KHR_swapchain"),
-    cstr!("VK_KHR_synchronization2"),
-    cstr!("VK_KHR_dynamic_rendering"),
-];
+pub const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] =
+    &[cstr!("VK_KHR_swapchain"), cstr!("VK_KHR_synchronization2"), cstr!("VK_KHR_dynamic_rendering")];
 pub const OPTIONAL_DEVICE_EXTENSIONS: &[&CStr] = &[cstr!("VK_KHR_portability_subset"), cstr!("VK_EXT_memory_budget")];
 pub const TOTAL_DEVICE_EXTENSIONS: usize = REQUIRED_DEVICE_EXTENSIONS.len() + OPTIONAL_DEVICE_EXTENSIONS.len();
 

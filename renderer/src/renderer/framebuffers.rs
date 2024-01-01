@@ -78,10 +78,7 @@ impl Framebuffers {
 
         let create_image_view =
             |image: Rc<AnyImage>, aspect_mask: vk::ImageAspectFlags, format: vk::Format, debug_identifier: Arguments| -> ImageView {
-                let subresource_range = vk::ImageSubresourceRange::default()
-                    .aspect_mask(aspect_mask)
-                    .level_count(1)
-                    .layer_count(1);
+                let subresource_range = vk::ImageSubresourceRange::default().aspect_mask(aspect_mask).level_count(1).layer_count(1);
                 let image_view_create_info = vk::ImageViewCreateInfo::default()
                     .image(image.inner())
                     .view_type(vk::ImageViewType::TYPE_2D)
@@ -91,11 +88,7 @@ impl Framebuffers {
                     unsafe { device.create_image_view(&image_view_create_info, None) }.expect("vulkan image view creation should not fail");
                 crate::name_vulkan_object(device, image_view, debug_identifier);
                 crate::name_vulkan_object(device, image.inner(), debug_identifier);
-                ImageView {
-                    inner: image_view,
-                    device: device.clone(),
-                    image,
-                }
+                ImageView { inner: image_view, device: device.clone(), image }
             };
 
         let mut create_attachment_image = |attachment: Attachment| {
@@ -114,11 +107,7 @@ impl Framebuffers {
 
         let hdr_image = create_attachment_image(Attachment::Hdr);
         let depth_image = create_attachment_image(Attachment::Depth);
-        let multisampled_final_image = if multisampled {
-            Some(create_attachment_image(Attachment::PostProcess))
-        } else {
-            None
-        };
+        let multisampled_final_image = if multisampled { Some(create_attachment_image(Attachment::PostProcess)) } else { None };
 
         let mut swapchain_images = ArrayVec::new();
         for (i, swapchain_image) in swapchain.images.iter().enumerate() {
@@ -133,21 +122,12 @@ impl Framebuffers {
             swapchain_images.push(image_view);
         }
 
-        Framebuffers {
-            extent: vk::Extent2D { width, height },
-            hdr_image,
-            depth_image,
-            multisampled_final_image,
-            swapchain_images,
-        }
+        Framebuffers { extent: vk::Extent2D { width, height }, hdr_image, depth_image, multisampled_final_image, swapchain_images }
     }
 
     pub(crate) fn attachment_image_views(&self, frame_index: usize) -> [vk::ImageView; Attachment::COUNT] {
-        let post_process_image = if let Some(msaa_pp) = &self.multisampled_final_image {
-            msaa_pp.inner
-        } else {
-            self.swapchain_images[frame_index].inner
-        };
+        let post_process_image =
+            if let Some(msaa_pp) = &self.multisampled_final_image { msaa_pp.inner } else { self.swapchain_images[frame_index].inner };
         [
             self.hdr_image.inner,   // Attachment::Hdr
             self.depth_image.inner, // Attachment::Depth
@@ -169,10 +149,8 @@ impl Framebuffers {
     }
 
     pub(crate) fn swapchain_write_barrier(&self, i: usize) -> [vk::ImageMemoryBarrier2; 1] {
-        let color_subresource_range = vk::ImageSubresourceRange::default()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .level_count(1)
-            .layer_count(1);
+        let color_subresource_range =
+            vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR).level_count(1).layer_count(1);
         [vk::ImageMemoryBarrier2::default()
             .image(self.swapchain_images[i].image.inner())
             .subresource_range(color_subresource_range)
@@ -185,10 +163,8 @@ impl Framebuffers {
     }
 
     pub(crate) fn swapchain_present_barrier(&self, i: usize) -> [vk::ImageMemoryBarrier2; 1] {
-        let color_subresource_range = vk::ImageSubresourceRange::default()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .level_count(1)
-            .layer_count(1);
+        let color_subresource_range =
+            vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR).level_count(1).layer_count(1);
         [vk::ImageMemoryBarrier2::default()
             .image(self.swapchain_images[i].image.inner())
             .subresource_range(color_subresource_range)

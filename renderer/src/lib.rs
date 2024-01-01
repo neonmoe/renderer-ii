@@ -164,10 +164,7 @@ mod surface {
         let surface =
             unsafe { ash_window::create_surface(entry, instance, display.raw_display_handle(), window.raw_window_handle(), None) }?;
         let surface_ext = khr::Surface::new(entry, instance);
-        Ok(Surface {
-            inner: surface,
-            device: surface_ext,
-        })
+        Ok(Surface { inner: surface, device: surface_ext })
     }
 }
 

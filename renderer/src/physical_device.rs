@@ -15,12 +15,8 @@ pub(crate) mod physical_device_features;
 use limits::PhysicalDeviceLimitBreak;
 use physical_device_features::SupportedFeatures;
 
-pub const TEXTURE_FORMATS: &[vk::Format] = &[
-    vk::Format::R8G8B8A8_SRGB,
-    vk::Format::R8G8B8A8_UNORM,
-    vk::Format::BC7_SRGB_BLOCK,
-    vk::Format::BC7_UNORM_BLOCK,
-];
+pub const TEXTURE_FORMATS: &[vk::Format] =
+    &[vk::Format::R8G8B8A8_SRGB, vk::Format::R8G8B8A8_UNORM, vk::Format::BC7_SRGB_BLOCK, vk::Format::BC7_UNORM_BLOCK];
 
 #[derive(thiserror::Error, Debug)]
 pub enum PhysicalDeviceRejectionReason {
@@ -187,10 +183,7 @@ fn filter_capable_device(
     };
     let req_vk_version = vk::API_VERSION_1_2;
     if props.api_version < req_vk_version {
-        reject(PhysicalDeviceRejectionReason::VulkanVersion(
-            vk::api_version_major(req_vk_version),
-            vk::api_version_minor(req_vk_version),
-        ));
+        reject(PhysicalDeviceRejectionReason::VulkanVersion(vk::api_version_major(req_vk_version), vk::api_version_minor(req_vk_version)));
     };
 
     let extensions = get_extensions(instance, physical_device);
@@ -212,10 +205,7 @@ fn filter_capable_device(
     let mut graphics_queue_family = None;
     let mut surface_queue_family = None;
     for (index, queue_family_properties) in queue_families.iter().enumerate() {
-        let queue_family = QueueFamily {
-            index: index as u32,
-            max_count: queue_family_properties.queue_count as usize,
-        };
+        let queue_family = QueueFamily { index: index as u32, max_count: queue_family_properties.queue_count as usize };
         let surface_support = unsafe {
             profiling::scope!("vk::get_physical_device_surface_support");
             surface_ext.get_physical_device_surface_support(physical_device, index as u32, surface)
@@ -234,10 +224,7 @@ fn filter_capable_device(
     let mut dedicated_transfer_queue_family = None;
     let mut non_graphics_transfer_queue_family = None;
     for (index, queue_family_properties) in queue_families.iter().enumerate() {
-        let queue_family = QueueFamily {
-            index: index as u32,
-            max_count: queue_family_properties.queue_count as usize,
-        };
+        let queue_family = QueueFamily { index: index as u32, max_count: queue_family_properties.queue_count as usize };
         let has_transfer = queue_family_properties.queue_flags.contains(vk::QueueFlags::TRANSFER);
         let has_graphics = queue_family_properties.queue_flags.contains(vk::QueueFlags::GRAPHICS);
         let has_compute = queue_family_properties.queue_flags.contains(vk::QueueFlags::COMPUTE);
@@ -251,9 +238,7 @@ fn filter_capable_device(
             non_graphics_transfer_queue_family = Some(queue_family);
         }
     }
-    let transfer_queue_family = dedicated_transfer_queue_family
-        .or(non_graphics_transfer_queue_family)
-        .or(any_transfer_queue_family);
+    let transfer_queue_family = dedicated_transfer_queue_family.or(non_graphics_transfer_queue_family).or(any_transfer_queue_family);
 
     let format_supported = |format: vk::Format, flags: vk::FormatFeatureFlags| -> bool {
         let format_properties = unsafe {
@@ -380,11 +365,7 @@ fn filter_capable_device(
                 transfer_queue_family,
                 swapchain_format,
                 swapchain_color_space,
-                attachment_formats: AttachmentFormats {
-                    hdr: hdr_format,
-                    swapchain: swapchain_format,
-                    depth: depth_format,
-                },
+                attachment_formats: AttachmentFormats { hdr: hdr_format, swapchain: swapchain_format, depth: depth_format },
                 extensions,
             });
         }
@@ -405,9 +386,7 @@ fn get_extensions(instance: &Instance, physical_device: vk::PhysicalDevice) -> V
             .iter()
             .map(|extension_properties| {
                 let extension_name_slice = &extension_properties.extension_name[..];
-                unsafe { CStr::from_ptr(extension_name_slice.as_ptr()) }
-                    .to_string_lossy()
-                    .to_string()
+                unsafe { CStr::from_ptr(extension_name_slice.as_ptr()) }.to_string_lossy().to_string()
             })
             .collect::<Vec<String>>(),
         Err(_) => Vec::with_capacity(0),

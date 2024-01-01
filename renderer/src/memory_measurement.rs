@@ -15,11 +15,7 @@ pub struct VulkanArenaMeasurer<T: ArenaType> {
 
 impl<T: ArenaType> VulkanArenaMeasurer<T> {
     pub fn new(device: &Device) -> VulkanArenaMeasurer<T> {
-        VulkanArenaMeasurer {
-            measured_size: 0,
-            device: device.clone(),
-            _arena_type_marker: PhantomData {},
-        }
+        VulkanArenaMeasurer { measured_size: 0, device: device.clone(), _arena_type_marker: PhantomData {} }
     }
 }
 

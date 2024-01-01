@@ -90,14 +90,7 @@ fn main_() {
 
     let mut window = {
         profiling::scope!("SDL window creation");
-        video_subsystem
-            .window("sandbox", 640, 480)
-            .position_centered()
-            .resizable()
-            .allow_highdpi()
-            .vulkan()
-            .build()
-            .unwrap()
+        video_subsystem.window("sandbox", 640, 480).position_centered().resizable().allow_highdpi().vulkan().build().unwrap()
     };
 
     let (width, height) = window.vulkan_drawable_size();
@@ -166,11 +159,7 @@ fn main_() {
     let mut controller: Option<GameController> = None;
     let mut analog_controls = false;
     fn get_axis_deadzoned(raw: i16) -> f32 {
-        if -9000 < raw && raw < 9000 {
-            0.0
-        } else {
-            (raw as f32 / i16::MAX as f32).powf(3.0)
-        }
+        if -9000 < raw && raw < 9000 { 0.0 } else { (raw as f32 / i16::MAX as f32).powf(3.0) }
     }
 
     const FPS_COUNTER_UPDATES_PER_SECOND: usize = 20;
@@ -271,10 +260,7 @@ fn main_() {
                     }
                 }
 
-                Event::MouseButtonDown {
-                    mouse_btn: MouseButton::Left,
-                    ..
-                } => {
+                Event::MouseButtonDown { mouse_btn: MouseButton::Left, .. } => {
                     state.mouse_look = !state.mouse_look;
                     if state.mouse_look {
                         sdl_context.mouse().set_relative_mouse_mode(true);
@@ -292,10 +278,7 @@ fn main_() {
                     }
                 }
 
-                Event::Window {
-                    win_event: WindowEvent::SizeChanged(_, _),
-                    ..
-                } => {
+                Event::Window { win_event: WindowEvent::SizeChanged(_, _), .. } => {
                     state.mouse_look = false;
                     sdl_context.mouse().set_relative_mouse_mode(false);
                     sdl_context.mouse().show_cursor(true);
@@ -449,12 +432,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
 
     let attachment_formats = physical_device.attachment_formats();
     let msaa_samples = renderer::vk::SampleCountFlags::TYPE_4;
-    if !physical_device
-        .properties
-        .limits
-        .framebuffer_color_sample_counts
-        .contains(msaa_samples)
-    {
+    if !physical_device.properties.limits.framebuffer_color_sample_counts.contains(msaa_samples) {
         panic!("msaa sample count not supported: {msaa_samples:?}");
     }
 
@@ -534,13 +512,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         format_args!("sandbox assets (staging)"),
     )
     .unwrap();
-    let mut uploader = renderer::Uploader::new(
-        &device,
-        device.graphics_queue,
-        device.transfer_queue,
-        &physical_device,
-        "sandbox assets",
-    );
+    let mut uploader = renderer::Uploader::new(&device, device.graphics_queue, device.transfer_queue, &physical_device, "sandbox assets");
 
     print_memory_usage("after arena creation");
 
@@ -557,24 +529,10 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
 
     let upload_start = Instant::now();
     let sponza_model = sponza_pending
-        .upload(
-            &device,
-            &mut staging_arena,
-            &mut uploader,
-            &mut descriptors,
-            &mut texture_arena,
-            &mut vertex_library_builder,
-        )
+        .upload(&device, &mut staging_arena, &mut uploader, &mut descriptors, &mut texture_arena, &mut vertex_library_builder)
         .unwrap();
     let smol_ame_model = smol_ame_pending
-        .upload(
-            &device,
-            &mut staging_arena,
-            &mut uploader,
-            &mut descriptors,
-            &mut texture_arena,
-            &mut vertex_library_builder,
-        )
+        .upload(&device, &mut staging_arena, &mut uploader, &mut descriptors, &mut texture_arena, &mut vertex_library_builder)
         .unwrap();
     vertex_library_builder.upload(&mut uploader, &mut buffer_arena);
     let upload_wait_start = Instant::now();
@@ -583,11 +541,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
         assert!(uploader.wait(Some(Duration::from_secs(5))));
     }
     let now = Instant::now();
-    log::info!(
-        "Spent {:.2?} loading resources, of which {:.2?} was waiting for upload.",
-        now - upload_start,
-        now - upload_wait_start
-    );
+    log::info!("Spent {:.2?} loading resources, of which {:.2?} was waiting for upload.", now - upload_start, now - upload_wait_start);
     drop(uploader);
     drop(staging_arena);
 
@@ -601,10 +555,8 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
     {
         let state = state_mutex.lock().unwrap();
         let (width, height) = (state.width, state.height);
-        swapchain_settings = renderer::SwapchainSettings {
-            extent: renderer::vk::Extent2D { width, height },
-            immediate_present: state.immediate_present,
-        };
+        swapchain_settings =
+            renderer::SwapchainSettings { extent: renderer::vk::Extent2D { width, height }, immediate_present: state.immediate_present };
         prev_frame = state.frame;
     }
 
@@ -655,10 +607,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
             if let Some(resize_timestamp) = state.queued_resize {
                 let duration_since_resize = Instant::now() - resize_timestamp;
                 if duration_since_resize > Duration::from_millis(100) {
-                    swapchain_settings.extent = renderer::vk::Extent2D {
-                        width: state.width,
-                        height: state.height,
-                    };
+                    swapchain_settings.extent = renderer::vk::Extent2D { width: state.width, height: state.height };
                     swapchain_settings.immediate_present = state.immediate_present;
                     recreate_swapchain = true;
                     state.queued_resize = None;
@@ -693,14 +642,8 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
             device.wait_idle();
             drop(framebuffers);
             swapchain.recreate(&device, &physical_device, &swapchain_settings);
-            pipelines = renderer::Pipelines::new(
-                &device,
-                &descriptors,
-                swapchain.extent,
-                msaa_samples,
-                attachment_formats,
-                Some(pipelines),
-            );
+            pipelines =
+                renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, Some(pipelines));
             framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain);
             recreate_swapchain = false;
         }

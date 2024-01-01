@@ -46,12 +46,7 @@ pub struct Camera {
 
 impl Default for Camera {
     fn default() -> Self {
-        Camera {
-            position: Vec3::ZERO,
-            orientation: Quat::IDENTITY,
-            near: 0.1,
-            far: Some(100.0),
-        }
+        Camera { position: Vec3::ZERO, orientation: Quat::IDENTITY, near: 0.1, far: Some(100.0) }
     }
 }
 

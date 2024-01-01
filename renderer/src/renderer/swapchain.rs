@@ -35,24 +35,10 @@ impl Swapchain {
     pub fn new(device: &Device, physical_device: &PhysicalDevice, surface: Surface, settings: &SwapchainSettings) -> Swapchain {
         profiling::scope!("swapchain creation");
 
-        let queue_family_indices = [
-            physical_device.graphics_queue_family.index,
-            physical_device.surface_queue_family.index,
-        ];
-        let (swapchain, extent) = create_swapchain(
-            &device.surface,
-            &device.swapchain,
-            surface.inner,
-            None,
-            physical_device,
-            &queue_family_indices,
-            settings,
-        );
-        let swapchain = Rc::new(vulkan_raii::Swapchain {
-            inner: swapchain,
-            device: device.swapchain.clone(),
-            surface,
-        });
+        let queue_family_indices = [physical_device.graphics_queue_family.index, physical_device.surface_queue_family.index];
+        let (swapchain, extent) =
+            create_swapchain(&device.surface, &device.swapchain, surface.inner, None, physical_device, &queue_family_indices, settings);
+        let swapchain = Rc::new(vulkan_raii::Swapchain { inner: swapchain, device: device.swapchain.clone(), surface });
 
         let images = unsafe { device.swapchain.get_swapchain_images(swapchain.inner) }
             .expect("system should return swapchain images for presenting")
@@ -63,11 +49,7 @@ impl Swapchain {
         let vk::Extent2D { width, height } = extent;
         let swapchain_format = physical_device.swapchain_format;
         let frame_count = images.len() as u32;
-        crate::name_vulkan_object(
-            device,
-            swapchain.inner,
-            format_args!("{width}x{height}, {swapchain_format:?}, {frame_count} frames"),
-        );
+        crate::name_vulkan_object(device, swapchain.inner, format_args!("{width}x{height}, {swapchain_format:?}, {frame_count} frames"));
 
         Swapchain { extent, images, swapchain }
     }
@@ -80,10 +62,7 @@ impl Swapchain {
 
         self.images.clear();
         let swapchain_holder = Rc::get_mut(&mut self.swapchain).expect("swapchain should not be in use during recreation");
-        let queue_family_indices = [
-            physical_device.graphics_queue_family.index,
-            physical_device.surface_queue_family.index,
-        ];
+        let queue_family_indices = [physical_device.graphics_queue_family.index, physical_device.surface_queue_family.index];
         let (new_swapchain, extent) = create_swapchain(
             &device.surface,
             &device.swapchain,
@@ -166,15 +145,9 @@ fn create_swapchain(
         Ok(caps) => caps,
         Err(err) => panic!("enumerating vulkan surface capabilities should not fail: {err}"),
     };
-    let unset_extent = vk::Extent2D {
-        width: u32::MAX,
-        height: u32::MAX,
-    };
-    let image_extent = if surface_capabilities.current_extent == unset_extent {
-        settings.extent
-    } else {
-        surface_capabilities.current_extent
-    };
+    let unset_extent = vk::Extent2D { width: u32::MAX, height: u32::MAX };
+    let image_extent =
+        if surface_capabilities.current_extent == unset_extent { settings.extent } else { surface_capabilities.current_extent };
     let mut min_image_count = 2.max(surface_capabilities.min_image_count);
     if surface_capabilities.max_image_count > 0 {
         min_image_count = min_image_count.min(surface_capabilities.max_image_count);
@@ -195,9 +168,8 @@ fn create_swapchain(
     if queue_family_indices[0] == queue_family_indices[1] {
         swapchain_create_info = swapchain_create_info.image_sharing_mode(vk::SharingMode::EXCLUSIVE);
     } else {
-        swapchain_create_info = swapchain_create_info
-            .image_sharing_mode(vk::SharingMode::CONCURRENT)
-            .queue_family_indices(queue_family_indices);
+        swapchain_create_info =
+            swapchain_create_info.image_sharing_mode(vk::SharingMode::CONCURRENT).queue_family_indices(queue_family_indices);
     }
     if let Some(old_swapchain) = old_swapchain {
         swapchain_create_info = swapchain_create_info.old_swapchain(old_swapchain);

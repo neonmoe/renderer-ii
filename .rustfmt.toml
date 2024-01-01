@@ -2,3 +2,4 @@ max_width = 140
 imports_granularity = "Module"
 group_imports = "StdExternalCrate"
 version = "Two"
+use_small_heuristics = "Max"

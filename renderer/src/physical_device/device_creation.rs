@@ -31,9 +31,8 @@ impl PhysicalDevice {
             }
         }
 
-        let device_create_info = vk::DeviceCreateInfo::default()
-            .queue_create_infos(&queue_create_infos)
-            .enabled_extension_names(&extensions);
+        let device_create_info =
+            vk::DeviceCreateInfo::default().queue_create_infos(&queue_create_infos).enabled_extension_names(&extensions);
         let device = physical_device_features::create_with_features(instance, self.inner, device_create_info)?;
 
         let mut queues = [vk::Queue::default(); 3];
@@ -86,9 +85,7 @@ fn create_device_queue_create_infos<'a, const N: usize>(
         }
         let count = queue_families.iter().filter(|qf| qf.index == queue_family.index).count();
         let count = count.min(queue_family.max_count);
-        let create_info = vk::DeviceQueueCreateInfo::default()
-            .queue_family_index(queue_family.index)
-            .queue_priorities(&ones[..count]);
+        let create_info = vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family.index).queue_priorities(&ones[..count]);
         results.push(create_info);
     }
     results

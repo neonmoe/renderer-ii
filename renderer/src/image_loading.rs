@@ -26,13 +26,7 @@ pub struct ImageData<'a> {
 
 impl ImageData<'_> {
     pub fn get_create_info(&self, kind: TextureKind) -> vk::ImageCreateInfo<'static> {
-        let ImageData {
-            width,
-            height,
-            format,
-            mip_ranges,
-            ..
-        } = self;
+        let ImageData { width, height, format, mip_ranges, .. } = self;
         let format = kind.convert_format(*format);
         let extent = vk::Extent3D::default().width(*width).height(*height).depth(1);
         vk::ImageCreateInfo::default()
@@ -105,11 +99,7 @@ pub fn load_image(
     }
 
     let extent = vk::Extent3D::default().width(width).height(height).depth(1);
-    let &mut Uploader {
-        graphics_queue_family,
-        transfer_queue_family,
-        ..
-    } = uploader;
+    let &mut Uploader { graphics_queue_family, transfer_queue_family, .. } = uploader;
 
     let staging_buffer = {
         profiling::scope!("allocate and create staging buffer");
@@ -118,13 +108,7 @@ pub fn load_image(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        staging_arena.create_buffer(
-            buffer_create_info,
-            pixels,
-            None,
-            None,
-            format_args!("staging buffer for {debug_identifier}"),
-        )?
+        staging_arena.create_buffer(buffer_create_info, pixels, None, None, format_args!("staging buffer for {debug_identifier}"))?
     };
 
     let image_allocation = {
@@ -239,11 +223,7 @@ pub fn load_image(
 
         let image_view =
             unsafe { device.create_image_view(&image_view_create_info, None) }.expect("vulkan image view creation should not fail");
-        ImageView {
-            inner: image_view,
-            device: device.clone(),
-            image: Rc::new(image_allocation.into()),
-        }
+        ImageView { inner: image_view, device: device.clone(), image: Rc::new(image_allocation.into()) }
     };
     crate::name_vulkan_object(device, image_view.inner, format_args!("{debug_identifier}"));
 

@@ -173,9 +173,7 @@ impl Gltf {
     }
 
     pub fn get_animation(&self, name: &str) -> Option<&Animation> {
-        self.animations
-            .iter()
-            .find(|animation| if let Some(name_) = &animation.name { name == name_ } else { false })
+        self.animations.iter().find(|animation| if let Some(name_) = &animation.name { name == name_ } else { false })
     }
 
     pub fn get_node_transforms(&self, playing_animations: &[(f32, &Animation)]) -> Result<Vec<Option<Mat4>>, AnimationError> {
@@ -209,28 +207,22 @@ impl Gltf {
             for channel in animation_channels {
                 match &channel.keyframes {
                     Keyframes::Translation(frames) => {
-                        translation = channel.interpolation.interpolate_vec3(frames, time).ok_or_else(|| {
-                            AnimationError::InvalidAnimationTimestamp {
-                                animation: animation.name.clone(),
-                                time,
-                            }
-                        })?;
+                        translation = channel
+                            .interpolation
+                            .interpolate_vec3(frames, time)
+                            .ok_or_else(|| AnimationError::InvalidAnimationTimestamp { animation: animation.name.clone(), time })?;
                     }
                     Keyframes::Rotation(frames) => {
-                        rotation = channel.interpolation.interpolate_quat(frames, time).ok_or_else(|| {
-                            AnimationError::InvalidAnimationTimestamp {
-                                animation: animation.name.clone(),
-                                time,
-                            }
-                        })?;
+                        rotation = channel
+                            .interpolation
+                            .interpolate_quat(frames, time)
+                            .ok_or_else(|| AnimationError::InvalidAnimationTimestamp { animation: animation.name.clone(), time })?;
                     }
                     Keyframes::Scale(frames) => {
-                        scale = channel.interpolation.interpolate_vec3(frames, time).ok_or_else(|| {
-                            AnimationError::InvalidAnimationTimestamp {
-                                animation: animation.name.clone(),
-                                time,
-                            }
-                        })?;
+                        scale = channel
+                            .interpolation
+                            .interpolate_vec3(frames, time)
+                            .ok_or_else(|| AnimationError::InvalidAnimationTimestamp { animation: animation.name.clone(), time })?;
                     }
                     Keyframes::Weight(_) => todo!(),
                 }
@@ -410,11 +402,7 @@ fn create_gltf<'a>(
         let image_header = ntex::decode_header(bytes).map_err(|err| GltfLoadingError::NtexDecoding(err, name.clone()))?;
         let image_create_info = image_header.get_create_info(kind);
         texture_measurer.add_image(image_create_info);
-        images.push(ImageParameters {
-            data,
-            name,
-            image_create_info,
-        });
+        images.push(ImageParameters { data, name, image_create_info });
     }
 
     let mut animations = Vec::with_capacity(gltf.animations.len());
@@ -424,10 +412,7 @@ fn create_gltf<'a>(
         let mut start_time: Option<f32> = None;
         let mut end_time: Option<f32> = None;
         for channel in &animation.channels {
-            let sampler = animation
-                .samplers
-                .get(channel.sampler)
-                .ok_or(GltfLoadingError::Oob("animation samplers"))?;
+            let sampler = animation.samplers.get(channel.sampler).ok_or(GltfLoadingError::Oob("animation samplers"))?;
             let channels_for_node = nodes_channels
                 .get_mut(channel.target.node)
                 .ok_or(GltfLoadingError::Oob("animation target node"))?
@@ -443,10 +428,7 @@ fn create_gltf<'a>(
             )?;
             let timestamps: &[f32] = bytemuck::cast_slice(timestamps);
 
-            let timestamp_accessor = gltf
-                .accessors
-                .get(sampler.input)
-                .ok_or(GltfLoadingError::Oob("animation sampler input accessor"))?;
+            let timestamp_accessor = gltf.accessors.get(sampler.input).ok_or(GltfLoadingError::Oob("animation sampler input accessor"))?;
             if let Some(&min) = timestamp_accessor.min.first() {
                 start_time = Some(if let Some(min_) = start_time { min_.min(min) } else { min });
             }
@@ -515,10 +497,7 @@ fn create_gltf<'a>(
                     Keyframes::Weight(keyframes)
                 }
             };
-            channels_for_node.push(AnimationChannel {
-                interpolation: sampler.interpolation,
-                keyframes,
-            });
+            channels_for_node.push(AnimationChannel { interpolation: sampler.interpolation, keyframes });
         }
         animations.push(Animation {
             name: animation.name.clone(),
@@ -543,26 +522,18 @@ fn create_gltf<'a>(
                 "MAT4",
             )?;
             if skin.joints.len() * mem::size_of::<Mat4>() != inverse_bind_matrices.len() {
-                return Err(GltfLoadingError::Spec(
-                    "skin has a different amount of joints and inverse bind matrices",
-                ));
+                return Err(GltfLoadingError::Spec("skin has a different amount of joints and inverse bind matrices"));
             }
             // Re-allocation needed so that the [u8] is Mat4 aligned.
             // Don't know why the format doesn't enforce this.
             let inverse_bind_matrices = Vec::from(inverse_bind_matrices);
             let inverse_bind_matrices: &[Mat4] = bytemuck::cast_slice(&inverse_bind_matrices);
             for (&node_index, &inverse_bind_matrix) in skin.joints.iter().zip(inverse_bind_matrices) {
-                joints.push(Joint {
-                    inverse_bind_matrix,
-                    node_index,
-                });
+                joints.push(Joint { inverse_bind_matrix, node_index });
             }
         } else {
             for &node_index in &skin.joints {
-                joints.push(Joint {
-                    inverse_bind_matrix: Mat4::IDENTITY,
-                    node_index,
-                });
+                joints.push(Joint { inverse_bind_matrix: Mat4::IDENTITY, node_index });
             }
         }
         skins.push(Skin { joints });
@@ -603,14 +574,7 @@ fn create_gltf<'a>(
     }
 
     Ok(PendingGltf {
-        gltf_base: Gltf {
-            animations,
-            nodes,
-            root_nodes,
-            skins,
-            meshes: Vec::new(),
-            materials: Vec::new(),
-        },
+        gltf_base: Gltf { animations, nodes, root_nodes, skins, meshes: Vec::new(), materials: Vec::new() },
         json: gltf,
         bin_buffer,
         resource_path,
@@ -651,31 +615,19 @@ fn create_primitive(gltf: &gltf_json::GltfJson, primitive: &gltf_json::Primitive
 
     let mut vertex_buffers = ArrayVec::new();
 
-    let pos_accessor = *primitive
-        .attributes
-        .get("POSITION")
-        .ok_or(GltfLoadingError::Misc("missing position attributes"))?;
+    let pos_accessor = *primitive.attributes.get("POSITION").ok_or(GltfLoadingError::Misc("missing position attributes"))?;
     let (pos_buffer, _) = get_buffer_view_from_accessor(gltf, pos_accessor, Some(GLTF_FLOAT), "VEC3")?;
     vertex_buffers.push(pos_buffer);
 
-    let tex_accessor = *primitive
-        .attributes
-        .get("TEXCOORD_0")
-        .ok_or(GltfLoadingError::Misc("missing UV0 attributes"))?;
+    let tex_accessor = *primitive.attributes.get("TEXCOORD_0").ok_or(GltfLoadingError::Misc("missing UV0 attributes"))?;
     let (tex_buffer, _) = get_buffer_view_from_accessor(gltf, tex_accessor, Some(GLTF_FLOAT), "VEC2")?;
     vertex_buffers.push(tex_buffer);
 
-    let normal_accessor = *primitive
-        .attributes
-        .get("NORMAL")
-        .ok_or(GltfLoadingError::Misc("missing normal attributes"))?;
+    let normal_accessor = *primitive.attributes.get("NORMAL").ok_or(GltfLoadingError::Misc("missing normal attributes"))?;
     let (normal_buffer, _) = get_buffer_view_from_accessor(gltf, normal_accessor, Some(GLTF_FLOAT), "VEC3")?;
     vertex_buffers.push(normal_buffer);
 
-    let tangent_accessor = *primitive
-        .attributes
-        .get("TANGENT")
-        .ok_or(GltfLoadingError::Misc("missing tangent attributes"))?;
+    let tangent_accessor = *primitive.attributes.get("TANGENT").ok_or(GltfLoadingError::Misc("missing tangent attributes"))?;
     let (tangent_buffer, _) = get_buffer_view_from_accessor(gltf, tangent_accessor, Some(GLTF_FLOAT), "VEC4")?;
     vertex_buffers.push(tangent_buffer);
 
@@ -689,12 +641,7 @@ fn create_primitive(gltf: &gltf_json::GltfJson, primitive: &gltf_json::Primitive
         pipeline = PipelineIndex::PbrSkinnedOpaque;
     }
 
-    Ok(MeshParameters {
-        pipeline,
-        vertex_buffers,
-        index_buffer,
-        large_indices,
-    })
+    Ok(MeshParameters { pipeline, vertex_buffers, index_buffer, large_indices })
 }
 
 #[profiling::function]
@@ -750,15 +697,7 @@ fn get_buffer_view_from_accessor(
         Some(x) if x != stride => return Err(GltfLoadingError::Misc("wrong stride")),
         _ => {}
     }
-    Ok((
-        BufferView {
-            buffer: view.buffer,
-            offset,
-            length: length.min(accessor.count * stride),
-            stride,
-        },
-        ctype,
-    ))
+    Ok((BufferView { buffer: view.buffer, offset, length: length.min(accessor.count * stride), stride }, ctype))
 }
 
 fn stride_for(component_type: i32, attribute_type: &str) -> usize {
@@ -793,10 +732,7 @@ pub(crate) fn get_gltf_texture_kinds(gltf: &gltf_json::GltfJson) -> Result<HashM
                 }
             }
             if let Some(metallic_roughness) = &pbr.metallic_roughness_texture {
-                let texture = gltf
-                    .textures
-                    .get(metallic_roughness.index)
-                    .ok_or(GltfLoadingError::Oob("texture"))?;
+                let texture = gltf.textures.get(metallic_roughness.index).ok_or(GltfLoadingError::Oob("texture"))?;
                 if let Some(image_index) = texture.source {
                     image_texture_kinds.insert(image_index, TextureKind::LinearColor);
                 }
