@@ -1,3 +1,5 @@
+use std::env;
+use std::fmt::Write;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -28,6 +30,22 @@ fn main() {
             glsl_to_spirv(&src_path, &dst_path);
         }
     }
+
+    let shader_constants_glsl = include_str!("shaders/glsl/constants.glsl");
+    let mut shader_constants_rust = String::with_capacity(shader_constants_glsl.len());
+    for line in shader_constants_glsl.lines() {
+        if let Some(name_and_value) = line.strip_prefix("#define ") {
+            let (name, value) = name_and_value.split_once(' ').expect("malformed #define in constants.glsl");
+            write!(&mut shader_constants_rust, "pub const {name}: u32 = {value};").unwrap();
+            shader_constants_rust.push('\n');
+        } else if line.starts_with("///") {
+            shader_constants_rust.push_str(line);
+            shader_constants_rust.push('\n');
+        }
+    }
+    let mut shader_constants_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    shader_constants_path.push("shader_constants.rs");
+    fs::write(shader_constants_path, shader_constants_rust).unwrap();
 }
 
 fn compile_shaders(src_path: PathBuf, mut dst_path: PathBuf, shaders: &mut ShadersToCompile) {

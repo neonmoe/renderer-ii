@@ -4,7 +4,11 @@ use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
-pub(crate) mod constants;
+/// Constants from renderer/shaders/glsl/constants.glsl
+pub(crate) mod constants {
+    #![allow(unused_parens)]
+    include!(concat!(env!("OUT_DIR"), "/shader_constants.rs"));
+}
 pub(crate) mod render_passes;
 
 use constants::*;
@@ -71,7 +75,7 @@ pub struct RenderSettings {
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct DrawCallParametersSoa {
-    pub material_index: [u32; MAX_DRAWS as usize],
+    pub material_index: [u32; MAX_DRAW_CALLS as usize],
 }
 
 impl DrawCallParametersSoa {

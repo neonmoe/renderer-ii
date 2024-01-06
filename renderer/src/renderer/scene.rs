@@ -16,7 +16,7 @@ use coordinate_system::CoordinateSystem;
 use draw_call_tag::DrawCallTag;
 use mesh::Mesh;
 
-use crate::renderer::pipeline_parameters::constants::MAX_DRAWS;
+use crate::renderer::pipeline_parameters::constants::MAX_DRAW_CALLS;
 
 pub struct JointOffset(pub(crate) u32);
 
@@ -97,7 +97,7 @@ impl<'a> Scene<'a> {
     /// Scene has reached maximum supported draws ([`MAX_DRAWS`]).
     pub fn queue_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, transform: Mat4) -> bool {
         profiling::scope!("static mesh");
-        if self.total_draws < MAX_DRAWS {
+        if self.total_draws < MAX_DRAW_CALLS {
             // TODO: Check mesh's vertex layout and material's pipeline compatibility
             self.static_draws.push(StaticDraw {
                 tag: DrawCallTag { pipeline: material.pipeline(false), vertex_library: &mesh.library, mesh, material },
