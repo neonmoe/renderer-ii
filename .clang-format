@@ -1,3 +1,6 @@
 BasedOnStyle: LLVM
 IndentWidth: 4
 ColumnLimit: 100
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortBlocksOnASingleLine: Empty

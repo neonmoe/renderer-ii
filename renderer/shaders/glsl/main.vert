@@ -3,17 +3,17 @@
 
 #include "constants.glsl"
 
-layout(set = 0, binding = UF_TRANSFORMS_BINDING)
-uniform GlobalTransforms {
+layout(set = 0, binding = UF_TRANSFORMS_BINDING) uniform GlobalTransforms {
     mat4 proj;
     mat4 view;
-} uf_transforms;
+}
+uf_transforms;
 
 #ifdef SKINNED
-layout(set = 2, binding = UF_SKELETON_BINDING)
-uniform Bone {
+layout(set = 2, binding = UF_SKELETON_BINDING) uniform Bone {
     mat4 bones[MAX_BONE_COUNT];
-} uf_skeleton;
+}
+uf_skeleton;
 #endif
 
 layout(location = IN_TRANSFORM_LOCATION) in mat4 in_transform;
@@ -55,17 +55,16 @@ vec3 hsv(float hue, float saturation, float value) {
 
 void main() {
     out_debug_color = vec3(0.0, 0.0, 0.0);
-    #ifdef SKINNED
+#ifdef SKINNED
     mat4 transform = in_transform;
-    transform *=
-    uf_skeleton.bones[in_joints.x] * in_weights.x +
-    uf_skeleton.bones[in_joints.y] * in_weights.y +
-    uf_skeleton.bones[in_joints.z] * in_weights.z +
-    uf_skeleton.bones[in_joints.w] * in_weights.w;
+    transform *= uf_skeleton.bones[in_joints.x] * in_weights.x +
+                 uf_skeleton.bones[in_joints.y] * in_weights.y +
+                 uf_skeleton.bones[in_joints.z] * in_weights.z +
+                 uf_skeleton.bones[in_joints.w] * in_weights.w;
     out_debug_color = hsv(in_joints.x / 256.0 * 37.0, 0.8, in_weights.x);
-    #else
+#else
     mat4 transform = in_transform;
-    #endif
+#endif
     gl_Position = uf_transforms.proj * uf_transforms.view * transform * vec4(in_position, 1.0);
     out_uv = in_uv;
     // Normals and tangents should not be translated, and the translation is
