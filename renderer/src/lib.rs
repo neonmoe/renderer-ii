@@ -2,7 +2,7 @@
 //! down over time.
 //!
 //! Currently targeting the
-//! [VP_LUNARG_desktop_baseline_2023](https://vulkan.lunarg.com/doc/sdk/latest/windows/profiles_definitions.html)
+//! [VP_LUNARG_desktop_baseline_2022](https://vulkan.lunarg.com/doc/sdk/latest/windows/profiles_definitions.html)
 //! Vulkan Profile.
 //!
 //! Vulkan error handling policy: if the returned error is "out of host/device

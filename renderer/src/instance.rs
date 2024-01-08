@@ -97,7 +97,7 @@ impl Instance {
         if profiles_layer_enabled {
             // ash doesn't have VkProfileLayerSettingsEXT, if/when that's
             // available, prefer include_str!ing the JSON here.
-            std::env::set_var("VK_KHRONOS_PROFILES_PROFILE_FILE", "renderer/src/vk-profiles/VP_LUNARG_desktop_baseline_2023.json");
+            std::env::set_var("VK_KHRONOS_PROFILES_PROFILE_FILE", "renderer/src/vk-profiles/VP_CUSTOM_profile_based_on_2022_baseline.json");
         }
 
         #[cfg(feature = "vulkan-debug-utils")]
