@@ -9,7 +9,18 @@ layout(location = 0) in vec2 in_uv;
 layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec4 in_tangent;
 layout(location = 3) in flat vec3 in_debug_color;
-layout(location = 4) in flat int in_draw_id;
+layout(location = 4) in flat uint in_draw_id;
+
+// TODO: Should render settings just be defines?
+layout(set = 0, binding = UF_RENDER_SETTINGS_BINDING) uniform RenderSettings {
+    uint debug_value;
+}
+uf_render_settings;
+
+layout(set = 0, binding = UF_DRAW_CALL_FRAG_PARAMS_BINDING, std430) uniform DrawCallFragParams {
+    uint material_index[MAX_DRAW_CALLS];
+}
+uf_draw_call;
 
 layout(set = 1, binding = UF_SAMPLER_BINDING) uniform sampler uf_sampler;
 layout(set = 1,
@@ -27,19 +38,8 @@ layout(set = 1, binding = UF_PBR_FACTORS_BINDING, std430) uniform PbrFactorsSoa 
 }
 uf_factors;
 
-layout(set = 1, binding = UF_DRAW_CALL_PARAMS_BINDING, std430) uniform DrawCallParametersSoa {
-    uint material_index[MAX_DRAW_CALLS];
-}
-uf_draw_call_parameters;
-
-// TODO: Should render settings just be defines?
-layout(set = 0, binding = UF_RENDER_SETTINGS_BINDING) uniform RenderSettings {
-    uint debug_value;
-}
-uf_render_settings;
-
 void main() {
-    uint material_index = uf_draw_call_parameters.material_index[in_draw_id];
+    uint material_index = uf_draw_call.material_index[in_draw_id];
 
     vec4 base_color = texture(sampler2D(base_color[material_index], uf_sampler), in_uv);
     vec4 metallic_roughness_tex =

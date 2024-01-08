@@ -12,8 +12,11 @@ use hashbrown::HashMap;
 use crate::arena::buffers::ForBuffers;
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
+use crate::renderer::pipeline_parameters::constants::MAX_JOINT_COUNT;
+use crate::renderer::pipeline_parameters::{DrawCallVertParams, PBR_PIPELINES};
 use crate::vertex_library::{VertexLibrary, VERTEX_LIBRARY_INDEX_TYPE};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
+use crate::JointsOffset;
 
 pub(crate) mod descriptors;
 pub(crate) mod framebuffers;
@@ -24,9 +27,8 @@ pub(crate) mod swapchain;
 
 use descriptors::Descriptors;
 use framebuffers::Framebuffers;
-use pipeline_parameters::constants::MAX_BONE_COUNT;
 use pipeline_parameters::render_passes::{Attachment, RenderPass};
-use pipeline_parameters::{DrawCallParametersSoa, PipelineIndex, PipelineMap, RenderSettings};
+use pipeline_parameters::{DrawCallFragParams, PipelineIndex, PipelineMap, RenderSettings};
 use pipelines::Pipelines;
 use scene::Scene;
 use swapchain::{Swapchain, SwapchainError};
@@ -45,8 +47,8 @@ impl FrameIndex {
 }
 
 struct DrawCallParameters {
-    data: DrawCallParametersSoa,
-    instance_count: vk::DeviceSize,
+    vertex_params: DrawCallVertParams,
+    fragment_params: DrawCallFragParams,
 }
 
 /// Wrapper around [`vk::DrawIndexedIndirectCommand`] which implements [`Pod`]
@@ -112,7 +114,8 @@ impl Renderer {
             VulkanArena::new(instance, device, physical_device, 10_000_000, MemoryProps::for_buffers(), format_args!("frame local arena"))
                 .expect("system should have enough memory for the renderer's temp arena");
 
-        let draw_call_parameters = DrawCallParameters { data: DrawCallParametersSoa::zeroed(), instance_count: 0 };
+        let draw_call_parameters =
+            DrawCallParameters { vertex_params: DrawCallVertParams::zeroed(), fragment_params: DrawCallFragParams::zeroed() };
 
         Renderer {
             device: device.clone(),
@@ -213,26 +216,25 @@ impl Renderer {
         // Prepare the data (CPU-side work):
 
         let vk::Extent2D { width, height } = framebuffers.extent;
-        self.draw_call_parameters.instance_count = 0;
         let mut transforms = Vec::new();
         let mut draws: PipelineMap<HashMap<&VertexLibrary, Vec<DrawIndexedIndirectCommand>>> =
             PipelineMap::from_infallible(|_| HashMap::new());
-        scene.static_draws.sort();
-        let mut prev_tag = None;
-        for static_draw in &scene.static_draws {
-            let pipeline = static_draw.tag.pipeline;
-            let index_count = static_draw.tag.mesh.index_count;
-            let first_index = static_draw.tag.mesh.first_index;
-            let vertex_offset = static_draw.tag.mesh.vertex_offset;
-            let material_index = static_draw.tag.material.array_index(pipeline).unwrap();
 
-            let indirect_draw_set = draws[pipeline].entry(static_draw.tag.vertex_library).or_default();
+        scene.draws.sort();
+        let mut prev_tag = None;
+        let mut prev_joints = None;
+        for draw in &scene.draws {
+            let pipeline = draw.tag.pipeline;
+            let index_count = draw.tag.mesh.index_count;
+            let first_index = draw.tag.mesh.first_index;
+            let vertex_offset = draw.tag.mesh.vertex_offset;
+
+            let indirect_draw_set = draws[pipeline].entry(draw.tag.vertex_library).or_default();
 
             let first_instance = transforms.len() as u32;
-            transforms.push(static_draw.transform);
-            self.draw_call_parameters.instance_count += 1;
+            transforms.push(draw.transform);
 
-            if Some(static_draw.tag) == prev_tag {
+            if Some(draw.tag) == prev_tag && Some(draw.joints) == prev_joints {
                 indirect_draw_set.last_mut().unwrap().0.instance_count += 1;
             } else {
                 indirect_draw_set.push(DrawIndexedIndirectCommand(vk::DrawIndexedIndirectCommand {
@@ -242,8 +244,13 @@ impl Renderer {
                     vertex_offset,
                     first_instance,
                 }));
-                self.draw_call_parameters.data.material_index[first_instance as usize] = material_index;
-                prev_tag = Some(static_draw.tag);
+                let material_index = draw.tag.material.array_index(pipeline).unwrap();
+                self.draw_call_parameters.fragment_params.material_index[first_instance as usize] = material_index;
+                if let Some(JointsOffset(joints_offset)) = draw.joints {
+                    self.draw_call_parameters.vertex_params.joints_offset[first_instance as usize] = joints_offset;
+                }
+                prev_tag = Some(draw.tag);
+                prev_joints = Some(draw.joints);
             }
         }
 
@@ -270,11 +277,6 @@ impl Renderer {
             .expect("renderer's temp arena should have enough memory for the render settings buffer");
 
         let skinned_mesh_joints = &mut scene.skinned_mesh_joints_buffer;
-        // The joint buffer needs to have backing memory for the entire uniform
-        // buffer's length at all offsets, so without this padding, the last
-        // (few) skeletons would overflow the buffer's end.
-        let empty_full_length_skeleton = &[Mat4::ZERO; MAX_BONE_COUNT as usize];
-        skinned_mesh_joints.extend_from_slice(bytemuck::cast_slice(empty_full_length_skeleton));
         let skinned_mesh_joints_buffer = create_uniform_buffer(&mut self.temp_arena, skinned_mesh_joints, "joint transforms")
             .expect("renderer's temp arena should have enough memory for the joint transforms buffer");
 
@@ -282,28 +284,23 @@ impl Renderer {
             .create_materials_temp_uniform(&mut self.temp_arena)
             .expect("renderer's temp arena should have enough memory for the materials buffer");
 
-        let mut draw_call_params_update_ranges = [(0, 0); 1];
-        let draw_call_params = if self.draw_call_parameters.instance_count > 0 {
-            let draw_call_parameters = &[self.draw_call_parameters.data];
-            let draw_call_params_buffer = create_uniform_buffer(&mut self.temp_arena, draw_call_parameters, "draw call params")
+        let draw_call_vert_params = &[self.draw_call_parameters.vertex_params];
+        let draw_call_vert_params_buffer =
+            create_uniform_buffer(&mut self.temp_arena, draw_call_vert_params, "draw call params (for vertex shader)")
                 .expect("renderer's temp arena should have enough memory for the draw call params buffer");
-            draw_call_params_update_ranges[0] = (
-                DrawCallParametersSoa::MATERIAL_INDEX_OFFSET,
-                self.draw_call_parameters.instance_count * DrawCallParametersSoa::MATERIAL_INDEX_ELEMENT_SIZE,
-            );
-            let params = (draw_call_params_buffer.inner, &draw_call_params_update_ranges[..]);
-            self.temp_arena.add_buffer(draw_call_params_buffer);
-            Some(params)
-        } else {
-            None
-        };
+
+        let draw_call_frag_params = &[self.draw_call_parameters.fragment_params];
+        let draw_call_frag_params_buffer =
+            create_uniform_buffer(&mut self.temp_arena, draw_call_frag_params, "draw call params (for fragment shader)")
+                .expect("renderer's temp arena should have enough memory for the draw call params buffer");
 
         descriptors.write_descriptors(
             &global_transforms_buffer,
             &render_settings_buffer,
             &skinned_mesh_joints_buffer,
+            &draw_call_vert_params_buffer,
+            &draw_call_frag_params_buffer,
             &materials_temp_uniform,
-            draw_call_params,
             &framebuffers.hdr_image,
         );
 
@@ -311,6 +308,8 @@ impl Renderer {
         self.temp_arena.add_buffer(render_settings_buffer);
         self.temp_arena.add_buffer(skinned_mesh_joints_buffer);
         self.temp_arena.add_buffer(materials_temp_uniform.buffer);
+        self.temp_arena.add_buffer(draw_call_vert_params_buffer);
+        self.temp_arena.add_buffer(draw_call_frag_params_buffer);
 
         // Draw (record the actual draw calls):
 
@@ -425,25 +424,28 @@ impl Renderer {
             );
         }
 
-        for (static_pl, _skinned_pl) in [
-            (PipelineIndex::PbrOpaque, PipelineIndex::PbrSkinnedOpaque),
-            (PipelineIndex::PbrAlphaToCoverage, PipelineIndex::PbrSkinnedAlphaToCoverage),
-            (PipelineIndex::PbrBlended, PipelineIndex::PbrSkinnedBlended),
+        for pl_idx in [
+            PipelineIndex::PbrOpaque,
+            PipelineIndex::PbrSkinnedOpaque,
+            PipelineIndex::PbrSkinnedAlphaToCoverage,
+            PipelineIndex::PbrAlphaToCoverage,
+            PipelineIndex::PbrBlended,
+            PipelineIndex::PbrSkinnedBlended,
         ] {
             profiling::scope!("pipeline");
-            let pipeline = pipelines.pipelines[static_pl].inner;
-            let layout = descriptors.pipeline_layouts[static_pl].inner;
-            let descriptor_sets = descriptors.descriptor_sets(static_pl);
+            let pipeline = pipelines.pipelines[pl_idx].inner;
+            let layout = descriptors.pipeline_layouts[pl_idx].inner;
+            let descriptor_sets = descriptors.descriptor_sets(pl_idx);
             let bind_point = vk::PipelineBindPoint::GRAPHICS;
             unsafe { self.device.cmd_bind_pipeline(command_buffer, bind_point, pipeline) };
             unsafe {
                 self.device.cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[]);
             }
-            for (vertex_library, draws) in &draws[static_pl] {
+            for (vertex_library, draws) in &draws[pl_idx] {
                 const VERTEX_BUFFERS: usize = VERTEX_BINDING_COUNT + 1;
                 let mut vertex_offsets = ArrayVec::<vk::DeviceSize, VERTEX_BUFFERS>::new();
                 vertex_offsets.push(0);
-                vertex_offsets.try_extend_from_slice(&vertex_library.vertex_buffer_offsets[static_pl]).unwrap();
+                vertex_offsets.try_extend_from_slice(&vertex_library.vertex_buffer_offsets[pl_idx]).unwrap();
                 let mut vertex_buffers = ArrayVec::<vk::Buffer, VERTEX_BUFFERS>::new();
                 vertex_buffers.push(transforms_buffer.inner);
                 for _ in 1..vertex_offsets.len() {
@@ -468,7 +470,7 @@ impl Renderer {
                             transforms_bytes,
                             None,
                             None,
-                            format_args!("indirect draw command buffer ({static_pl:?})"),
+                            format_args!("indirect draw command buffer ({pl_idx:?})"),
                         )
                         .expect("renderer's temp arena should have enough memory for the indirect draws buffer")
                 };
@@ -480,7 +482,6 @@ impl Renderer {
                 }
                 self.temp_arena.add_buffer(indirect_draws_buffer);
             }
-            // TODO: Draw skinned meshes again
         }
 
         unsafe {

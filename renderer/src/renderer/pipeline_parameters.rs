@@ -64,7 +64,7 @@ pub struct RenderSettings {
     pub debug_value: u32,
 }
 
-/// The per-draw-call uniform buffer.
+/// The per-draw-call uniform buffer, accessible in the fragment shader.
 ///
 /// This is the most "dynamic" data accessible in the shader which is still
 /// dynamically uniform. Stored in a structure-of-arrays layout, indexed via the
@@ -74,13 +74,22 @@ pub struct RenderSettings {
 /// instance, so the rest is left zeroed.
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
-pub struct DrawCallParametersSoa {
+pub struct DrawCallFragParams {
     pub material_index: [u32; MAX_DRAW_CALLS as usize],
 }
 
-impl DrawCallParametersSoa {
-    pub const MATERIAL_INDEX_OFFSET: vk::DeviceSize = 0;
-    pub const MATERIAL_INDEX_ELEMENT_SIZE: vk::DeviceSize = mem::size_of::<u32>() as vk::DeviceSize;
+/// The per-draw-call uniform buffer, accessible in the vertex shader.
+///
+/// This is the most "dynamic" data accessible in the shader which is still
+/// dynamically uniform. Stored in a structure-of-arrays layout, indexed via the
+/// `gl_BaseInstanceARB` variable which can be included in indirect draws.
+///
+/// When rendering many instances, all instances of a specific draw will refer to the same base
+/// instance, so the rest is left zeroed.
+#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+pub struct DrawCallVertParams {
+    pub joints_offset: [u32; MAX_DRAW_CALLS as usize],
 }
 
 /// Rust-side representation of the std430-layout `PbrFactorsSoa` struct in
@@ -365,6 +374,22 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         binding_flags: vk::DescriptorBindingFlags::empty(),
         descriptor_size: Some(mem::size_of::<RenderSettings>() as vk::DeviceSize),
     },
+    DescriptorSetLayoutParams {
+        binding: UF_DRAW_CALL_VERT_PARAMS_BINDING,
+        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        descriptor_count: 1,
+        stage_flags: vk::ShaderStageFlags::VERTEX,
+        binding_flags: vk::DescriptorBindingFlags::empty(),
+        descriptor_size: Some(mem::size_of::<DrawCallVertParams>() as vk::DeviceSize),
+    },
+    DescriptorSetLayoutParams {
+        binding: UF_DRAW_CALL_FRAG_PARAMS_BINDING,
+        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+        descriptor_count: 1,
+        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+        binding_flags: vk::DescriptorBindingFlags::empty(),
+        descriptor_size: Some(mem::size_of::<DrawCallFragParams>() as vk::DeviceSize),
+    },
 ];
 
 static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
@@ -423,14 +448,6 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::empty(),
         descriptor_size: Some(mem::size_of::<PbrFactorsSoa>() as vk::DeviceSize),
-    },
-    DescriptorSetLayoutParams {
-        binding: UF_DRAW_CALL_PARAMS_BINDING,
-        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-        descriptor_count: 1,
-        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        binding_flags: vk::DescriptorBindingFlags::empty(),
-        descriptor_size: Some(mem::size_of::<DrawCallParametersSoa>() as vk::DeviceSize),
     },
 ];
 
@@ -494,11 +511,11 @@ static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
         PBR_DESCRIPTOR_SET_1,
         &[DescriptorSetLayoutParams {
             binding: UF_SKELETON_BINDING,
-            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::VERTEX,
             binding_flags: vk::DescriptorBindingFlags::empty(),
-            descriptor_size: Some(mem::size_of::<Mat4>() as vk::DeviceSize * MAX_BONE_COUNT as vk::DeviceSize),
+            descriptor_size: Some(mem::size_of::<Mat4>() as vk::DeviceSize * MAX_JOINT_COUNT as vk::DeviceSize),
         }],
     ],
 };

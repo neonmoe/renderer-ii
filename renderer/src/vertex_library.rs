@@ -317,10 +317,11 @@ impl Default for DistinctBindingSets {
 
 /// Returns an index to `distinct_bindings` where the descriptions fit the given pipeline.
 fn find_existing_binding(pipeline: PipelineIndex, distinct_binding_sets: &[&'static [vk::VertexInputBindingDescription]]) -> Option<usize> {
-    distinct_binding_sets.iter().position(|bindings| {
-        let binding_descriptions = PIPELINE_PARAMETERS[pipeline].bindings;
-        bindings.iter().zip(binding_descriptions).all(|(existing, new)| {
-            existing.binding == new.binding && existing.input_rate == new.input_rate && existing.stride == new.stride
-        })
+    distinct_binding_sets.iter().position(|existing_bindings| {
+        let new_bindings = PIPELINE_PARAMETERS[pipeline].bindings;
+        existing_bindings.len() == new_bindings.len()
+            && existing_bindings.iter().zip(new_bindings).all(|(existing, new)| {
+                existing.binding == new.binding && existing.input_rate == new.input_rate && existing.stride == new.stride
+            })
     })
 }

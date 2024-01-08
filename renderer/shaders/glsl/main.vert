@@ -1,5 +1,6 @@
 // This file is included in some variants in the "variants" directory.
 #extension GL_ARB_shader_draw_parameters : require
+#extension GL_EXT_scalar_block_layout : require
 
 #include "constants.glsl"
 
@@ -9,11 +10,16 @@ layout(set = 0, binding = UF_TRANSFORMS_BINDING) uniform GlobalTransforms {
 }
 uf_transforms;
 
-#ifdef SKINNED
-layout(set = 2, binding = UF_SKELETON_BINDING) uniform Bone {
-    mat4 bones[MAX_BONE_COUNT];
+layout(set = 0, binding = UF_DRAW_CALL_VERT_PARAMS_BINDING, std430) uniform DrawCallVertParams {
+    uint joints_offset[MAX_DRAW_CALLS];
 }
-uf_skeleton;
+uf_draw_call;
+
+#ifdef SKINNED
+layout(set = 2, binding = UF_SKELETON_BINDING) uniform Joint {
+    mat4 joints[MAX_JOINT_COUNT];
+}
+uf_skin;
 #endif
 
 layout(location = IN_TRANSFORM_LOCATION) in mat4 in_transform;
@@ -30,7 +36,7 @@ layout(location = 0) out vec2 out_uv;
 layout(location = 1) out vec3 out_normal;
 layout(location = 2) out vec4 out_tangent;
 layout(location = 3) out vec3 out_debug_color;
-layout(location = 4) out int out_draw_id;
+layout(location = 4) out uint out_draw_id;
 
 vec3 hsv(float hue, float saturation, float value) {
     float h = mod(hue * 6.0, 6.0);
@@ -53,17 +59,26 @@ vec3 hsv(float hue, float saturation, float value) {
     }
 }
 
+// Adapted from: https://thebookofshaders.com/10/
+float random(float x) {
+    return fract(sin(x) * 43758.5453123);
+}
+
 void main() {
-    out_debug_color = vec3(0.0, 0.0, 0.0);
+    uint draw_id = gl_BaseInstanceARB;
 #ifdef SKINNED
+    uint joints_offset = uf_draw_call.joints_offset[draw_id];
     mat4 transform = in_transform;
-    transform *= uf_skeleton.bones[in_joints.x] * in_weights.x +
-                 uf_skeleton.bones[in_joints.y] * in_weights.y +
-                 uf_skeleton.bones[in_joints.z] * in_weights.z +
-                 uf_skeleton.bones[in_joints.w] * in_weights.w;
+    transform *= uf_skin.joints[in_joints.x + joints_offset] * in_weights.x +
+                 uf_skin.joints[in_joints.y + joints_offset] * in_weights.y +
+                 uf_skin.joints[in_joints.z + joints_offset] * in_weights.z +
+                 uf_skin.joints[in_joints.w + joints_offset] * in_weights.w;
     out_debug_color = hsv(in_joints.x / 256.0 * 37.0, 0.8, in_weights.x);
 #else
     mat4 transform = in_transform;
+    float d = 1.0 + draw_id;
+    out_debug_color = vec3(random(d * 641.63), random(d * 1864.25), random(d * 182362.365));
+    // out_debug_color = vec3(mod(d / 8.0, 8.0), mod(d / 64.0, 8.0), mod(d / 512.0, 8.0));
 #endif
     gl_Position = uf_transforms.proj * uf_transforms.view * transform * vec4(in_position, 1.0);
     out_uv = in_uv;
@@ -77,5 +92,5 @@ void main() {
     out_normal = normalize(normal_transform * in_normal);
     // Ensure 90 degree angle between normal and tangent.
     out_tangent.xyz = normalize(out_tangent.xyz - dot(out_tangent.xyz, out_normal) * out_normal);
-    out_draw_id = gl_BaseInstanceARB;
+    out_draw_id = draw_id;
 }

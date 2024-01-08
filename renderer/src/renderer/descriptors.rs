@@ -8,7 +8,10 @@ use bytemuck::Zeroable;
 use crate::arena::buffers::ForBuffers;
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
-use crate::renderer::pipeline_parameters::constants::{MAX_BONE_COUNT, MAX_TEXTURE_COUNT};
+use crate::renderer::pipeline_parameters::constants::{
+    MAX_TEXTURE_COUNT, UF_DRAW_CALL_FRAG_PARAMS_BINDING, UF_DRAW_CALL_VERT_PARAMS_BINDING, UF_RENDER_SETTINGS_BINDING,
+    UF_TRANSFORMS_BINDING,
+};
 use crate::renderer::pipeline_parameters::{
     DescriptorSetLayoutParams, PbrFactorsSoa, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_COUNT,
     PIPELINE_PARAMETERS, SKINNED_PIPELINES,
@@ -262,13 +265,15 @@ impl Descriptors {
         Ok(MaterialTempUniforms { buffer, pbr_factors_offsets_and_sizes })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_descriptors(
         &mut self,
         global_transforms_buffer: &Buffer,
         render_settings_buffer: &Buffer,
         skinned_mesh_joints_buffer: &Buffer,
+        draw_call_vert_params: &Buffer,
+        draw_call_frag_params: &Buffer,
         material_buffers: &MaterialTempUniforms,
-        draw_call_data: Option<(vk::Buffer, &[(vk::DeviceSize, vk::DeviceSize)])>,
         hdr_attachment: &ImageView,
     ) {
         profiling::scope!("updating descriptors");
@@ -293,15 +298,16 @@ impl Descriptors {
 
         let shared_pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
         let global_transforms_buffer = (global_transforms_buffer.inner, 0, global_transforms_buffer.size);
-        self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, 0, 0), global_transforms_buffer);
+        self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, UF_TRANSFORMS_BINDING, 0), global_transforms_buffer);
         let render_settings_buffer = (render_settings_buffer.inner, 0, render_settings_buffer.size);
-        self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, 1, 0), render_settings_buffer);
+        self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, UF_RENDER_SETTINGS_BINDING, 0), render_settings_buffer);
+        let vert_params_buffer = (draw_call_vert_params.inner, 0, draw_call_vert_params.size);
+        self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, UF_DRAW_CALL_VERT_PARAMS_BINDING, 0), vert_params_buffer);
+        let frag_params_buffer = (draw_call_frag_params.inner, 0, draw_call_frag_params.size);
+        self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, UF_DRAW_CALL_FRAG_PARAMS_BINDING, 0), frag_params_buffer);
 
         for pipeline in SKINNED_PIPELINES {
-            // NOTE: This is the size of just one buffer. The backing joints
-            // buffer is much longer, but it is offset with dynamic offsets.
-            let bones_buffer_size = mem::size_of::<glam::Mat4>() as vk::DeviceSize * MAX_BONE_COUNT as vk::DeviceSize;
-            let skinned_mesh_joints_buffer = (skinned_mesh_joints_buffer.inner, 0, bones_buffer_size);
+            let skinned_mesh_joints_buffer = (skinned_mesh_joints_buffer.inner, 0, skinned_mesh_joints_buffer.size);
             self.set_uniform_buffer(pipeline, &mut pending_writes, (2, 0, 0), skinned_mesh_joints_buffer);
         }
 
@@ -310,13 +316,6 @@ impl Descriptors {
             let (offset, size) = pbr_factors_offset_and_size;
             let buffer = (material_buffers.buffer.inner, offset, size);
             self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 6, 0), buffer);
-
-            if let Some(draw_call_data) = draw_call_data.as_ref() {
-                for &(offset, size) in draw_call_data.1 {
-                    let buffer = (draw_call_data.0, offset, size);
-                    self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 7, 0), buffer);
-                }
-            }
         }
 
         for (pipeline, i, material) in &materials_needing_update {

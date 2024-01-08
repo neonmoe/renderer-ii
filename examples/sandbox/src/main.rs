@@ -569,7 +569,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
     let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device);
     print_memory_usage("after renderer creation");
 
-    let mut scene = renderer::Scene::new(&physical_device);
+    let mut scene = renderer::Scene::default();
     let mut recreate_swapchain = false;
     let mut prev_duration = Duration::ZERO;
     'running: loop {

@@ -3,7 +3,14 @@
 //!
 //! Currently targeting the
 //! [VP_LUNARG_desktop_baseline_2022](https://vulkan.lunarg.com/doc/sdk/latest/windows/profiles_definitions.html)
-//! Vulkan Profile.
+//! Vulkan Profile, with the following changes:
+//!
+//! - VkPhysicalDeviceVulkan11Features.shaderDrawParameters is required (for
+//!   indirect rendering, `gl_BaseInstanceARB` in shaders)
+//!
+//! (See
+//! [`VP_CUSTOM_profile_based_on_2022_baseline.json`](../../../renderer/src/vk-profiles/VP_CUSTOM_profile_based_on_2022_baseline.json)
+//! for the actual profile JSON.)
 //!
 //! Vulkan error handling policy: if the returned error is "out of host/device
 //! memory", "surface lost", or "device lost", it is handled by panicking. If
@@ -143,7 +150,7 @@ pub use renderer::pipelines::Pipelines;
 pub use renderer::scene::camera::Camera;
 pub use renderer::scene::coordinate_system::CoordinateSystem;
 pub use renderer::scene::mesh::{IndexType, Mesh};
-pub use renderer::scene::{JointOffset, Scene, SkinnedModel, StaticDraws};
+pub use renderer::scene::{JointsOffset, Scene};
 pub use renderer::swapchain::{Swapchain, SwapchainBase, SwapchainError, SwapchainSettings};
 pub use renderer::Renderer;
 
