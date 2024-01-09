@@ -76,14 +76,15 @@ fn main() {
         let tangents: &[u8] = cast_slice(&[Vec4::Y, Vec4::Z, Vec4::X]);
         let indices: &[u16] = &[0u16, 1, 2];
         let vertex_buffers: &[&[u8]; 4] = &[positions, uvs, norms, tangents];
+        let vertex_layout = renderer::PipelineIndex::PbrOpaque.vertex_layout();
 
         let mut measurer = renderer::VertexLibraryMeasurer::default();
-        measurer.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
-        measurer.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
+        measurer.add_mesh(vertex_layout, vertex_buffers, indices);
+        measurer.add_mesh(vertex_layout, vertex_buffers, indices);
         let mut builder =
-            renderer::VertexLibraryBuilder::new(&mut staging_arena, &mut buffer_arena, measurer, format_args!("triangle mesh")).unwrap();
-        let mesh1 = builder.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
-        let mesh2 = builder.add_mesh(renderer::PipelineIndex::PbrOpaque, vertex_buffers, indices);
+            renderer::VertexLibraryBuilder::new(&mut staging_arena, &mut buffer_arena, &measurer, format_args!("triangle mesh")).unwrap();
+        let mesh1 = builder.add_mesh(vertex_layout, vertex_buffers, indices);
+        let mesh2 = builder.add_mesh(vertex_layout, vertex_buffers, indices);
         builder.upload(&mut uploader, &mut buffer_arena);
         (mesh1, mesh2)
     };

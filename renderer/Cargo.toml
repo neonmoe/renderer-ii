@@ -9,6 +9,7 @@ arrayvec = { version = "0.7", default-features = false }
 ash = { git = "https://github.com/ash-rs/ash", default-features = false, features = ["linked", "debug"] }
 ash-window = { git = "https://github.com/ash-rs/ash" }
 bytemuck = { version = "1.9", features = ["derive", "min_const_generics"] }
+enum-map = "2.7.3"
 glam = { version = "0.23", default-features = false, features = ["libm", "bytemuck"] }
 hashbrown = { version = "0.13" }
 log = { version = "0.4" }

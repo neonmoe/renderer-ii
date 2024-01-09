@@ -330,8 +330,8 @@ fn create_gltf<'a>(
             let vertex_buffer_lengths: ArrayVec<usize, MAX_VERTEX_BUFFERS> = params.vertex_buffers.iter().map(|buf| buf.length).collect();
             let index_count = params.index_buffer.length / params.index_buffer.stride;
             match params.index_buffer.stride {
-                4 => mesh_measurer.add_mesh_by_len::<u32>(params.pipeline, &vertex_buffer_lengths, index_count),
-                2 => mesh_measurer.add_mesh_by_len::<u16>(params.pipeline, &vertex_buffer_lengths, index_count),
+                4 => mesh_measurer.add_mesh_by_len::<u32>(params.pipeline.vertex_layout(), &vertex_buffer_lengths, index_count),
+                2 => mesh_measurer.add_mesh_by_len::<u16>(params.pipeline.vertex_layout(), &vertex_buffer_lengths, index_count),
                 stride => panic!("create_primitive returned invalid stride {stride} for index buffer"),
             }
             let material_index = primitive.material.ok_or(GltfLoadingError::Misc("material missing"))?;

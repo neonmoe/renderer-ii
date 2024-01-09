@@ -12,7 +12,6 @@ use hashbrown::HashMap;
 use crate::arena::buffers::ForBuffers;
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
-use crate::renderer::pipeline_parameters::DrawCallVertParams;
 use crate::vertex_library::{VertexLibrary, VERTEX_LIBRARY_INDEX_TYPE};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use crate::JointsOffset;
@@ -27,12 +26,12 @@ pub(crate) mod swapchain;
 use descriptors::Descriptors;
 use framebuffers::Framebuffers;
 use pipeline_parameters::render_passes::{Attachment, RenderPass};
-use pipeline_parameters::{DrawCallFragParams, PipelineIndex, PipelineMap, RenderSettings};
+use pipeline_parameters::{uniforms, PipelineIndex, PipelineMap};
 use pipelines::Pipelines;
 use scene::Scene;
 use swapchain::{Swapchain, SwapchainError};
 
-use self::pipeline_parameters::VERTEX_BINDING_COUNT;
+use self::pipeline_parameters::vertex_buffers::VERTEX_BINDING_COUNT;
 
 /// Get from [`Renderer::wait_frame`].
 pub struct FrameIndex {
@@ -65,8 +64,8 @@ pub struct Renderer {
     temp_arena: VulkanArena<ForBuffers>,
     command_pool: Rc<CommandPool>,
     command_buffer: Option<CommandBuffer>,
-    draw_call_vertex_params: DrawCallVertParams,
-    draw_call_fragment_params: DrawCallFragParams,
+    draw_call_vertex_params: uniforms::DrawCallVertParams,
+    draw_call_fragment_params: uniforms::DrawCallFragParams,
 }
 
 impl Renderer {
@@ -117,8 +116,8 @@ impl Renderer {
             temp_arena,
             command_pool,
             command_buffer: None,
-            draw_call_vertex_params: DrawCallVertParams::zeroed(),
-            draw_call_fragment_params: DrawCallFragParams::zeroed(),
+            draw_call_vertex_params: uniforms::DrawCallVertParams::zeroed(),
+            draw_call_fragment_params: uniforms::DrawCallFragParams::zeroed(),
         }
     }
 
@@ -210,8 +209,7 @@ impl Renderer {
 
         let vk::Extent2D { width, height } = framebuffers.extent;
         let mut transforms = Vec::new();
-        let mut draws: PipelineMap<HashMap<&VertexLibrary, Vec<DrawIndexedIndirectCommand>>> =
-            PipelineMap::from_infallible(|_| HashMap::new());
+        let mut draws: PipelineMap<HashMap<&VertexLibrary, Vec<DrawIndexedIndirectCommand>>> = PipelineMap::from_fn(|_| HashMap::new());
 
         scene.draws.sort();
         let mut prev_tag = None;
@@ -265,7 +263,7 @@ impl Renderer {
         let global_transforms_buffer = create_uniform_buffer(&mut self.temp_arena, global_transforms, "view+proj matrices")
             .expect("renderer's temp arena should have enough memory for the view+proj matrices buffer");
 
-        let render_settings = &[RenderSettings { debug_value }];
+        let render_settings = &[uniforms::RenderSettings { debug_value }];
         let render_settings_buffer = create_uniform_buffer(&mut self.temp_arena, render_settings, "render settings")
             .expect("renderer's temp arena should have enough memory for the render settings buffer");
 
@@ -441,7 +439,7 @@ impl Renderer {
                 const VERTEX_BUFFERS: usize = VERTEX_BINDING_COUNT + 1;
                 let mut vertex_offsets = ArrayVec::<vk::DeviceSize, VERTEX_BUFFERS>::new();
                 vertex_offsets.push(0);
-                vertex_offsets.try_extend_from_slice(&vertex_library.vertex_buffer_offsets[pl_idx]).unwrap();
+                vertex_offsets.try_extend_from_slice(&vertex_library.vertex_buffer_offsets[pl_idx.vertex_layout()]).unwrap();
                 let mut vertex_buffers = ArrayVec::<vk::Buffer, VERTEX_BUFFERS>::new();
                 vertex_buffers.push(transforms_buffer.inner);
                 for _ in 1..vertex_offsets.len() {

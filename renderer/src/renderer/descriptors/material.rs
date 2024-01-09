@@ -2,14 +2,13 @@ use alloc::rc::Rc;
 use core::cmp::Ordering;
 
 use arrayvec::{ArrayString, ArrayVec};
-use bytemuck::Zeroable;
 use glam::Vec4;
 
 use crate::renderer::descriptors::MAX_PIPELINES_PER_MATERIAL;
 use crate::renderer::pipeline_parameters::PipelineIndex;
 use crate::vulkan_raii::ImageView;
 
-#[derive(Clone, Copy, Zeroable)]
+#[derive(Clone, Copy, Default)]
 pub struct PbrFactors {
     /// (r, g, b, a).
     pub base_color: Vec4,

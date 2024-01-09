@@ -1,6 +1,6 @@
 use glam::{Mat4, Quat, Vec3};
 
-use crate::renderer::pipeline_parameters::ProjViewTransforms;
+use crate::renderer::pipeline_parameters::uniforms::ProjViewTransforms;
 use crate::renderer::scene::coordinate_system::CoordinateSystem;
 
 /// Creates the projection matrix, with an infinite far plane if `far` is

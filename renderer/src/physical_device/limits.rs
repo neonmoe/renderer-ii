@@ -34,20 +34,20 @@ pub enum PhysicalDeviceLimitBreak {
 pub fn uniform_buffer_range(max_uniform_buffer_range: u32) -> Result<(), PhysicalDeviceLimitBreak> {
     let types = [vk::DescriptorType::UNIFORM_BUFFER, vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC];
     let max_buffer_range = |params: &PipelineParameters| get_max_buffer_range(params, &types);
-    let req = PIPELINE_PARAMETERS.iter().map(max_buffer_range).max().unwrap_or(0);
+    let req = PIPELINE_PARAMETERS.values().map(max_buffer_range).max().unwrap_or(0);
     if max_uniform_buffer_range >= req { Ok(()) } else { Err(PhysicalDeviceLimitBreak::UniformBufferRange(max_uniform_buffer_range, req)) }
 }
 
 pub fn storage_buffer_range(max_storage_buffer_range: u32) -> Result<(), PhysicalDeviceLimitBreak> {
     let types = [vk::DescriptorType::STORAGE_BUFFER, vk::DescriptorType::STORAGE_BUFFER_DYNAMIC];
     let max_buffer_range = |params: &PipelineParameters| get_max_buffer_range(params, &types);
-    let req = PIPELINE_PARAMETERS.iter().map(max_buffer_range).max().unwrap_or(0);
+    let req = PIPELINE_PARAMETERS.values().map(max_buffer_range).max().unwrap_or(0);
     if max_storage_buffer_range >= req { Ok(()) } else { Err(PhysicalDeviceLimitBreak::StorageBufferRange(max_storage_buffer_range, req)) }
 }
 
 pub fn bound_descriptor_sets(max_bound_descriptor_sets: u32) -> Result<(), PhysicalDeviceLimitBreak> {
     let descriptor_sets = |params: &PipelineParameters| params.descriptor_sets.len() as u32;
-    let req = PIPELINE_PARAMETERS.iter().map(descriptor_sets).max().unwrap_or(0);
+    let req = PIPELINE_PARAMETERS.values().map(descriptor_sets).max().unwrap_or(0);
     if max_bound_descriptor_sets >= req {
         Ok(())
     } else {
@@ -60,7 +60,7 @@ pub fn per_stage_descriptors(descriptor_type: vk::DescriptorType, max_per_stage_
         let (frag, vert) = get_per_stage_descriptors_of_type(params, Some(descriptor_type));
         frag.max(vert)
     };
-    let req = PIPELINE_PARAMETERS.iter().map(descs).max().unwrap_or(0);
+    let req = PIPELINE_PARAMETERS.values().map(descs).max().unwrap_or(0);
     let supported = max_per_stage_descriptors;
     if supported >= req { Ok(()) } else { Err(PhysicalDeviceLimitBreak::DescriptorPerStageLimit(descriptor_type, supported, req)) }
 }
@@ -70,7 +70,7 @@ pub fn per_stage_resources(max_per_stage_resources: u32) -> Result<(), PhysicalD
         let (frag, vert) = get_per_stage_descriptors_of_type(params, None);
         frag.max(vert)
     };
-    let req = PIPELINE_PARAMETERS.iter().map(descs).max().unwrap_or(0);
+    let req = PIPELINE_PARAMETERS.values().map(descs).max().unwrap_or(0);
     let supported = max_per_stage_resources;
     if supported >= req { Ok(()) } else { Err(PhysicalDeviceLimitBreak::DescriptorPerStageTotalLimit(supported, req)) }
 }
@@ -83,14 +83,14 @@ pub fn per_set_descriptors(
         let (frag, vert) = get_per_stage_descriptors_of_type(params, Some(descriptor_type));
         frag + vert
     };
-    let req = PIPELINE_PARAMETERS.iter().map(descs).max().unwrap_or(0);
+    let req = PIPELINE_PARAMETERS.values().map(descs).max().unwrap_or(0);
     let supported = max_descriptor_set_descriptors;
     if supported >= req { Ok(()) } else { Err(PhysicalDeviceLimitBreak::DescriptorPerSetLimit(descriptor_type, supported, req)) }
 }
 
 pub fn vertex_input_attributes(max_vertex_input_attributes: u32) -> Result<(), PhysicalDeviceLimitBreak> {
     let vertex_input_attrs = |params: &PipelineParameters| params.attributes.len() as u32;
-    let req = PIPELINE_PARAMETERS.iter().map(vertex_input_attrs).max().unwrap_or(0);
+    let req = PIPELINE_PARAMETERS.values().map(vertex_input_attrs).max().unwrap_or(0);
     if max_vertex_input_attributes >= req {
         Ok(())
     } else {
@@ -100,7 +100,7 @@ pub fn vertex_input_attributes(max_vertex_input_attributes: u32) -> Result<(), P
 
 pub fn vertex_input_bindings(max_vertex_input_bindings: u32) -> Result<(), PhysicalDeviceLimitBreak> {
     let vertex_input_bindings = |params: &PipelineParameters| params.bindings.len() as u32;
-    let req = PIPELINE_PARAMETERS.iter().map(vertex_input_bindings).max().unwrap_or(0);
+    let req = PIPELINE_PARAMETERS.values().map(vertex_input_bindings).max().unwrap_or(0);
     if max_vertex_input_bindings >= req {
         Ok(())
     } else {
@@ -110,14 +110,14 @@ pub fn vertex_input_bindings(max_vertex_input_bindings: u32) -> Result<(), Physi
 
 pub fn vertex_input_attribute_offset(max_vertex_input_attribute_offset: u32) -> Result<(), PhysicalDeviceLimitBreak> {
     let max_offset = |params: &PipelineParameters| params.attributes.iter().map(|attr| attr.offset).max().unwrap_or(0);
-    let req = PIPELINE_PARAMETERS.iter().map(max_offset).max().unwrap_or(0);
+    let req = PIPELINE_PARAMETERS.values().map(max_offset).max().unwrap_or(0);
     let supported = max_vertex_input_attribute_offset;
     if supported >= req { Ok(()) } else { Err(PhysicalDeviceLimitBreak::VertexInputAttributeOffset(supported, req)) }
 }
 
 pub fn vertex_input_binding_stride(max_vertex_input_binding_stride: u32) -> Result<(), PhysicalDeviceLimitBreak> {
     let max_stride = |params: &PipelineParameters| params.bindings.iter().map(|binding| binding.stride).max().unwrap_or(0);
-    let req = PIPELINE_PARAMETERS.iter().map(max_stride).max().unwrap_or(0);
+    let req = PIPELINE_PARAMETERS.values().map(max_stride).max().unwrap_or(0);
     let supported = max_vertex_input_binding_stride;
     if supported >= req { Ok(()) } else { Err(PhysicalDeviceLimitBreak::VertexInputBindingStride(supported, req)) }
 }

@@ -100,10 +100,11 @@ impl PendingGltf<'_> {
                     })
                     .collect::<Result<_, GltfLoadingError>>()?;
                 let index_buffer = buffers.pop().unwrap();
+                let vertex_layout = params.pipeline.vertex_layout();
                 let mesh = if params.large_indices {
-                    vertex_library_builder.add_mesh(params.pipeline, &buffers, bytemuck::cast_slice::<u8, u32>(index_buffer))
+                    vertex_library_builder.add_mesh(vertex_layout, &buffers, bytemuck::cast_slice::<u8, u32>(index_buffer))
                 } else {
-                    vertex_library_builder.add_mesh(params.pipeline, &buffers, bytemuck::cast_slice::<u8, u16>(index_buffer))
+                    vertex_library_builder.add_mesh(vertex_layout, &buffers, bytemuck::cast_slice::<u8, u16>(index_buffer))
                 };
                 primitives.push((Rc::new(mesh), *material_index));
             }

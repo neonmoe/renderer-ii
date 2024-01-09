@@ -1,10 +1,9 @@
-use arrayvec::ArrayVec;
 use ash::vk;
 use hashbrown::HashMap;
 
 use crate::renderer::descriptors::Descriptors;
 use crate::renderer::pipeline_parameters::render_passes::{AttachmentFormats, AttachmentVec};
-use crate::renderer::pipeline_parameters::{PipelineMap, Shader, ALL_PIPELINES, PIPELINE_COUNT, PIPELINE_PARAMETERS};
+use crate::renderer::pipeline_parameters::{PipelineMap, Shader, PIPELINE_PARAMETERS};
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout};
 
 pub struct Pipelines {
@@ -31,7 +30,7 @@ impl Pipelines {
             old_pipelines.and_then(|pipelines| pipelines.pipeline_cache),
         );
         let mut vk_pipelines_iter = vk_pipelines.into_iter();
-        let pipelines = PipelineMap::from_infallible(|name| {
+        let pipelines = PipelineMap::from_fn(|name| {
             let pipeline = vk_pipelines_iter.next().unwrap();
             crate::name_vulkan_object(device, pipeline, format_args!("{name:?}"));
             vulkan_raii::Pipeline { inner: pipeline, device: device.clone() }
@@ -64,7 +63,7 @@ fn create_pipelines(
         })
     };
 
-    let shader_stages_per_pipeline = PipelineMap::from_infallible(|pipeline| {
+    let shader_stages_per_pipeline = PipelineMap::from_fn(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         let multisampled = attachment_sample_count != vk::SampleCountFlags::TYPE_1;
         let mut create_from_shader_variant = |shader| match shader {
@@ -80,14 +79,14 @@ fn create_pipelines(
         [vert_shader_stage_create_info, frag_shader_stage_create_info]
     });
 
-    let vertex_input_per_pipeline = PipelineMap::from_infallible(|pipeline| {
+    let vertex_input_per_pipeline = PipelineMap::from_fn(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(params.bindings)
             .vertex_attribute_descriptions(params.attributes)
     });
 
-    let multisample_create_infos = PipelineMap::from_infallible(|pipeline| {
+    let multisample_create_infos = PipelineMap::from_fn(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         vk::PipelineMultisampleStateCreateInfo::default()
             .rasterization_samples(attachment_sample_count)
@@ -96,21 +95,21 @@ fn create_pipelines(
             .min_sample_shading(params.min_sample_shading_factor)
     });
 
-    let color_attachment_formats = PipelineMap::from_infallible(|pipeline| {
+    let color_attachment_formats = PipelineMap::from_fn(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         params.render_pass.color_attachment_formats(attachment_formats)
     });
-    let depth_attachment_formats = PipelineMap::from_infallible(|pipeline| {
+    let depth_attachment_formats = PipelineMap::from_fn(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         params.render_pass.depth_attachment_format(attachment_formats)
     });
-    let mut pipeline_rendering_create_infos = PipelineMap::from_infallible(|pipeline| {
+    let mut pl_rendering_create_infos = PipelineMap::from_fn(|pipeline| {
         vk::PipelineRenderingCreateInfoKHR::default()
             .color_attachment_formats(&color_attachment_formats[pipeline])
             .depth_attachment_format(depth_attachment_formats[pipeline])
     });
 
-    let color_blend_attachment_states_per_pipeline = PipelineMap::from_infallible(|pipeline| {
+    let color_blend_attachment_states_per_pipeline = PipelineMap::from_fn(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         let rgba_mask = vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A;
         let mut blend_attachment_state =
@@ -132,7 +131,7 @@ fn create_pipelines(
         blend_attachment_states
     });
 
-    let color_blend_create_infos = PipelineMap::from_infallible(|pipeline| {
+    let color_blend_create_infos = PipelineMap::from_fn(|pipeline| {
         vk::PipelineColorBlendStateCreateInfo::default()
             .logic_op_enable(false)
             .attachments(&color_blend_attachment_states_per_pipeline[pipeline])
@@ -147,7 +146,7 @@ fn create_pipelines(
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .line_width(1.0);
 
-    let pipeline_depth_stencil_create_infos = PipelineMap::from_infallible(|pipeline| {
+    let pipeline_depth_stencil_create_infos = PipelineMap::from_fn(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
         vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(params.depth_test)
@@ -170,25 +169,26 @@ fn create_pipelines(
         crate::name_vulkan_object(device, pipeline_cache, format_args!("all pipelines"));
         Some(PipelineCache { inner: pipeline_cache, device: device.clone() })
     });
-    let mut pipeline_create_infos = ArrayVec::<_, PIPELINE_COUNT>::new();
-    for (&i, pipeline_rendering_create_info) in ALL_PIPELINES.iter().zip(pipeline_rendering_create_infos.iter_mut()) {
-        let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
-            .stages(&shader_stages_per_pipeline[i][..])
-            .vertex_input_state(&vertex_input_per_pipeline[i])
+    let mut pipeline_create_infos = PipelineMap::from_fn(|_| vk::GraphicsPipelineCreateInfo::default());
+    for ((pl_idx, pipeline_create_info), pl_rendering_create_info) in
+        pipeline_create_infos.iter_mut().zip(pl_rendering_create_infos.values_mut())
+    {
+        *pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&shader_stages_per_pipeline[pl_idx][..])
+            .vertex_input_state(&vertex_input_per_pipeline[pl_idx])
             .input_assembly_state(&input_assembly_create_info)
             .viewport_state(&viewport_create_info)
             .rasterization_state(&rasterization_create_info)
-            .multisample_state(&multisample_create_infos[i])
-            .depth_stencil_state(&pipeline_depth_stencil_create_infos[i])
-            .color_blend_state(&color_blend_create_infos[i])
-            .layout(pipeline_layouts[i].inner)
-            .push_next(pipeline_rendering_create_info);
-        pipeline_create_infos.push(pipeline_create_info);
+            .multisample_state(&multisample_create_infos[pl_idx])
+            .depth_stencil_state(&pipeline_depth_stencil_create_infos[pl_idx])
+            .color_blend_state(&color_blend_create_infos[pl_idx])
+            .layout(pipeline_layouts[pl_idx].inner)
+            .push_next(pl_rendering_create_info);
     }
 
     let vk_pipeline_cache = pipeline_cache.as_ref().map_or_else(vk::PipelineCache::null, |pc| pc.inner);
-    // VK_ERROR_INVALID_SHADER_NV seems to only apply to glsl shaders, so this can only fail when oom
-    let pipelines = unsafe { device.create_graphics_pipelines(vk_pipeline_cache, &pipeline_create_infos, None) }
+    // VK_ERROR_INVALID_SHADER_NV seems to only apply to glsl shaders (which we don't use), so this can only fail when oom
+    let pipelines = unsafe { device.create_graphics_pipelines(vk_pipeline_cache, pipeline_create_infos.as_array(), None) }
         .expect("system should have enough memory to allocate vulkan graphics pipelines");
 
     for shader_module in all_shader_modules.values() {

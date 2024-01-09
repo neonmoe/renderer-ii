@@ -522,7 +522,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
     let mut vertex_library_builder = renderer::VertexLibraryBuilder::new(
         &mut staging_arena,
         &mut buffer_arena,
-        vertex_library_measurer,
+        &vertex_library_measurer,
         format_args!("vertex library of babel"),
     )
     .unwrap();

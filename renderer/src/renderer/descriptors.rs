@@ -4,6 +4,7 @@ use core::mem;
 use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
 use bytemuck::Zeroable;
+use enum_map::Enum;
 
 use crate::arena::buffers::ForBuffers;
 use crate::arena::{VulkanArena, VulkanArenaError};
@@ -13,8 +14,8 @@ use crate::renderer::pipeline_parameters::constants::{
     UF_TRANSFORMS_BINDING,
 };
 use crate::renderer::pipeline_parameters::{
-    DescriptorSetLayoutParams, PbrFactorsSoa, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_COUNT,
-    PIPELINE_PARAMETERS, SKINNED_PIPELINES,
+    uniforms, DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_PARAMETERS,
+    SKINNED_PIPELINES,
 };
 use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 
@@ -56,7 +57,7 @@ pub(crate) struct MaterialTempUniforms {
     pbr_factors_offsets_and_sizes: PipelineMap<(vk::DeviceSize, vk::DeviceSize)>,
 }
 
-const MATERIAL_UPDATES: usize = PIPELINE_COUNT * MAX_TEXTURE_COUNT as usize;
+const MATERIAL_UPDATES: usize = PipelineIndex::LENGTH * MAX_TEXTURE_COUNT as usize;
 /// Descriptor writes:
 /// - HDR framebuffer attachment (one post-process descriptor set)
 /// - Global transforms (one shared descriptor set)
@@ -154,7 +155,7 @@ impl Descriptors {
             DescriptorSetLayouts { inner: descriptor_set_layouts, device: device.clone(), immutable_samplers: samplers_rc }
         };
 
-        let pipeline_layouts = PipelineMap::from_infallible(|pipeline| {
+        let pipeline_layouts = PipelineMap::from_fn(|pipeline| {
             let PipelineParameters { descriptor_sets, .. } = &PIPELINE_PARAMETERS[pipeline];
             let descriptor_set_layouts = Rc::new(create_descriptor_set_layouts(pipeline, descriptor_sets));
             let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_set_layouts.inner);
@@ -165,14 +166,14 @@ impl Descriptors {
         });
 
         let pool_sizes = PIPELINE_PARAMETERS
-            .iter()
+            .values()
             .flat_map(|params| params.descriptor_sets.iter())
             .flat_map(|set| set.iter())
             .map(|descriptor_layout| {
                 vk::DescriptorPoolSize::default().ty(descriptor_layout.descriptor_type).descriptor_count(descriptor_layout.descriptor_count)
             })
-            .collect::<ArrayVec<vk::DescriptorPoolSize, { PIPELINE_COUNT * 16 }>>();
-        let descriptor_sets_per_frame = pipeline_layouts.iter().flat_map(|pl| &pl.descriptor_set_layouts.inner).count() as u32;
+            .collect::<ArrayVec<vk::DescriptorPoolSize, { PipelineIndex::LENGTH * 16 }>>();
+        let descriptor_sets_per_frame = pipeline_layouts.values().flat_map(|pl| &pl.descriptor_set_layouts.inner).count() as u32;
         let descriptor_pool_create_info =
             vk::DescriptorPoolCreateInfo::default().max_sets(descriptor_sets_per_frame).pool_sizes(&pool_sizes);
         let descriptor_pool = unsafe {
@@ -183,8 +184,8 @@ impl Descriptors {
         crate::name_vulkan_object(device, descriptor_pool, format_args!("the descriptor pool"));
         let descriptor_pool = Rc::new(DescriptorPool { inner: descriptor_pool, device: device.clone() });
 
-        let mut descriptor_set_layouts_per_pipeline = pipeline_layouts.iter().map(|pl| &pl.descriptor_set_layouts);
-        let descriptor_sets = PipelineMap::from_infallible(|pl| {
+        let mut descriptor_set_layouts_per_pipeline = pipeline_layouts.values().map(|pl| &pl.descriptor_set_layouts);
+        let descriptor_sets = PipelineMap::from_fn(|pl| {
             let descriptor_set_layouts = descriptor_set_layouts_per_pipeline.next().unwrap();
             let create_info =
                 vk::DescriptorSetAllocateInfo::default().descriptor_pool(descriptor_pool.inner).set_layouts(&descriptor_set_layouts.inner);
@@ -198,8 +199,8 @@ impl Descriptors {
         drop(descriptor_set_layouts_per_pipeline);
 
         let material_slots_per_pipeline =
-            PipelineMap::from_infallible(|_| ArrayVec::from_iter([None].into_iter().cycle().take(MAX_TEXTURE_COUNT as usize)));
-        let material_updated_per_pipeline = PipelineMap::from_infallible(|_| [true; MAX_TEXTURE_COUNT as usize].into());
+            PipelineMap::from_fn(|_| ArrayVec::from_iter([None].into_iter().cycle().take(MAX_TEXTURE_COUNT as usize)));
+        let material_updated_per_pipeline = PipelineMap::from_fn(|_| [true; MAX_TEXTURE_COUNT as usize].into());
 
         let uniform_buffer_offset_alignment = physical_device.properties.limits.min_uniform_buffer_offset_alignment;
 
@@ -220,8 +221,8 @@ impl Descriptors {
     ) -> Result<MaterialTempUniforms, VulkanArenaError> {
         profiling::scope!("creating material temp buffer");
 
-        let mut factors_bytes = Vec::with_capacity(PBR_PIPELINES.len() * mem::size_of::<PbrFactorsSoa>());
-        let mut pbr_factors_offsets_and_sizes = PipelineMap::from_infallible(|_| (0, 0));
+        let mut factors_bytes = Vec::with_capacity(PBR_PIPELINES.len() * mem::size_of::<uniforms::PbrFactors>());
+        let mut pbr_factors_offsets_and_sizes = PipelineMap::from_fn(|_| (0, 0));
         for pipeline in PBR_PIPELINES {
             profiling::scope!("copying over pbr factors");
 
@@ -232,7 +233,7 @@ impl Descriptors {
                         let PipelineSpecificData::Pbr { factors, .. } = slot.data;
                         factors
                     } else {
-                        PbrFactors::zeroed()
+                        PbrFactors::default()
                     }
                 })
                 .collect::<ArrayVec<_, { MAX_TEXTURE_COUNT as usize }>>();
@@ -240,7 +241,7 @@ impl Descriptors {
                 continue;
             }
 
-            let mut factors_soa = PbrFactorsSoa::zeroed();
+            let mut factors_soa = uniforms::PbrFactors::zeroed();
             for (i, factors) in factors.iter().enumerate() {
                 factors_soa.base_color[i] = factors.base_color;
                 factors_soa.emissive_and_occlusion[i] = factors.emissive_and_occlusion;
@@ -278,9 +279,9 @@ impl Descriptors {
     ) {
         profiling::scope!("updating descriptors");
 
-        const UPDATE_COUNT: usize = PIPELINE_COUNT * MAX_TEXTURE_COUNT as usize;
+        const UPDATE_COUNT: usize = PipelineIndex::LENGTH * MAX_TEXTURE_COUNT as usize;
         let mut materials_needing_update = ArrayVec::<_, UPDATE_COUNT>::new();
-        for (pipeline, material_slots) in self.material_slots_per_pipeline.iter_with_pipeline() {
+        for (pipeline, material_slots) in &self.material_slots_per_pipeline {
             for (i, material_slot) in material_slots.iter().enumerate() {
                 if let Some(material) = material_slot.as_ref().and_then(Weak::upgrade) {
                     let written = self.material_updated_per_pipeline[pipeline][i];
