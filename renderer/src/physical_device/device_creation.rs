@@ -53,10 +53,8 @@ impl PhysicalDevice {
         }
 
         let device = Device {
-            sync2: khr::Synchronization2::new(instance, &device),
             surface: khr::Surface::new(entry, instance),
             swapchain: khr::Swapchain::new(instance, &device),
-            dynamic_rendering: khr::DynamicRendering::new(instance, &device),
             inner: Box::leak(Box::new(device)),
             graphics_queue,
             surface_queue,

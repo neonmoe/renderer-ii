@@ -27,10 +27,8 @@ use ash::vk;
 #[derive(Clone)]
 pub struct Device {
     pub inner: &'static ash::Device,
-    pub sync2: khr::Synchronization2,
     pub surface: khr::Surface,
     pub swapchain: khr::Swapchain,
-    pub dynamic_rendering: khr::DynamicRendering,
     pub graphics_queue: vk::Queue,
     pub surface_queue: vk::Queue,
     pub transfer_queue: vk::Queue,

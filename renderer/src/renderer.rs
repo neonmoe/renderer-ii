@@ -12,8 +12,7 @@ use hashbrown::HashMap;
 use crate::arena::buffers::ForBuffers;
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
-use crate::renderer::pipeline_parameters::constants::MAX_JOINT_COUNT;
-use crate::renderer::pipeline_parameters::{DrawCallVertParams, PBR_PIPELINES};
+use crate::renderer::pipeline_parameters::DrawCallVertParams;
 use crate::vertex_library::{VertexLibrary, VERTEX_LIBRARY_INDEX_TYPE};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
 use crate::JointsOffset;
@@ -324,7 +323,6 @@ impl Renderer {
         unsafe {
             profiling::scope!("queue render");
             self.device
-                .sync2
                 .queue_submit2(self.device.graphics_queue, &submit_infos, self.frame_end_fence.inner)
                 .expect("vulkan queue submission should not fail");
         }
@@ -395,7 +393,7 @@ impl Renderer {
 
         let fb_geom_pass_barrier = RenderPass::Geometry.barriers(&framebuffers.attachment_images(frame_index.index));
         let dep_info = vk::DependencyInfo::default().image_memory_barriers(&fb_geom_pass_barrier);
-        unsafe { self.device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+        unsafe { self.device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
 
         let color_attachments = RenderPass::Geometry.color_attachment_infos(&framebuffers.attachment_image_views(frame_index.index), &[]);
         let depth_attachment = RenderPass::Geometry.depth_attachment_info(&framebuffers.attachment_image_views(frame_index.index));
@@ -407,7 +405,7 @@ impl Renderer {
             .depth_attachment(&depth_attachment);
         unsafe {
             profiling::scope!("begin main rendering");
-            self.device.dynamic_rendering.cmd_begin_rendering(command_buffer, &rendering_info);
+            self.device.cmd_begin_rendering(command_buffer, &rendering_info);
         }
 
         let shared_pipeline = PipelineIndex::SHARED_DESCRIPTOR_PIPELINE;
@@ -486,7 +484,7 @@ impl Renderer {
 
         unsafe {
             profiling::scope!("end main rendering");
-            self.device.dynamic_rendering.cmd_end_rendering(command_buffer);
+            self.device.cmd_end_rendering(command_buffer);
         }
 
         // End of geometry render pass.
@@ -495,11 +493,11 @@ impl Renderer {
 
         let fb_pp_pass_barrier = RenderPass::PostProcess.barriers(&framebuffers.attachment_images(frame_index.index));
         let dep_info = vk::DependencyInfo::default().image_memory_barriers(&fb_pp_pass_barrier);
-        unsafe { self.device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+        unsafe { self.device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
 
         let swapchain_to_write_layout = framebuffers.swapchain_write_barrier(frame_index.index);
         let dep_info = vk::DependencyInfo::default().image_memory_barriers(&swapchain_to_write_layout);
-        unsafe { self.device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+        unsafe { self.device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
 
         let mut resolve_targets = ArrayVec::<(Attachment, vk::ImageView), 1>::new();
         if framebuffers.multisampled_final_image.is_some() {
@@ -516,7 +514,7 @@ impl Renderer {
             .depth_attachment(&depth_attachment);
         unsafe {
             profiling::scope!("begin post-processing rendering");
-            self.device.dynamic_rendering.cmd_begin_rendering(command_buffer, &rendering_info);
+            self.device.cmd_begin_rendering(command_buffer, &rendering_info);
         }
 
         {
@@ -536,12 +534,12 @@ impl Renderer {
 
         unsafe {
             profiling::scope!("end rendering");
-            self.device.dynamic_rendering.cmd_end_rendering(command_buffer);
+            self.device.cmd_end_rendering(command_buffer);
         }
 
         let swapchain_to_present_layout = framebuffers.swapchain_present_barrier(frame_index.index);
         let dep_info = vk::DependencyInfo::default().image_memory_barriers(&swapchain_to_present_layout);
-        unsafe { self.device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+        unsafe { self.device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
 
         // End of post-processing render pass.
 

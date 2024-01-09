@@ -74,7 +74,7 @@ impl VulkanArena<ForBuffers> {
                     .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                     .src_stage_mask(vk::PipelineStageFlags2::COPY)];
                 let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&release_from_transfer_to_graphics);
-                unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
             },
             |device, command_buffer| {
                 let barrier_from_transfer_to_graphics = [buffer_memory_barrier
@@ -85,7 +85,7 @@ impl VulkanArena<ForBuffers> {
                     .src_stage_mask(vk::PipelineStageFlags2::COPY)
                     .dst_stage_mask(vk::PipelineStageFlags2::VERTEX_INPUT)];
                 let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&barrier_from_transfer_to_graphics);
-                unsafe { device.sync2.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
             },
         );
     }
