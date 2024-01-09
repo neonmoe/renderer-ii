@@ -97,6 +97,8 @@ impl Instance {
         if profiles_layer_enabled {
             // ash doesn't have VkProfileLayerSettingsEXT, if/when that's
             // available, prefer include_str!ing the JSON here.
+            // TODO: Generate profile JSON based on the renderer's requirements
+            // TODO: Assert on the limits in the profile JSON instead of hard coding all the checks (maybe use the Vulkan Profiles library)
             std::env::set_var("VK_KHRONOS_PROFILES_PROFILE_FILE", "renderer/src/vk-profiles/VP_CUSTOM_profile_based_on_2022_baseline.json");
         }
 

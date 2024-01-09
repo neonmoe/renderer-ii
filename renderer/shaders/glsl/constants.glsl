@@ -1,4 +1,4 @@
-#define MAX_TEXTURE_COUNT 25
+#define MAX_TEXTURE_COUNT 64
 #define MAX_JOINT_COUNT (65536 / (4 * 16))
 /// 65536 (max uniform size) / 4 (max bytes of per-draw-call data available per draw call)
 #define MAX_DRAW_CALLS (65536 / 4)

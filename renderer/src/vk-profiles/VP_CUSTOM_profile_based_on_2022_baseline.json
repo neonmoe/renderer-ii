@@ -96,7 +96,7 @@
                     "textureCompressionBC": true,
                     "vertexPipelineStoresAndAtomics": true
                 },
-                "VkPhysicalDeviceVulkan11Features": {
+                "VkPhysicalDeviceShaderDrawParametersFeatures": {
                     "shaderDrawParameters": true
                 },
                 "VkPhysicalDeviceFloat16Int8FeaturesKHR": {
@@ -157,7 +157,7 @@
                     "maxDescriptorSetUpdateAfterBindUniformBuffers": 90,
                     "maxDescriptorSetUpdateAfterBindUniformBuffersDynamic": 8,
                     "maxPerStageDescriptorUpdateAfterBindInputAttachments": 64,
-                    "maxPerStageDescriptorUpdateAfterBindSampledImages": 128,
+                    "maxPerStageDescriptorUpdateAfterBindSampledImages": 500,
                     "maxPerStageDescriptorUpdateAfterBindSamplers": 16,
                     "maxPerStageDescriptorUpdateAfterBindStorageBuffers": 31,
                     "maxPerStageDescriptorUpdateAfterBindStorageImages": 8,
@@ -251,12 +251,12 @@
                         "maxInterpolationOffset": 0.4375,
                         "maxMemoryAllocationCount": 4096,
                         "maxPerStageDescriptorInputAttachments": 8,
-                        "maxPerStageDescriptorSampledImages": 128,
+                        "maxPerStageDescriptorSampledImages": 500,
                         "maxPerStageDescriptorSamplers": 16,
                         "maxPerStageDescriptorStorageBuffers": 31,
                         "maxPerStageDescriptorStorageImages": 8,
                         "maxPerStageDescriptorUniformBuffers": 15,
-                        "maxPerStageResources": 159,
+                        "maxPerStageResources": 1000,
                         "maxPushConstantsSize": 128,
                         "maxSampleMaskWords": 1,
                         "maxSamplerAllocationCount": 1024,
@@ -1943,6 +1943,12 @@
             "description": "A custom profile for this renderer based on the VP_LUNARG_desktop_baseline_2022 profile",
             "contributors": {},
             "history": [
+                {
+                    "revision": 2,
+                    "date": "2024-01-09",
+                    "author": "Jens Pitkanen",
+                    "comment": "Increased maxPerStageDescriptorSampledImages and maxPerStageDescriptorUpdateAfterBindSampledImages to 500 and maxPerStageResources to 1000"
+                },
                 {
                     "revision": 1,
                     "date": "2024-01-08",

@@ -77,8 +77,7 @@ void main() {
 #else
     mat4 transform = in_transform;
     float d = 1.0 + draw_id;
-    out_debug_color = vec3(random(d * 641.63), random(d * 1864.25), random(d * 182362.365));
-    // out_debug_color = vec3(mod(d / 8.0, 8.0), mod(d / 64.0, 8.0), mod(d / 512.0, 8.0));
+    out_debug_color = vec3(random(d * 641.65433), random(d * 1864.251623), random(d * 182362.365));
 #endif
     gl_Position = uf_transforms.proj * uf_transforms.view * transform * vec4(in_position, 1.0);
     out_uv = in_uv;
