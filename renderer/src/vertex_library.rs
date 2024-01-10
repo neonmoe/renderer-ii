@@ -149,6 +149,7 @@ impl VertexLibraryBuilder<'_> {
 
         Mesh {
             library: self.library.clone(),
+            vertex_layout,
             vertex_offset: vertex_offset as i32,
             first_index: first_index as u32,
             index_count: index_buffer.len() as u32,

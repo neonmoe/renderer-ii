@@ -7,7 +7,7 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use crate::renderer::pipeline_parameters::constants::*;
 
-#[derive(Clone, Copy, Debug, enum_map::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, enum_map::Enum)]
 pub enum VertexLayout {
     StaticMesh,
     SkinnedMesh,

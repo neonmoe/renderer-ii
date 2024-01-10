@@ -5,6 +5,7 @@ use arrayvec::{ArrayString, ArrayVec};
 use glam::Vec4;
 
 use crate::renderer::descriptors::MAX_PIPELINES_PER_MATERIAL;
+use crate::renderer::pipeline_parameters::vertex_buffers::VertexLayout;
 use crate::renderer::pipeline_parameters::PipelineIndex;
 use crate::vulkan_raii::ImageView;
 
@@ -55,7 +56,8 @@ impl Material {
         None
     }
 
-    pub fn pipeline(&self, skinned: bool) -> PipelineIndex {
+    pub fn pipeline(&self, vertex_layout: VertexLayout) -> PipelineIndex {
+        let skinned = vertex_layout == VertexLayout::SkinnedMesh;
         for &(pipeline, _) in &self.array_indices {
             if pipeline.skinned() == skinned {
                 return pipeline;

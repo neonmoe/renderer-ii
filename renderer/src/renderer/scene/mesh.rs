@@ -2,11 +2,13 @@ use alloc::rc::Rc;
 
 use ash::vk;
 
+use crate::renderer::pipeline_parameters::vertex_buffers::VertexLayout;
 use crate::vertex_library::VertexLibrary;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct Mesh {
     pub(crate) library: Rc<VertexLibrary>,
+    pub(crate) vertex_layout: VertexLayout,
     pub(crate) vertex_offset: i32,
     pub(crate) first_index: u32,
     pub(crate) index_count: u32,

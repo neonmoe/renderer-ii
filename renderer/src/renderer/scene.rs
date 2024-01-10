@@ -4,6 +4,7 @@ use core::mem;
 use glam::Mat4;
 
 use crate::renderer::descriptors::material::Material;
+use crate::renderer::pipeline_parameters::vertex_buffers::VertexLayout;
 
 pub(crate) mod camera;
 pub(crate) mod coordinate_system;
@@ -71,13 +72,16 @@ impl<'a> Scene<'a> {
         self.skinned_mesh_joints_buffer.clear();
     }
 
-    /// Returns true if the mesh could be added to the queue. The only reason it cannot, is if the
-    /// Scene has reached maximum supported draws ([`MAX_DRAWS`]).
+    /// Returns true if the mesh could be added to the queue. The only reason it
+    /// cannot, is if the Scene has reached maximum supported draws
+    /// ([`MAX_DRAWS`]). If `mesh` has a vertex layout of
+    /// `VertexLayout::SkinnedMesh`, `joints` must be defined, and vice-versa.
     pub fn queue_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, joints: Option<JointsOffset>, transform: Mat4) -> bool {
-        profiling::scope!("static mesh");
+        profiling::scope!("queue mesh");
         if self.draws.len() < MAX_DRAW_CALLS as usize {
             // TODO: Check mesh's vertex layout and material's pipeline compatibility
-            let pipeline = material.pipeline(joints.is_some());
+            assert_eq!(mesh.vertex_layout == VertexLayout::SkinnedMesh, joints.is_some(), "skinned meshes must have joints defined");
+            let pipeline = material.pipeline(mesh.vertex_layout);
             self.draws.push(DrawParameters {
                 tag: DrawCallTag { pipeline, vertex_library: &mesh.library, mesh, material },
                 transform,
