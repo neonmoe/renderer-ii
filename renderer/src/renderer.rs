@@ -435,20 +435,24 @@ impl Renderer {
             unsafe {
                 self.device.cmd_bind_descriptor_sets(command_buffer, bind_point, layout, 1, &descriptor_sets[1..], &[]);
             }
+            let vertex_layout = pl_idx.vertex_layout();
             for (vertex_library, draws) in draws {
                 const VERTEX_BUFFERS: usize = VERTEX_BINDING_COUNT + 1;
                 let mut vertex_offsets = ArrayVec::<vk::DeviceSize, VERTEX_BUFFERS>::new();
                 vertex_offsets.push(0);
-                vertex_offsets.try_extend_from_slice(&vertex_library.vertex_buffer_offsets[pl_idx.vertex_layout()]).unwrap();
+                vertex_offsets.try_extend_from_slice(&vertex_library.vertex_buffer_offsets[vertex_layout]).unwrap();
                 let mut vertex_buffers = ArrayVec::<vk::Buffer, VERTEX_BUFFERS>::new();
                 vertex_buffers.push(transforms_buffer.inner);
                 for _ in 1..vertex_offsets.len() {
                     vertex_buffers.push(vertex_library.vertex_buffer.inner);
                 }
 
+                let index_buffer = vertex_library.index_buffer.inner;
+                let index_buffer_offset = vertex_library.index_buffer_offsets[vertex_layout];
+
                 unsafe {
                     self.device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &vertex_offsets);
-                    self.device.cmd_bind_index_buffer(command_buffer, vertex_library.index_buffer.inner, 0, VERTEX_LIBRARY_INDEX_TYPE);
+                    self.device.cmd_bind_index_buffer(command_buffer, index_buffer, index_buffer_offset, VERTEX_LIBRARY_INDEX_TYPE);
                 }
 
                 let indirect_draws_buffer = {

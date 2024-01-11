@@ -37,12 +37,14 @@ struct MeasurementResults {
     vb_create_info: vk::BufferCreateInfo<'static>,
     ib_create_info: vk::BufferCreateInfo<'static>,
     vertex_buffer_infos: VertexLayoutMap<VertexBindingVec<VertexBufferInfo>>,
+    index_buffer_offsets: VertexLayoutMap<usize>,
 }
 
 pub struct VertexLibrary {
     pub vertex_buffer: Buffer,
     pub index_buffer: Buffer,
     pub vertex_buffer_offsets: VertexLayoutMap<VertexBindingVec<vk::DeviceSize>>,
+    pub index_buffer_offsets: VertexLayoutMap<vk::DeviceSize>,
 }
 
 impl PartialEq for VertexLibrary {
@@ -81,6 +83,7 @@ pub struct VertexLibraryBuilder<'name> {
     vertex_staging: MappedBuffer,
     index_staging: MappedBuffer,
     vertex_buffer_infos: VertexLayoutMap<VertexBindingVec<VertexBufferInfo>>,
+    index_buffer_offsets: VertexLayoutMap<usize>,
     vertices_allocated: VertexLayoutMap<usize>,
     indices_allocated: VertexLayoutMap<usize>,
 }
@@ -92,8 +95,14 @@ impl VertexLibraryBuilder<'_> {
         measurer: &VertexLibraryMeasurer,
         name: Arguments<'name>,
     ) -> Result<VertexLibraryBuilder<'name>, VulkanArenaError> {
-        let MeasurementResults { staging_vb_create_info, staging_ib_create_info, vb_create_info, ib_create_info, vertex_buffer_infos } =
-            measurer.measure();
+        let MeasurementResults {
+            staging_vb_create_info,
+            staging_ib_create_info,
+            vb_create_info,
+            ib_create_info,
+            vertex_buffer_infos,
+            index_buffer_offsets,
+        } = measurer.measure();
         let vertex_staging = staging_arena.create_staging_buffer(staging_vb_create_info, format_args!("{name} (staging vertex buffer)"))?;
         let index_staging = staging_arena.create_staging_buffer(staging_ib_create_info, format_args!("{name} (staging index buffer)"))?;
         let vertex_buffer = buffer_arena.create_empty_buffer(vb_create_info, format_args!("{name} (vertex buffer)"))?;
@@ -102,7 +111,12 @@ impl VertexLibraryBuilder<'_> {
             .iter()
             .map(|(k, v)| (k, v.iter().map(|info| info.offset as vk::DeviceSize).collect::<VertexBindingVec<_>>()))
             .collect::<VertexLayoutMap<VertexBindingVec<vk::DeviceSize>>>();
-        let library = Rc::new(VertexLibrary { vertex_buffer, index_buffer, vertex_buffer_offsets });
+        let library = Rc::new(VertexLibrary {
+            vertex_buffer,
+            index_buffer,
+            vertex_buffer_offsets,
+            index_buffer_offsets: index_buffer_offsets.map(|_, v| v as vk::DeviceSize),
+        });
         let vertices_allocated = VertexLayoutMap::from_fn(|_| 0);
         let indices_allocated = VertexLayoutMap::from_fn(|_| 0);
         Ok(VertexLibraryBuilder {
@@ -111,6 +125,7 @@ impl VertexLibraryBuilder<'_> {
             vertex_staging,
             index_staging,
             vertex_buffer_infos,
+            index_buffer_offsets,
             vertices_allocated,
             indices_allocated,
         })
@@ -119,16 +134,28 @@ impl VertexLibraryBuilder<'_> {
     /// Writes the mesh into the staging buffers and returns a [`Mesh`] that can be rendered after
     /// the uploader passed to [`VertexLibraryBuilder::upload`] has finished uploading it.
     #[track_caller]
-    pub fn add_mesh<I: IndexType + Copy>(&mut self, vertex_layout: VertexLayout, vertex_buffers: &[&[u8]], index_buffer: &[I]) -> Mesh {
+    pub fn add_mesh<I: IndexType + Copy + core::fmt::Display>(
+        &mut self,
+        vertex_layout: VertexLayout,
+        vertex_buffers: &[&[u8]],
+        index_buffer: &[I],
+    ) -> Mesh {
         let lengths: VertexBindingVec<usize> = vertex_buffers.iter().map(|buf| buf.len()).collect();
         let vertex_count = get_vertex_count(vertex_layout, &lengths);
         let vertex_offset = self.vertices_allocated[vertex_layout];
         let first_index = self.indices_allocated[vertex_layout];
+        println!("Adding mesh to {} with {} vertices and {} indices", self.debug_id, vertex_count, index_buffer.len());
         self.vertices_allocated[vertex_layout] += vertex_count;
         self.indices_allocated[vertex_layout] += index_buffer.len();
+        println!(
+            "Currently allocated:{:10} verts, {:10} indices",
+            self.vertices_allocated[vertex_layout], self.indices_allocated[vertex_layout]
+        );
 
-        let indices_dst: &mut [VertexLibraryIndexType] = bytemuck::cast_slice_mut(self.index_staging.data_mut());
-        let indices_dst = &mut indices_dst[first_index..first_index + index_buffer.len()];
+        let index_buffer_start = self.index_buffer_offsets[vertex_layout] + first_index * VERTEX_LIBRARY_INDEX_SIZE;
+        let index_buffer_end = index_buffer_start + index_buffer.len() * VERTEX_LIBRARY_INDEX_SIZE;
+        let index_bytes: &mut [u8] = &mut self.index_staging.data_mut()[index_buffer_start..index_buffer_end];
+        let indices_dst: &mut [VertexLibraryIndexType] = bytemuck::cast_slice_mut(index_bytes);
         for (src_index, dst_index) in index_buffer.iter().zip(indices_dst) {
             let index = src_index.to_u32();
             debug_assert!(index < vertex_count as u32, "index is {index} but mesh has {vertex_count} vertices");
@@ -212,7 +239,6 @@ impl VertexLibraryMeasurer {
     }
 
     fn measure(&self) -> MeasurementResults {
-        let index_buffer_size = self.index_counts.values().sum::<usize>() * VERTEX_LIBRARY_INDEX_SIZE;
         let mut vertex_buffer_size = 0;
         let mut vertex_buffer_infos = VertexLayoutMap::from_fn(|_| VertexBindingVec::<VertexBufferInfo>::new());
         for (vertex_layout, &vertex_count) in &self.vertex_counts {
@@ -227,6 +253,12 @@ impl VertexLibraryMeasurer {
                 vertex_buffer_infos[vertex_layout].push(VertexBufferInfo { offset, size, stride });
             }
         }
+        let mut index_buffer_size = 0;
+        let mut index_buffer_offsets = VertexLayoutMap::from_fn(|_| 0);
+        for (vertex_layout, index_count) in &self.index_counts {
+            index_buffer_offsets[vertex_layout] = index_buffer_size;
+            index_buffer_size += index_count * VERTEX_LIBRARY_INDEX_SIZE;
+        }
         let vertex_buffer_info_base =
             vk::BufferCreateInfo::default().sharing_mode(vk::SharingMode::EXCLUSIVE).size(vertex_buffer_size as vk::DeviceSize);
         let index_buffer_info_base =
@@ -237,6 +269,7 @@ impl VertexLibraryMeasurer {
             vb_create_info: vertex_buffer_info_base.usage(vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST),
             ib_create_info: index_buffer_info_base.usage(vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST),
             vertex_buffer_infos,
+            index_buffer_offsets,
         }
     }
 }
