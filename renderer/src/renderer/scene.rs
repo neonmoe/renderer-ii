@@ -79,7 +79,6 @@ impl<'a> Scene<'a> {
     pub fn queue_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, joints: Option<JointsOffset>, transform: Mat4) -> bool {
         profiling::scope!("queue mesh");
         if self.draws.len() < MAX_DRAW_CALLS as usize {
-            // TODO: Check mesh's vertex layout and material's pipeline compatibility
             assert_eq!(mesh.vertex_layout == VertexLayout::SkinnedMesh, joints.is_some(), "skinned meshes must have joints defined");
             let pipeline = material.pipeline(mesh.vertex_layout);
             self.draws.push(DrawParameters {

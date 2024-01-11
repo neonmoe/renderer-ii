@@ -180,8 +180,6 @@ impl Renderer {
 
     /// Starts rendering the frame. Returns a VulkanArenaError if the internal
     /// temporary memory arena fills up.
-    ///
-    /// TODO: Unwrap the arena errors?
     #[profiling::function]
     pub fn render_frame(
         &mut self,
@@ -197,6 +195,7 @@ impl Renderer {
             buffer: &[T],
             name: &str,
         ) -> Result<Buffer, VulkanArenaError> {
+            profiling::scope!(name);
             let buffer_bytes: &[u8] = bytemuck::cast_slice(buffer);
             let buffer_create_info = vk::BufferCreateInfo::default()
                 .size(buffer_bytes.len() as u64)

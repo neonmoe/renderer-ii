@@ -144,13 +144,8 @@ impl VertexLibraryBuilder<'_> {
         let vertex_count = get_vertex_count(vertex_layout, &lengths);
         let vertex_offset = self.vertices_allocated[vertex_layout];
         let first_index = self.indices_allocated[vertex_layout];
-        println!("Adding mesh to {} with {} vertices and {} indices", self.debug_id, vertex_count, index_buffer.len());
         self.vertices_allocated[vertex_layout] += vertex_count;
         self.indices_allocated[vertex_layout] += index_buffer.len();
-        println!(
-            "Currently allocated:{:10} verts, {:10} indices",
-            self.vertices_allocated[vertex_layout], self.indices_allocated[vertex_layout]
-        );
 
         let index_buffer_start = self.index_buffer_offsets[vertex_layout] + first_index * VERTEX_LIBRARY_INDEX_SIZE;
         let index_buffer_end = index_buffer_start + index_buffer.len() * VERTEX_LIBRARY_INDEX_SIZE;
@@ -215,8 +210,6 @@ impl Default for VertexLibraryMeasurer {
 }
 
 impl VertexLibraryMeasurer {
-    // TODO: Instead of pipelines, meshes should be grouped by vertex layouts, which would also naturally make up the distinct binding sets
-
     #[track_caller]
     pub fn add_mesh_by_len<I: IndexType + Copy>(&mut self, vertex_layout: VertexLayout, vertex_buffer_sizes: &[usize], index_count: usize) {
         let vertex_count = get_vertex_count(vertex_layout, vertex_buffer_sizes);
