@@ -1,4 +1,4 @@
-use glam::Mat4;
+use glam::Affine3A;
 use renderer::{Material, Mesh};
 
 use crate::Gltf;
@@ -8,7 +8,7 @@ pub(crate) struct MeshIterItem<'a> {
     pub mesh: &'a Mesh,
     pub material: &'a Material,
     pub skin: Option<usize>,
-    pub transform: Mat4,
+    pub transform: Affine3A,
 }
 
 pub(crate) struct MeshIter<'a> {
@@ -59,7 +59,7 @@ struct InnerMeshIter<'a> {
     node_index: usize,
     mesh_index: usize,
     primitive_index: usize,
-    transform: Mat4,
+    transform: Affine3A,
 }
 
 impl<'a> Iterator for InnerMeshIter<'a> {

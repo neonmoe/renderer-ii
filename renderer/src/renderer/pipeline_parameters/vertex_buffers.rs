@@ -3,7 +3,7 @@ use core::mem;
 use arrayvec::ArrayVec;
 use ash::vk;
 use enum_map::EnumMap;
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Vec2, Vec3, Vec4};
 
 use crate::renderer::pipeline_parameters::constants::*;
 
@@ -26,7 +26,9 @@ pub static VERTEX_ATTRIBUTE_DESCRIPTIONS: VertexLayoutMap<&[vk::VertexInputAttri
 pub const VERTEX_BINDING_COUNT: usize = VertexBinding::Count as usize;
 
 enum VertexBinding {
-    Transform,
+    /// Plural, because this binding has both the regular transform *and* the
+    /// inverse transposes of their 3x3 part.
+    Transforms,
     Position,
     Texcoord0,
     Normal,
@@ -37,111 +39,123 @@ enum VertexBinding {
     Count,
 }
 
-static INSTANCED_TRANSFORM_BINDING_0: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
-    binding: VertexBinding::Transform as u32,
-    stride: mem::size_of::<Mat4>() as u32,
+static INSTANCED_TRANSFORM_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+    binding: VertexBinding::Transforms as u32,
+    // The regular transform matrix is 4x3 + normal transform is 3x3 = 7x3.
+    stride: (mem::size_of::<Vec3>() * 7) as u32,
     input_rate: vk::VertexInputRate::INSTANCE,
 };
-static POSITION_BINDING_1: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+static POSITION_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Position as u32,
     stride: mem::size_of::<Vec3>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
-static TEXCOORD0_BINDING_2: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+static TEXCOORD0_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Texcoord0 as u32,
     stride: mem::size_of::<Vec2>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
-static NORMAL_BINDING_3: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+static NORMAL_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Normal as u32,
     stride: mem::size_of::<Vec3>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
-static TANGENT_BINDING_4: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+static TANGENT_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Tangent as u32,
     stride: mem::size_of::<Vec4>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
-static JOINTS0_BINDING_5: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+static JOINTS0_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Joints0 as u32,
     stride: mem::size_of::<[u8; 4]>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
-static WEIGHTS0_BINDING_6: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
+static WEIGHTS0_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Weights0 as u32,
     stride: mem::size_of::<[f32; 4]>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 
 static STATIC_MESH_VERTEX_BINDINGS: &[vk::VertexInputBindingDescription] =
-    &[INSTANCED_TRANSFORM_BINDING_0, POSITION_BINDING_1, TEXCOORD0_BINDING_2, NORMAL_BINDING_3, TANGENT_BINDING_4];
-static SKINNED_MESH_VERTEX_BINDINGS: &[vk::VertexInputBindingDescription] = &[
-    INSTANCED_TRANSFORM_BINDING_0,
-    POSITION_BINDING_1,
-    TEXCOORD0_BINDING_2,
-    NORMAL_BINDING_3,
-    TANGENT_BINDING_4,
-    JOINTS0_BINDING_5,
-    WEIGHTS0_BINDING_6,
-];
+    &[INSTANCED_TRANSFORM_BINDING, POSITION_BINDING, TEXCOORD0_BINDING, NORMAL_BINDING, TANGENT_BINDING];
+static SKINNED_MESH_VERTEX_BINDINGS: &[vk::VertexInputBindingDescription] =
+    &[INSTANCED_TRANSFORM_BINDING, POSITION_BINDING, TEXCOORD0_BINDING, NORMAL_BINDING, TANGENT_BINDING, JOINTS0_BINDING, WEIGHTS0_BINDING];
 
-static INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES: [vk::VertexInputAttributeDescription; 4] = [
+static INSTANCED_TRANSFORM_BINDING_ATTRIBUTES: [vk::VertexInputAttributeDescription; 7] = [
     vk::VertexInputAttributeDescription {
-        binding: VertexBinding::Transform as u32,
-        location: IN_TRANSFORM_LOCATION,
-        format: vk::Format::R32G32B32A32_SFLOAT,
+        binding: VertexBinding::Transforms as u32,
+        location: IN_TRANSFORMS_LOCATION,
+        format: vk::Format::R32G32B32_SFLOAT,
         offset: 0,
     },
     vk::VertexInputAttributeDescription {
-        binding: VertexBinding::Transform as u32,
-        location: IN_TRANSFORM_LOCATION + 1,
-        format: vk::Format::R32G32B32A32_SFLOAT,
-        offset: mem::size_of::<[Vec4; 1]>() as u32,
+        binding: VertexBinding::Transforms as u32,
+        location: IN_TRANSFORMS_LOCATION + 1,
+        format: vk::Format::R32G32B32_SFLOAT,
+        offset: mem::size_of::<Vec3>() as u32,
     },
     vk::VertexInputAttributeDescription {
-        binding: VertexBinding::Transform as u32,
-        location: IN_TRANSFORM_LOCATION + 2,
-        format: vk::Format::R32G32B32A32_SFLOAT,
-        offset: mem::size_of::<[Vec4; 2]>() as u32,
+        binding: VertexBinding::Transforms as u32,
+        location: IN_TRANSFORMS_LOCATION + 2,
+        format: vk::Format::R32G32B32_SFLOAT,
+        offset: 2 * mem::size_of::<Vec3>() as u32,
     },
     vk::VertexInputAttributeDescription {
-        binding: VertexBinding::Transform as u32,
-        location: IN_TRANSFORM_LOCATION + 3,
-        format: vk::Format::R32G32B32A32_SFLOAT,
-        offset: mem::size_of::<[Vec4; 3]>() as u32,
+        binding: VertexBinding::Transforms as u32,
+        location: IN_TRANSFORMS_LOCATION + 3,
+        format: vk::Format::R32G32B32_SFLOAT,
+        offset: 3 * mem::size_of::<Vec3>() as u32,
+    },
+    vk::VertexInputAttributeDescription {
+        binding: VertexBinding::Transforms as u32,
+        location: IN_TRANSFORMS_LOCATION + 4,
+        format: vk::Format::R32G32B32_SFLOAT,
+        offset: 4 * mem::size_of::<Vec3>() as u32,
+    },
+    vk::VertexInputAttributeDescription {
+        binding: VertexBinding::Transforms as u32,
+        location: IN_TRANSFORMS_LOCATION + 5,
+        format: vk::Format::R32G32B32_SFLOAT,
+        offset: 5 * mem::size_of::<Vec3>() as u32,
+    },
+    vk::VertexInputAttributeDescription {
+        binding: VertexBinding::Transforms as u32,
+        location: IN_TRANSFORMS_LOCATION + 6,
+        format: vk::Format::R32G32B32_SFLOAT,
+        offset: 6 * mem::size_of::<Vec3>() as u32,
     },
 ];
-static POSITION_BINDING_1_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+static POSITION_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Position as u32,
     location: IN_POSITION_LOCATION,
     format: vk::Format::R32G32B32_SFLOAT,
     offset: 0,
 };
-static TEXCOORD0_BINDING_2_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+static TEXCOORD0_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Texcoord0 as u32,
     location: IN_TEXCOORD_0_LOCATION,
     format: vk::Format::R32G32_SFLOAT,
     offset: 0,
 };
-static NORMAL_BINDING_3_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+static NORMAL_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Normal as u32,
     location: IN_NORMAL_LOCATION,
     format: vk::Format::R32G32B32_SFLOAT,
     offset: 0,
 };
-static TANGENT_BINDING_4_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+static TANGENT_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Tangent as u32,
     location: IN_TANGENT_LOCATION,
     format: vk::Format::R32G32B32A32_SFLOAT,
     offset: 0,
 };
-static JOINTS0_BINDING_5_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+static JOINTS0_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Joints0 as u32,
     location: IN_JOINTS_0_LOCATION,
     format: vk::Format::R8G8B8A8_UINT,
     offset: 0,
 };
-static WEIGHTS0_BINDING_6_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
+static WEIGHTS0_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Weights0 as u32,
     location: IN_WEIGHTS_0_LOCATION,
     format: vk::Format::R32G32B32A32_SFLOAT,
@@ -149,24 +163,30 @@ static WEIGHTS0_BINDING_6_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::V
 };
 
 static STATIC_MESH_VERTEX_ATTRIBUTES: &[vk::VertexInputAttributeDescription] = &[
-    INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
-    INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
-    INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[2],
-    INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[3],
-    POSITION_BINDING_1_ATTRIBUTE,
-    TEXCOORD0_BINDING_2_ATTRIBUTE,
-    NORMAL_BINDING_3_ATTRIBUTE,
-    TANGENT_BINDING_4_ATTRIBUTE,
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[0],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[1],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[2],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[3],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[4],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[5],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[6],
+    POSITION_BINDING_ATTRIBUTE,
+    TEXCOORD0_BINDING_ATTRIBUTE,
+    NORMAL_BINDING_ATTRIBUTE,
+    TANGENT_BINDING_ATTRIBUTE,
 ];
 static SKINNED_MESH_VERTEX_ATTRIBUTES: &[vk::VertexInputAttributeDescription] = &[
-    INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[0],
-    INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[1],
-    INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[2],
-    INSTANCED_TRANSFORM_BINDING_0_ATTRIBUTES[3],
-    POSITION_BINDING_1_ATTRIBUTE,
-    TEXCOORD0_BINDING_2_ATTRIBUTE,
-    NORMAL_BINDING_3_ATTRIBUTE,
-    TANGENT_BINDING_4_ATTRIBUTE,
-    JOINTS0_BINDING_5_ATTRIBUTE,
-    WEIGHTS0_BINDING_6_ATTRIBUTE,
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[0],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[1],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[2],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[3],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[4],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[5],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[6],
+    POSITION_BINDING_ATTRIBUTE,
+    TEXCOORD0_BINDING_ATTRIBUTE,
+    NORMAL_BINDING_ATTRIBUTE,
+    TANGENT_BINDING_ATTRIBUTE,
+    JOINTS0_BINDING_ATTRIBUTE,
+    WEIGHTS0_BINDING_ATTRIBUTE,
 ];

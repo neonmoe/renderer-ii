@@ -22,7 +22,11 @@ layout(set = 2, binding = UF_SKELETON_BINDING) uniform Joint {
 uf_skin;
 #endif
 
-layout(location = IN_TRANSFORM_LOCATION) in mat4 in_transform;
+// mat4x3 causes the validation layer to complain the location 3 is not used, so
+// it's represented as mat3 + vec3 here.
+layout(location = IN_TRANSFORMS_LOCATION) in mat3 in_transform_rotationscale;
+layout(location = IN_TRANSFORMS_LOCATION + 3) in vec3 in_transform_translation;
+layout(location = IN_TRANSFORMS_LOCATION + 4) in mat3 in_normal_transform;
 layout(location = IN_POSITION_LOCATION) in vec3 in_position;
 layout(location = IN_TEXCOORD_0_LOCATION) in vec2 in_uv;
 layout(location = IN_NORMAL_LOCATION) in vec3 in_normal;
@@ -66,29 +70,21 @@ float random(float x) {
 
 void main() {
     uint draw_id = gl_BaseInstanceARB;
+    mat4 transform = mat4(in_transform_rotationscale);
+    transform[3].xyz = in_transform_translation;
+    float d = 1.0 + draw_id;
+    out_debug_color = vec3(random(d * 641.65433), random(d * 1864.251623), random(d * 182362.365));
 #ifdef SKINNED
     uint joints_offset = uf_draw_call.joints_offset[draw_id];
-    mat4 transform = in_transform;
     transform *= uf_skin.joints[in_joints.x + joints_offset] * in_weights.x +
                  uf_skin.joints[in_joints.y + joints_offset] * in_weights.y +
                  uf_skin.joints[in_joints.z + joints_offset] * in_weights.z +
                  uf_skin.joints[in_joints.w + joints_offset] * in_weights.w;
-    out_debug_color = hsv(in_joints.x / 256.0 * 37.0, 0.8, in_weights.x);
-#else
-    mat4 transform = in_transform;
-    float d = 1.0 + draw_id;
-    out_debug_color = vec3(random(d * 641.65433), random(d * 1864.251623), random(d * 182362.365));
 #endif
     gl_Position = uf_transforms.proj * uf_transforms.view * transform * vec4(in_position, 1.0);
     out_uv = in_uv;
-    // Normals and tangents should not be translated, and the translation is
-    // specified in the 4th column.
-    mat3 rotation_scale = mat3(transform);
-    out_tangent = vec4(normalize(rotation_scale * in_tangent.xyz), in_tangent.w);
-    // For non-uniform scales, this scales the normals appropriately (otherwise
-    // only rotation would be enough)
-    mat3 normal_transform = transpose(inverse(rotation_scale));
-    out_normal = normalize(normal_transform * in_normal);
+    out_tangent = vec4(normalize(in_transform_rotationscale * in_tangent.xyz), in_tangent.w);
+    out_normal = normalize(in_normal_transform * in_normal);
     // Ensure 90 degree angle between normal and tangent.
     out_tangent.xyz = normalize(out_tangent.xyz - dot(out_tangent.xyz, out_normal) * out_normal);
     out_draw_id = draw_id;

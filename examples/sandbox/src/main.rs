@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Affine3A, Quat, Vec3};
 use log::LevelFilter;
 use logger::Logger;
 use sdl2::controller::{Axis, GameController};
@@ -621,14 +621,14 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
 
             {
                 profiling::scope!("queue meshes to render");
-                sponza_model.queue(&mut scene, Mat4::IDENTITY);
+                sponza_model.queue(&mut scene, Affine3A::IDENTITY);
 
                 let animations = smol_ame_model
                     .animations
                     .iter()
                     .map(|animation| (state.game_time % animation.end_time, animation))
                     .collect::<Vec<(f32, &gltf::Animation)>>();
-                let smol_ame_transform = Mat4::from_scale_rotation_translation(
+                let smol_ame_transform = Affine3A::from_scale_rotation_translation(
                     Vec3::ONE * 0.7,
                     Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2),
                     Vec3::new(3.0, 0.0, -0.5),

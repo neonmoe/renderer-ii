@@ -1,12 +1,12 @@
 use std::mem::size_of;
 
-use glam::Mat4;
+use glam::{Affine3A, Mat4};
 use renderer::Scene;
 
 use crate::{Animation, AnimationError, Gltf};
 
 impl Gltf {
-    pub fn queue<'a>(&'a self, scene: &mut Scene<'a>, transform: Mat4) {
+    pub fn queue<'a>(&'a self, scene: &mut Scene<'a>, transform: Affine3A) {
         profiling::scope!("queue model for rendering");
         for mesh in self.mesh_iter() {
             scene.queue_mesh(mesh.mesh, mesh.material, None, transform * mesh.transform);
@@ -19,7 +19,7 @@ impl Gltf {
     pub fn queue_animated<'a>(
         &'a self,
         scene: &mut Scene<'a>,
-        transform: Mat4,
+        transform: Affine3A,
         playing_animations: &[(f32, &Animation)],
     ) -> Result<bool, AnimationError> {
         profiling::scope!("queue animated model for rendering");
@@ -36,7 +36,7 @@ impl Gltf {
                     let joint_size = size_of::<Mat4>();
                     let (joints_offset, joints_buffer) = scene.allocate_joint_offset(skin.joints.len()).expect("too many bones in scene");
                     for (i, joint) in skin.joints.iter().enumerate() {
-                        let animated_transform = animated_node_transforms[joint.node_index].unwrap_or(Mat4::IDENTITY);
+                        let animated_transform = animated_node_transforms[joint.node_index].unwrap_or(Affine3A::IDENTITY);
                         let joint_transform = animated_transform * joint.inverse_bind_matrix;
                         let offset = i * joint_size;
                         let dst = &mut joints_buffer[offset..offset + joint_size];
@@ -48,7 +48,7 @@ impl Gltf {
                 all_drawn &= scene.queue_mesh(mesh.mesh, mesh.material, Some(joints_offset), transform);
             } else {
                 profiling::scope!("non-skinned mesh");
-                let animated_transform = animated_node_transforms[mesh.node_index].unwrap_or(Mat4::IDENTITY);
+                let animated_transform = animated_node_transforms[mesh.node_index].unwrap_or(Affine3A::IDENTITY);
                 all_drawn &= scene.queue_mesh(mesh.mesh, mesh.material, None, transform * animated_transform);
             }
         }

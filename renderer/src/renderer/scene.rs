@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 use core::mem;
 
-use glam::Mat4;
+use glam::{Affine3A, Mat4};
 
 use crate::renderer::descriptors::material::Material;
 use crate::renderer::pipeline_parameters::vertex_buffers::VertexLayout;
@@ -23,7 +23,7 @@ pub struct JointsOffset(pub(crate) u32);
 
 pub struct DrawParameters<'a> {
     pub tag: DrawCallTag<'a>,
-    pub transform: Mat4,
+    pub transform: Affine3A,
     pub joints: Option<JointsOffset>,
 }
 impl PartialEq for DrawParameters<'_> {
@@ -74,9 +74,9 @@ impl<'a> Scene<'a> {
 
     /// Returns true if the mesh could be added to the queue. The only reason it
     /// cannot, is if the Scene has reached maximum supported draws
-    /// ([`MAX_DRAWS`]). If `mesh` has a vertex layout of
+    /// ([`MAX_DRAW_CALLS`]). If `mesh` has a vertex layout of
     /// `VertexLayout::SkinnedMesh`, `joints` must be defined, and vice-versa.
-    pub fn queue_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, joints: Option<JointsOffset>, transform: Mat4) -> bool {
+    pub fn queue_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, joints: Option<JointsOffset>, transform: Affine3A) -> bool {
         profiling::scope!("queue mesh");
         if self.draws.len() < MAX_DRAW_CALLS as usize {
             assert_eq!(mesh.vertex_layout == VertexLayout::SkinnedMesh, joints.is_some(), "skinned meshes must have joints defined");

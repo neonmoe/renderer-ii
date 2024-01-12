@@ -6,7 +6,6 @@ use std::thread;
 use arrayvec::ArrayVec;
 use ash::{vk, Instance};
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
 use hashbrown::HashMap;
 
 use crate::arena::buffers::{BufferUsage, ForBuffers};
@@ -208,7 +207,8 @@ impl Renderer {
         // Prepare the data (CPU-side work):
 
         let vk::Extent2D { width, height } = framebuffers.extent;
-        let mut transforms = Vec::new();
+        // Contains interleaved 4x3 and 3x3 matrices (regular transforms and their inverse transposes)
+        let mut transforms: Vec<f32> = Vec::new();
         let mut draws: PipelineMap<HashMap<&VertexLibrary, Vec<DrawIndexedIndirectCommand>>> = PipelineMap::from_fn(|_| HashMap::new());
 
         scene.draws.sort();
@@ -222,8 +222,10 @@ impl Renderer {
 
             let indirect_draw_set = draws[pipeline].entry(draw.tag.vertex_library).or_default();
 
-            let first_instance = transforms.len() as u32;
-            transforms.push(draw.transform);
+            let first_instance = (transforms.len() / (4 * 3 + 3 * 3)) as u32;
+            let normal_transform = draw.transform.matrix3.inverse().transpose();
+            transforms.extend_from_slice(&draw.transform.to_cols_array());
+            transforms.extend_from_slice(&normal_transform.to_cols_array());
 
             if Some(draw.tag) == prev_tag && Some(draw.joints) == prev_joints {
                 indirect_draw_set.last_mut().unwrap().0.instance_count += 1;
@@ -247,7 +249,7 @@ impl Renderer {
 
         let transforms_buffer = {
             profiling::scope!("create transform buffer");
-            let transforms_bytes = bytemuck::cast_slice::<Mat4, u8>(&transforms);
+            let transforms_bytes = bytemuck::cast_slice::<f32, u8>(&transforms);
             let buffer_create_info = vk::BufferCreateInfo::default()
                 .size(transforms_bytes.len() as vk::DeviceSize)
                 .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
@@ -437,7 +439,7 @@ impl Renderer {
             }
             let vertex_layout = pl_idx.vertex_layout();
             for (vertex_library, draws) in draws {
-                const VERTEX_BUFFERS: usize = VERTEX_BINDING_COUNT + 1;
+                const VERTEX_BUFFERS: usize = 1 + VERTEX_BINDING_COUNT;
                 let mut vertex_offsets = ArrayVec::<vk::DeviceSize, VERTEX_BUFFERS>::new();
                 vertex_offsets.push(0);
                 vertex_offsets.try_extend_from_slice(&vertex_library.vertex_buffer_offsets[vertex_layout]).unwrap();
@@ -457,16 +459,16 @@ impl Renderer {
 
                 let indirect_draws_buffer = {
                     profiling::scope!("create indirect draws buffer");
-                    let transforms_bytes = bytemuck::cast_slice(draws);
+                    let draw_cmds_bytes = bytemuck::cast_slice(draws);
                     let buffer_create_info = vk::BufferCreateInfo::default()
-                        .size(transforms_bytes.len() as vk::DeviceSize)
+                        .size(draw_cmds_bytes.len() as vk::DeviceSize)
                         .usage(vk::BufferUsageFlags::INDIRECT_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
                     self.temp_arena
                         .create_buffer(
                             buffer_create_info,
                             BufferUsage::INDIRECT_DRAW,
-                            transforms_bytes,
+                            draw_cmds_bytes,
                             None,
                             None,
                             format_args!("indirect draw command buffer ({pl_idx:?})"),

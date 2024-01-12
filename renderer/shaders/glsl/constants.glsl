@@ -3,13 +3,13 @@
 /// 65536 (max uniform size) / 4 (max bytes of per-draw-call data available per draw call)
 #define MAX_DRAW_CALLS (65536 / 4)
 
-#define IN_TRANSFORM_LOCATION 0
-#define IN_POSITION_LOCATION 4
-#define IN_TEXCOORD_0_LOCATION 5
-#define IN_NORMAL_LOCATION 6
-#define IN_TANGENT_LOCATION 7
-#define IN_JOINTS_0_LOCATION 8
-#define IN_WEIGHTS_0_LOCATION 9
+#define IN_TRANSFORMS_LOCATION 0
+#define IN_POSITION_LOCATION 7
+#define IN_TEXCOORD_0_LOCATION 8
+#define IN_NORMAL_LOCATION 9
+#define IN_TANGENT_LOCATION 10
+#define IN_JOINTS_0_LOCATION 11
+#define IN_WEIGHTS_0_LOCATION 12
 
 // Set 0
 #define UF_TRANSFORMS_BINDING 0

@@ -7,7 +7,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use arrayvec::{ArrayString, ArrayVec};
-use glam::{Mat4, Quat, Vec3};
+use glam::{Affine3A, Mat4, Quat, Vec3};
 use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
 use renderer::image_loading::{ntex, TextureKind};
@@ -113,7 +113,7 @@ pub enum Keyframes {
 #[derive(Clone)]
 pub struct Node {
     pub name: Option<ArrayString<64>>,
-    pub transform: Mat4,
+    pub transform: Affine3A,
     pub children: Vec<usize>,
     /// The tuple consists of (min coord, max coord).
     pub bounding_box: Option<(Vec3, Vec3)>,
@@ -176,9 +176,9 @@ impl Gltf {
         self.animations.iter().find(|animation| if let Some(name_) = &animation.name { name == name_ } else { false })
     }
 
-    pub fn get_node_transforms(&self, playing_animations: &[(f32, &Animation)]) -> Result<Vec<Option<Mat4>>, AnimationError> {
+    pub fn get_node_transforms(&self, playing_animations: &[(f32, &Animation)]) -> Result<Vec<Option<Affine3A>>, AnimationError> {
         let mut transforms = vec![None; self.nodes.len()];
-        let mut nodes_with_parent_transform = self.root_nodes.iter().map(|&node| (node, Mat4::IDENTITY)).collect::<Vec<_>>();
+        let mut nodes_with_parent_transform = self.root_nodes.iter().map(|&node| (node, Affine3A::IDENTITY)).collect::<Vec<_>>();
         while let Some((node_index, parent_transform)) = nodes_with_parent_transform.pop() {
             let current_transform = parent_transform * self.get_animated_transform(node_index, playing_animations)?;
             assert_eq!(transforms[node_index], None);
@@ -194,7 +194,7 @@ impl Gltf {
         mesh_iter::MeshIter::new(self, self.root_nodes.clone())
     }
 
-    fn get_animated_transform(&self, node_index: usize, playing_animations: &[(f32, &Animation)]) -> Result<Mat4, AnimationError> {
+    fn get_animated_transform(&self, node_index: usize, playing_animations: &[(f32, &Animation)]) -> Result<Affine3A, AnimationError> {
         let mut animated_transform = self.nodes[node_index].transform;
         for (time, animation) in playing_animations {
             let time = *time;
@@ -227,7 +227,7 @@ impl Gltf {
                     Keyframes::Weight(_) => todo!(),
                 }
             }
-            animated_transform = Mat4::from_scale_rotation_translation(scale, rotation, translation);
+            animated_transform = Affine3A::from_scale_rotation_translation(scale, rotation, translation);
         }
         Ok(animated_transform)
     }
@@ -344,7 +344,7 @@ fn create_gltf<'a>(
     for node in &gltf.nodes {
         profiling::scope!("reading node transform and bounding box");
         let transform = if let Some(cols_array) = node.matrix {
-            Mat4::from_cols_array(&cols_array)
+            Affine3A::from_mat4(Mat4::from_cols_array(&cols_array))
         } else {
             let translation = match node.translation {
                 Some([x, y, z]) => Vec3::new(x, y, z),
@@ -358,7 +358,7 @@ fn create_gltf<'a>(
                 Some([x, y, z]) => Vec3::new(x, y, z),
                 _ => Vec3::new(1.0, 1.0, 1.0),
             };
-            Mat4::from_scale_rotation_translation(scale, rotation, translation)
+            Affine3A::from_scale_rotation_translation(scale, rotation, translation)
         };
 
         let mut bounding_box = None;

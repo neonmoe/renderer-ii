@@ -145,6 +145,7 @@ mod renderer;
 pub use renderer::descriptors::material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
 pub use renderer::descriptors::{Descriptors, PbrDefaults};
 pub use renderer::framebuffers::Framebuffers;
+pub use renderer::pipeline_parameters::constants::{MAX_DRAW_CALLS, MAX_JOINT_COUNT};
 pub use renderer::pipeline_parameters::PipelineIndex;
 pub use renderer::pipelines::Pipelines;
 pub use renderer::scene::camera::Camera;

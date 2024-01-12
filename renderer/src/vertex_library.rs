@@ -7,15 +7,13 @@ use core::mem;
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::arena::buffers::{ForBuffers, MappedBuffer, BufferUsage};
+use crate::arena::buffers::{BufferUsage, ForBuffers, MappedBuffer};
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::memory_measurement::VulkanArenaMeasurer;
 use crate::renderer::pipeline_parameters::vertex_buffers::{VertexBindingVec, VertexLayout, VertexLayoutMap, VERTEX_BINDING_DESCRIPTIONS};
 use crate::renderer::scene::mesh::{IndexType, Mesh};
 use crate::uploader::Uploader;
 use crate::vulkan_raii::Buffer;
-
-// TODO: Packed vertex attributes (uvs don't need so much precision, etc.)
 
 pub type VertexLibraryIndexType = u32;
 

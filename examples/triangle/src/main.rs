@@ -2,7 +2,7 @@ use core::ffi::CStr;
 
 use arrayvec::ArrayString;
 use bytemuck::cast_slice;
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Affine3A, Vec2, Vec3, Vec4};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 
@@ -148,8 +148,8 @@ fn main() {
         }
 
         scene.clear();
-        scene.queue_mesh(&triangle_mesh1, &triangle_material, None, Mat4::from_scale(Vec3::new(1.0, 1.0, 1.0)));
-        scene.queue_mesh(&triangle_mesh2, &triangle_material, None, Mat4::from_scale(Vec3::new(2.0, 0.5, 1.0)));
+        scene.queue_mesh(&triangle_mesh1, &triangle_material, None, Affine3A::from_scale(Vec3::new(1.0, 1.0, 1.0)));
+        scene.queue_mesh(&triangle_mesh2, &triangle_material, None, Affine3A::from_scale(Vec3::new(2.0, 0.5, 1.0)));
 
         let frame_index = renderer.wait_frame(&swapchain).unwrap();
         renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, 3);

@@ -30,8 +30,6 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-    /// Creates a new [`Swapchain`], or returns a
-    /// [`SwapchainError::SurfaceLost`] error if it fails.
     pub fn new(device: &Device, physical_device: &PhysicalDevice, surface: Surface, settings: &SwapchainSettings) -> Swapchain {
         profiling::scope!("swapchain creation");
 

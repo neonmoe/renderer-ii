@@ -59,7 +59,7 @@ impl PendingGltf<'_> {
     ///
     /// - Calling [`VertexLibraryBuilder::upload`] and waiting for the uploader
     ///   given to that to finish uploading the meshes.
-    /// - Waiting for [`uploader`] to finish uploading the textures.
+    /// - Waiting for `uploader` to finish uploading the textures.
     pub fn upload(
         self,
         device: &Device,
