@@ -7,6 +7,25 @@ use crate::arena::{ArenaType, VulkanArena, VulkanArenaError};
 use crate::uploader::Uploader;
 use crate::vulkan_raii::Buffer;
 
+#[derive(Clone, Copy)]
+pub struct BufferUsage {
+    access_mask: vk::AccessFlags2,
+    stage_mask: vk::PipelineStageFlags2,
+}
+
+impl BufferUsage {
+    pub const VERTEX: BufferUsage =
+        BufferUsage { access_mask: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ, stage_mask: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT };
+    pub const INDEX: BufferUsage =
+        BufferUsage { access_mask: vk::AccessFlags2::INDEX_READ, stage_mask: vk::PipelineStageFlags2::INDEX_INPUT };
+    pub const UNIFORM: BufferUsage =
+        BufferUsage { access_mask: vk::AccessFlags2::UNIFORM_READ, stage_mask: vk::PipelineStageFlags2::ALL_GRAPHICS };
+    pub const INDIRECT_DRAW: BufferUsage =
+        BufferUsage { access_mask: vk::AccessFlags2::INDIRECT_COMMAND_READ, stage_mask: vk::PipelineStageFlags2::DRAW_INDIRECT };
+    pub const COPY_SRC: BufferUsage =
+        BufferUsage { access_mask: vk::AccessFlags2::TRANSFER_READ, stage_mask: vk::PipelineStageFlags2::COPY };
+}
+
 pub struct MappedBuffer {
     pub buffer: Buffer,
     /// Safety: as long as the `buffer` exists, the arena can't be reset, and the device memory is
@@ -58,7 +77,7 @@ impl VulkanArena<ForBuffers> {
 
     /// Copies from the `src` to the `dst` using the `uploader`.
     #[profiling::function]
-    pub fn copy_buffer(&mut self, src: Buffer, dst: &Buffer, uploader: &mut Uploader, name: Arguments) {
+    pub fn copy_buffer(&mut self, usage: BufferUsage, src: Buffer, dst: &Buffer, uploader: &mut Uploader, name: Arguments) {
         let &mut Uploader { graphics_queue_family, transfer_queue_family, .. } = uploader;
         let buffer_memory_barrier = vk::BufferMemoryBarrier2::default().buffer(dst.inner).offset(0).size(vk::WHOLE_SIZE);
         uploader.start_upload(
@@ -81,9 +100,9 @@ impl VulkanArena<ForBuffers> {
                     .src_queue_family_index(transfer_queue_family)
                     .dst_queue_family_index(graphics_queue_family)
                     .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .dst_access_mask(vk::AccessFlags2::VERTEX_ATTRIBUTE_READ) // TODO: expose as an arg?
+                    .dst_access_mask(usage.access_mask)
                     .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                    .dst_stage_mask(vk::PipelineStageFlags2::VERTEX_INPUT)];
+                    .dst_stage_mask(usage.stage_mask)];
                 let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&barrier_from_transfer_to_graphics);
                 unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
             },
@@ -94,6 +113,7 @@ impl VulkanArena<ForBuffers> {
     pub fn create_buffer(
         &mut self,
         buffer_create_info: vk::BufferCreateInfo,
+        usage: BufferUsage,
         src: &[u8],
         staging_arena: Option<&mut VulkanArena<ForBuffers>>,
         uploader: Option<&mut Uploader>,
@@ -109,8 +129,11 @@ impl VulkanArena<ForBuffers> {
                 let mut staging_buffer =
                     staging_arena.create_staging_buffer(staging_create_info, format_args!("staging buffer for {name}"))?;
                 let staging_data = staging_buffer.data_mut();
-                staging_data.copy_from_slice(src);
-                self.copy_buffer(staging_buffer.buffer, &dst_buffer, uploader, name);
+                {
+                    profiling::scope!("copying data to vulkan staging buffer");
+                    staging_data.copy_from_slice(src);
+                }
+                self.copy_buffer(usage, staging_buffer.buffer, &dst_buffer, uploader, name);
                 Ok(dst_buffer)
             } else {
                 return Err(VulkanArenaError::NotWritable);
@@ -118,7 +141,10 @@ impl VulkanArena<ForBuffers> {
         } else {
             let mut mapped_buffer = self.create_staging_buffer(buffer_create_info, name)?;
             let buffer_data = mapped_buffer.data_mut();
-            buffer_data.copy_from_slice(src);
+            {
+                profiling::scope!("copying data to vulkan buffer");
+                buffer_data.copy_from_slice(src);
+            }
             Ok(mapped_buffer.buffer)
         }
     }

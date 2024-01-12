@@ -4,7 +4,7 @@ use core::ops::Range;
 use arrayvec::ArrayVec;
 use ash::vk;
 
-use crate::arena::buffers::ForBuffers;
+use crate::arena::buffers::{BufferUsage, ForBuffers};
 use crate::arena::images::ForImages;
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::TEXTURE_FORMATS;
@@ -108,7 +108,14 @@ pub fn load_image(
             .size(buffer_size)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        staging_arena.create_buffer(buffer_create_info, pixels, None, None, format_args!("staging buffer for {debug_identifier}"))?
+        staging_arena.create_buffer(
+            buffer_create_info,
+            BufferUsage::COPY_SRC,
+            pixels,
+            None,
+            None,
+            format_args!("staging buffer for {debug_identifier}"),
+        )?
     };
 
     let image_allocation = {

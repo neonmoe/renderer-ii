@@ -6,7 +6,7 @@ use ash::vk;
 use bytemuck::Zeroable;
 use enum_map::Enum;
 
-use crate::arena::buffers::ForBuffers;
+use crate::arena::buffers::{BufferUsage, ForBuffers};
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::pipeline_parameters::constants::{
@@ -260,8 +260,14 @@ impl Descriptors {
             .size(factors_bytes.len() as u64)
             .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let buffer =
-            temp_arena.create_buffer(buffer_create_info, &factors_bytes, None, None, format_args!("uniform (temp material buffer)"))?;
+        let buffer = temp_arena.create_buffer(
+            buffer_create_info,
+            BufferUsage::UNIFORM,
+            &factors_bytes,
+            None,
+            None,
+            format_args!("uniform (temp material buffer)"),
+        )?;
 
         Ok(MaterialTempUniforms { buffer, pbr_factors_offsets_and_sizes })
     }

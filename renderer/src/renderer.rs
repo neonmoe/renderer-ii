@@ -9,7 +9,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 use hashbrown::HashMap;
 
-use crate::arena::buffers::ForBuffers;
+use crate::arena::buffers::{BufferUsage, ForBuffers};
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
 use crate::vertex_library::{VertexLibrary, VERTEX_LIBRARY_INDEX_TYPE};
@@ -201,7 +201,8 @@ impl Renderer {
                 .size(buffer_bytes.len() as u64)
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
-            temp_arena.create_buffer(buffer_create_info, buffer_bytes, None, None, format_args!("uniform ({name})"))
+            let usage = BufferUsage::UNIFORM;
+            temp_arena.create_buffer(buffer_create_info, usage, buffer_bytes, None, None, format_args!("uniform ({name})"))
         }
 
         // Prepare the data (CPU-side work):
@@ -252,7 +253,7 @@ impl Renderer {
                 .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
             self.temp_arena
-                .create_buffer(buffer_create_info, transforms_bytes, None, None, format_args!("transforms"))
+                .create_buffer(buffer_create_info, BufferUsage::VERTEX, transforms_bytes, None, None, format_args!("transforms"))
                 .expect("renderer's temp arena should have enough memory for the transforms buffer")
         };
 
@@ -464,6 +465,7 @@ impl Renderer {
                     self.temp_arena
                         .create_buffer(
                             buffer_create_info,
+                            BufferUsage::INDIRECT_DRAW,
                             transforms_bytes,
                             None,
                             None,

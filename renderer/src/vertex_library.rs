@@ -7,7 +7,7 @@ use core::mem;
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::arena::buffers::{ForBuffers, MappedBuffer};
+use crate::arena::buffers::{ForBuffers, MappedBuffer, BufferUsage};
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::memory_measurement::VulkanArenaMeasurer;
 use crate::renderer::pipeline_parameters::vertex_buffers::{VertexBindingVec, VertexLayout, VertexLayoutMap, VERTEX_BINDING_DESCRIPTIONS};
@@ -181,12 +181,14 @@ impl VertexLibraryBuilder<'_> {
 
     pub fn upload(self, uploader: &mut Uploader, arena: &mut VulkanArena<ForBuffers>) {
         arena.copy_buffer(
+            BufferUsage::VERTEX,
             self.vertex_staging.buffer,
             &self.library.vertex_buffer,
             uploader,
             format_args!("{} (vertex buffer)", self.debug_id),
         );
         arena.copy_buffer(
+            BufferUsage::INDEX,
             self.index_staging.buffer,
             &self.library.index_buffer,
             uploader,
