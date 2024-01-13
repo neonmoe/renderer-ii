@@ -3,7 +3,7 @@ use core::mem;
 use arrayvec::ArrayVec;
 use ash::vk;
 use enum_map::{Enum, EnumMap};
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Vec2, Vec3};
 
 use crate::renderer::pipeline_parameters::constants::*;
 
@@ -48,9 +48,65 @@ pub enum VertexBinding {
     Weights0,
 }
 
-impl VertexBinding {
-    pub(crate) fn description(self, vertex_layout: VertexLayout) -> Option<vk::VertexInputBindingDescription> {
-        VERTEX_BINDING_DESCRIPTIONS[vertex_layout].iter().find(|desc| desc.binding == self as u32).copied()
+/// Returns the size of a single vertex expected by [`write_vertex_buffer`], and
+/// the size of a single vertex written out by it, in that order.
+#[allow(clippy::match_same_arms)]
+pub fn get_vertex_sizes(vertex_layout: VertexLayout, vertex_binding: VertexBinding) -> (usize, usize) {
+    use VertexLayout::{SkinnedMesh, StaticMesh};
+    match (vertex_layout, vertex_binding) {
+        (StaticMesh | SkinnedMesh, VertexBinding::Position) => (mem::size_of::<[f32; 3]>(), mem::size_of::<[f32; 3]>()),
+        (StaticMesh | SkinnedMesh, VertexBinding::Texcoord0) => (mem::size_of::<[f32; 2]>(), mem::size_of::<[f32; 2]>()),
+        (StaticMesh | SkinnedMesh, VertexBinding::Normal) => (mem::size_of::<[f32; 3]>(), mem::size_of::<[u32; 1]>()),
+        (StaticMesh | SkinnedMesh, VertexBinding::Tangent) => (mem::size_of::<[f32; 4]>(), mem::size_of::<[u32; 1]>()),
+        (SkinnedMesh, VertexBinding::Joints0) => (mem::size_of::<[u8; 4]>(), mem::size_of::<[u8; 4]>()),
+        (SkinnedMesh, VertexBinding::Weights0) => (mem::size_of::<[f32; 4]>(), mem::size_of::<[u8; 4]>()),
+        _ => unimplemented!("binding {vertex_binding:?} is not used in {vertex_layout:?}"),
+    }
+}
+
+/// Writes the `src`, assumed to be arrays of `f32`s, with implied strides e.g.
+/// positions being tightly packed `[f32; 3]`, to `dst` in the format that the
+/// renderer expects.
+#[profiling::function]
+pub fn write_vertices(vertex_layout: VertexLayout, binding: VertexBinding, src: &[u8], dst: &mut [u8]) {
+    // Relevant bits from the vulkan spec:
+
+    // VK_FORMAT_A2B10G10R10_SNORM_PACK32 specifies a four-component, 32-bit
+    // packed signed normalized format that has a 2-bit A component in bits
+    // 30..31, a 10-bit B component in bits 20..29, a 10-bit G component in bits
+    // 10..19, and a 10-bit R component in bits 0..9.
+
+    #[inline]
+    fn pack<const N: u32>(f: f32) -> u32 {
+        let max = 2u32.pow(N - 1) - 1;
+        let mask = 2u32.pow(N) - 1;
+        (max as f32 * f.clamp(-1.0, 1.0)) as i32 as u32 & mask
+    }
+
+    use VertexLayout::{SkinnedMesh, StaticMesh};
+    match (vertex_layout, binding) {
+        (StaticMesh | SkinnedMesh, VertexBinding::Normal) => {
+            let src = bytemuck::cast_slice::<u8, [f32; 3]>(src);
+            let dst = bytemuck::cast_slice_mut::<u8, u32>(dst);
+            for (&src, dst) in src.iter().zip(dst) {
+                *dst = (pack::<10>(src[2]) << 20) | (pack::<10>(src[1]) << 10) | pack::<10>(src[0]);
+            }
+        }
+        (StaticMesh | SkinnedMesh, VertexBinding::Tangent) => {
+            let src = bytemuck::cast_slice::<u8, [f32; 4]>(src);
+            let dst = bytemuck::cast_slice_mut::<u8, u32>(dst);
+            for (&src, dst) in src.iter().zip(dst) {
+                *dst = (pack::<2>(src[3]) << 30) | (pack::<10>(src[2]) << 20) | (pack::<10>(src[1]) << 10) | pack::<10>(src[0]);
+            }
+        }
+        (SkinnedMesh, VertexBinding::Weights0) => {
+            let src = bytemuck::cast_slice::<u8, f32>(src);
+            for (&src, dst) in src.iter().zip(dst) {
+                *dst = (src * 0xFF as f32) as u8;
+            }
+        }
+        (StaticMesh | SkinnedMesh, _) => dst.copy_from_slice(src),
+        _ => unimplemented!("binding {binding:?} is not used in {vertex_layout:?}"),
     }
 }
 
@@ -81,12 +137,12 @@ static TEXCOORD0_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBin
 };
 static NORMAL_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Normal as u32,
-    stride: mem::size_of::<Vec3>() as u32,
+    stride: mem::size_of::<u32>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static TANGENT_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Tangent as u32,
-    stride: mem::size_of::<Vec4>() as u32,
+    stride: mem::size_of::<u32>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static JOINTS0_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
@@ -96,7 +152,7 @@ static JOINTS0_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindi
 };
 static WEIGHTS0_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Weights0 as u32,
-    stride: mem::size_of::<[f32; 4]>() as u32,
+    stride: mem::size_of::<[u8; 4]>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 
@@ -164,13 +220,13 @@ static TEXCOORD0_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::Ve
 static NORMAL_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Normal as u32,
     location: IN_NORMAL_LOCATION,
-    format: vk::Format::R32G32B32_SFLOAT,
+    format: vk::Format::A2B10G10R10_SNORM_PACK32,
     offset: 0,
 };
 static TANGENT_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Tangent as u32,
     location: IN_TANGENT_LOCATION,
-    format: vk::Format::R32G32B32A32_SFLOAT,
+    format: vk::Format::A2B10G10R10_SNORM_PACK32,
     offset: 0,
 };
 static JOINTS0_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
@@ -182,7 +238,7 @@ static JOINTS0_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::Vert
 static WEIGHTS0_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Weights0 as u32,
     location: IN_WEIGHTS_0_LOCATION,
-    format: vk::Format::R32G32B32A32_SFLOAT,
+    format: vk::Format::R8G8B8A8_UNORM,
     offset: 0,
 };
 
