@@ -41,6 +41,9 @@
 extern crate alloc;
 extern crate core;
 
+pub use ash::vk;
+pub use enum_map::enum_map;
+
 macro_rules! cstr {
     ($string:expr) => {
         unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(concat!($string, "\0").as_bytes()) }
@@ -95,7 +98,6 @@ mod arena;
 pub use arena::buffers::ForBuffers;
 pub use arena::images::ForImages;
 pub use arena::{MemoryProps, VulkanArena, VulkanArenaError};
-pub use ash::vk;
 
 mod display_utils {
     use core::fmt::{Display, Formatter, Result};
@@ -146,6 +148,7 @@ pub use renderer::descriptors::material::{AlphaMode, Material, PbrFactors, Pipel
 pub use renderer::descriptors::{Descriptors, PbrDefaults};
 pub use renderer::framebuffers::Framebuffers;
 pub use renderer::pipeline_parameters::constants::{MAX_DRAW_CALLS, MAX_JOINT_COUNT};
+pub use renderer::pipeline_parameters::vertex_buffers::{VertexBinding, VertexBindingMap, VertexLayout};
 pub use renderer::pipeline_parameters::PipelineIndex;
 pub use renderer::pipelines::Pipelines;
 pub use renderer::scene::camera::Camera;

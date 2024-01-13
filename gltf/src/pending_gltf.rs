@@ -9,7 +9,7 @@ use renderer::image_loading::ntex::{self};
 use renderer::image_loading::{self, TextureKind};
 use renderer::{
     vk, AlphaMode, Descriptors, Device, ForBuffers, ForImages, ImageView, Material, PbrFactors, PipelineIndex, PipelineSpecificData,
-    Uploader, VertexLibraryBuilder, VulkanArena,
+    Uploader, VertexBinding, VertexBindingMap, VertexLibraryBuilder, VulkanArena,
 };
 
 use crate::gltf_json::{self, GltfJson};
@@ -24,7 +24,7 @@ pub struct BufferView {
 
 pub struct MeshParameters {
     pub pipeline: PipelineIndex,
-    pub vertex_buffers: ArrayVec<BufferView, MAX_VERTEX_BUFFERS>,
+    pub vertex_buffers: VertexBindingMap<BufferView>,
     pub index_buffer: BufferView,
     /// If true, indices are u32, otherwise u16.
     pub large_indices: bool,
@@ -74,17 +74,18 @@ impl PendingGltf<'_> {
         let mut memmap_holder = None;
 
         let mut meshes = Vec::with_capacity(gltf.meshes.len());
-        const TOTAL_BUFFERS: usize = MAX_VERTEX_BUFFERS + 1;
+        const TOTAL_BUFFERS: usize = MAX_VERTEX_BUFFERS + 1; // vertex buffers + index buffer
         let mut mesh_buffers_memmaps: ArrayVec<Option<Mmap>, TOTAL_BUFFERS> = (0..TOTAL_BUFFERS).map(|_| None).collect();
         for primitives_params in &self.meshes {
             let mut primitives = Vec::with_capacity(primitives_params.len());
             for (params, material_index) in primitives_params {
-                let mut buffers: ArrayVec<&[u8], TOTAL_BUFFERS> = params
+                let mut buffers = params
                     .vertex_buffers
                     .iter()
-                    .chain([&params.index_buffer].into_iter())
+                    .filter_map(|(binding, buffer)| buffer.as_ref().map(|buf| (binding, buf)))
+                    .chain([(VertexBinding::Position /* not used */, &params.index_buffer)].into_iter())
                     .zip(&mut mesh_buffers_memmaps)
-                    .map(|(buffer_params, memmap)| {
+                    .map(|((binding, buffer_params), memmap)| {
                         let offset = buffer_params.offset;
                         let length = buffer_params.length;
                         let buffer = self.json.buffers.get(buffer_params.buffer).ok_or(GltfLoadingError::Oob("buffer"))?;
@@ -96,10 +97,11 @@ impl PendingGltf<'_> {
                         } else {
                             return Err(GltfLoadingError::Misc("buffer has no uri but there's no glb buffer"));
                         };
-                        Ok(buffer)
+                        Ok((binding, buffer))
                     })
-                    .collect::<Result<_, GltfLoadingError>>()?;
-                let index_buffer = buffers.pop().unwrap();
+                    .collect::<Result<ArrayVec<(VertexBinding, &[u8]), TOTAL_BUFFERS>, GltfLoadingError>>()?;
+                let (_, index_buffer) = buffers.pop().unwrap();
+                let buffers = VertexBindingMap::from_iter(buffers.into_iter().map(|(binding, buf)| (binding, Some(buf))));
                 let vertex_layout = params.pipeline.vertex_layout();
                 let mesh = if params.large_indices {
                     vertex_library_builder.add_mesh(vertex_layout, &buffers, bytemuck::cast_slice::<u8, u32>(index_buffer))

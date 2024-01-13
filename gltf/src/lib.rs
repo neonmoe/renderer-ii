@@ -6,12 +6,14 @@ use core::ops::Range;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use arrayvec::{ArrayString, ArrayVec};
+use arrayvec::ArrayString;
 use glam::{Affine3A, Mat4, Quat, Vec3};
 use hashbrown::HashMap;
 use memmap2::{Mmap, MmapOptions};
 use renderer::image_loading::{ntex, TextureKind};
-use renderer::{ForImages, Material, Mesh, PipelineIndex, VertexLibraryMeasurer, VulkanArenaError, VulkanArenaMeasurer};
+use renderer::{
+    ForImages, Material, Mesh, PipelineIndex, VertexBinding, VertexBindingMap, VertexLibraryMeasurer, VulkanArenaError, VulkanArenaMeasurer,
+};
 
 mod gltf_json;
 mod mesh_iter;
@@ -327,7 +329,8 @@ fn create_gltf<'a>(
         let mut primitives = Vec::with_capacity(mesh.primitives.len());
         for primitive in &mesh.primitives {
             let params = create_primitive(&gltf, primitive)?;
-            let vertex_buffer_lengths: ArrayVec<usize, MAX_VERTEX_BUFFERS> = params.vertex_buffers.iter().map(|buf| buf.length).collect();
+            let vertex_buffer_lengths: VertexBindingMap<usize> =
+                VertexBindingMap::from_fn(|binding| params.vertex_buffers[binding].as_ref().map(|buf| buf.length));
             let index_count = params.index_buffer.length / params.index_buffer.stride;
             match params.index_buffer.stride {
                 4 => mesh_measurer.add_mesh_by_len::<u32>(params.pipeline.vertex_layout(), &vertex_buffer_lengths, index_count),
@@ -613,31 +616,31 @@ fn create_primitive(gltf: &gltf_json::GltfJson, primitive: &gltf_json::Primitive
         return Err(GltfLoadingError::Spec("index ctype is not UNSIGNED_SHORT or UNSIGNED_INT"));
     };
 
-    let mut vertex_buffers = ArrayVec::new();
+    let mut vertex_buffers = VertexBindingMap::default();
 
     let pos_accessor = *primitive.attributes.get("POSITION").ok_or(GltfLoadingError::Misc("missing position attributes"))?;
     let (pos_buffer, _) = get_buffer_view_from_accessor(gltf, pos_accessor, Some(GLTF_FLOAT), "VEC3")?;
-    vertex_buffers.push(pos_buffer);
+    vertex_buffers[VertexBinding::Position] = Some(pos_buffer);
 
     let tex_accessor = *primitive.attributes.get("TEXCOORD_0").ok_or(GltfLoadingError::Misc("missing UV0 attributes"))?;
     let (tex_buffer, _) = get_buffer_view_from_accessor(gltf, tex_accessor, Some(GLTF_FLOAT), "VEC2")?;
-    vertex_buffers.push(tex_buffer);
+    vertex_buffers[VertexBinding::Texcoord0] = Some(tex_buffer);
 
     let normal_accessor = *primitive.attributes.get("NORMAL").ok_or(GltfLoadingError::Misc("missing normal attributes"))?;
     let (normal_buffer, _) = get_buffer_view_from_accessor(gltf, normal_accessor, Some(GLTF_FLOAT), "VEC3")?;
-    vertex_buffers.push(normal_buffer);
+    vertex_buffers[VertexBinding::Normal] = Some(normal_buffer);
 
     let tangent_accessor = *primitive.attributes.get("TANGENT").ok_or(GltfLoadingError::Misc("missing tangent attributes"))?;
     let (tangent_buffer, _) = get_buffer_view_from_accessor(gltf, tangent_accessor, Some(GLTF_FLOAT), "VEC4")?;
-    vertex_buffers.push(tangent_buffer);
+    vertex_buffers[VertexBinding::Tangent] = Some(tangent_buffer);
 
     let mut pipeline = PipelineIndex::PbrOpaque;
     if let (Some(&joints_accessor), Some(&weights_accessor)) = (primitive.attributes.get("JOINTS_0"), primitive.attributes.get("WEIGHTS_0"))
     {
         let (joints_buffer, _) = get_buffer_view_from_accessor(gltf, joints_accessor, Some(GLTF_UNSIGNED_BYTE), "VEC4")?;
-        vertex_buffers.push(joints_buffer);
+        vertex_buffers[VertexBinding::Joints0] = Some(joints_buffer);
         let (weights_buffer, _) = get_buffer_view_from_accessor(gltf, weights_accessor, Some(GLTF_FLOAT), "VEC4")?;
-        vertex_buffers.push(weights_buffer);
+        vertex_buffers[VertexBinding::Weights0] = Some(weights_buffer);
         pipeline = PipelineIndex::PbrSkinnedOpaque;
     }
 

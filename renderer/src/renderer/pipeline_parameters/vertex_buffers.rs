@@ -2,7 +2,7 @@ use core::mem;
 
 use arrayvec::ArrayVec;
 use ash::vk;
-use enum_map::EnumMap;
+use enum_map::{Enum, EnumMap};
 use glam::{Vec2, Vec3, Vec4};
 
 use crate::renderer::pipeline_parameters::constants::*;
@@ -14,18 +14,29 @@ pub enum VertexLayout {
     FullscreenQuad,
 }
 
-pub type VertexLayoutMap<T> = EnumMap<VertexLayout, T>;
-pub type VertexBindingVec<T> = ArrayVec<T, { VertexBinding::Count as usize }>;
+impl VertexLayout {
+    /// Returns a list of the [`VertexBinding`]s that are required for a mesh
+    /// using this vertex layout.
+    pub fn required_inputs(self) -> ArrayVec<VertexBinding, { VertexBinding::LENGTH }> {
+        match self {
+            VertexLayout::StaticMesh => {
+                ArrayVec::from_iter([VertexBinding::Position, VertexBinding::Texcoord0, VertexBinding::Normal, VertexBinding::Tangent])
+            }
+            VertexLayout::SkinnedMesh => ArrayVec::from_iter([
+                VertexBinding::Position,
+                VertexBinding::Texcoord0,
+                VertexBinding::Normal,
+                VertexBinding::Tangent,
+                VertexBinding::Joints0,
+                VertexBinding::Weights0,
+            ]),
+            VertexLayout::FullscreenQuad => ArrayVec::new(),
+        }
+    }
+}
 
-pub static VERTEX_BINDING_DESCRIPTIONS: VertexLayoutMap<&[vk::VertexInputBindingDescription]> =
-    EnumMap::from_array([STATIC_MESH_VERTEX_BINDINGS, SKINNED_MESH_VERTEX_BINDINGS, &[]]);
-
-pub static VERTEX_ATTRIBUTE_DESCRIPTIONS: VertexLayoutMap<&[vk::VertexInputAttributeDescription]> =
-    EnumMap::from_array([STATIC_MESH_VERTEX_ATTRIBUTES, SKINNED_MESH_VERTEX_ATTRIBUTES, &[]]);
-
-pub const VERTEX_BINDING_COUNT: usize = VertexBinding::Count as usize;
-
-enum VertexBinding {
+#[derive(Clone, Copy, Debug, enum_map::Enum)]
+pub enum VertexBinding {
     /// Plural, because this binding has both the regular transform *and* the
     /// inverse transposes of their 3x3 part.
     Transforms,
@@ -35,9 +46,22 @@ enum VertexBinding {
     Tangent,
     Joints0,
     Weights0,
-    #[doc(hidden)]
-    Count,
 }
+
+impl VertexBinding {
+    pub(crate) fn description(self, vertex_layout: VertexLayout) -> Option<vk::VertexInputBindingDescription> {
+        VERTEX_BINDING_DESCRIPTIONS[vertex_layout].iter().find(|desc| desc.binding == self as u32).copied()
+    }
+}
+
+pub type VertexLayoutMap<T> = EnumMap<VertexLayout, T>;
+pub type VertexBindingMap<T> = EnumMap<VertexBinding, Option<T>>;
+
+pub static VERTEX_BINDING_DESCRIPTIONS: VertexLayoutMap<&[vk::VertexInputBindingDescription]> =
+    EnumMap::from_array([STATIC_MESH_VERTEX_BINDINGS, SKINNED_MESH_VERTEX_BINDINGS, &[]]);
+
+pub static VERTEX_ATTRIBUTE_DESCRIPTIONS: VertexLayoutMap<&[vk::VertexInputAttributeDescription]> =
+    EnumMap::from_array([STATIC_MESH_VERTEX_ATTRIBUTES, SKINNED_MESH_VERTEX_ATTRIBUTES, &[]]);
 
 static INSTANCED_TRANSFORM_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Transforms as u32,

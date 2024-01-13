@@ -6,6 +6,7 @@ use std::thread;
 use arrayvec::ArrayVec;
 use ash::{vk, Instance};
 use bytemuck::{Pod, Zeroable};
+use enum_map::Enum;
 use hashbrown::HashMap;
 
 use crate::arena::buffers::{BufferUsage, ForBuffers};
@@ -25,12 +26,11 @@ pub(crate) mod swapchain;
 use descriptors::Descriptors;
 use framebuffers::Framebuffers;
 use pipeline_parameters::render_passes::{Attachment, RenderPass};
+use pipeline_parameters::vertex_buffers::VertexBinding;
 use pipeline_parameters::{uniforms, PipelineIndex, PipelineMap};
 use pipelines::Pipelines;
 use scene::Scene;
 use swapchain::{Swapchain, SwapchainError};
-
-use self::pipeline_parameters::vertex_buffers::VERTEX_BINDING_COUNT;
 
 /// Get from [`Renderer::wait_frame`].
 pub struct FrameIndex {
@@ -439,10 +439,12 @@ impl Renderer {
             }
             let vertex_layout = pl_idx.vertex_layout();
             for (vertex_library, draws) in draws {
-                const VERTEX_BUFFERS: usize = 1 + VERTEX_BINDING_COUNT;
+                const VERTEX_BUFFERS: usize = VertexBinding::LENGTH;
                 let mut vertex_offsets = ArrayVec::<vk::DeviceSize, VERTEX_BUFFERS>::new();
                 vertex_offsets.push(0);
-                vertex_offsets.try_extend_from_slice(&vertex_library.vertex_buffer_offsets[vertex_layout]).unwrap();
+                vertex_offsets.extend(
+                    vertex_layout.required_inputs().iter().map(|&b| vertex_library.vertex_buffer_offsets[vertex_layout][b].unwrap()),
+                );
                 let mut vertex_buffers = ArrayVec::<vk::Buffer, VERTEX_BUFFERS>::new();
                 vertex_buffers.push(transforms_buffer.inner);
                 for _ in 1..vertex_offsets.len() {
