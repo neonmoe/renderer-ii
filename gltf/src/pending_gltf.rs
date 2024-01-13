@@ -23,6 +23,11 @@ pub struct BufferView {
 }
 
 pub struct MeshParameters {
+    pub name: Option<String>,
+    pub primitives: Vec<(PrimitiveParameters, usize)>,
+}
+
+pub struct PrimitiveParameters {
     pub pipeline: PipelineIndex,
     pub vertex_buffers: VertexBindingMap<BufferView>,
     pub index_buffer: BufferView,
@@ -49,7 +54,7 @@ pub struct PendingGltf<'a> {
     pub(crate) bin_buffer: Option<&'a [u8]>,
     pub(crate) resource_path: PathBuf,
     pub(crate) image_texture_kinds: HashMap<usize, TextureKind>,
-    pub(crate) meshes: Vec<Vec<(MeshParameters, usize)>>,
+    pub(crate) meshes: Vec<MeshParameters>,
     pub(crate) images: Vec<ImageParameters>,
 }
 
@@ -76,9 +81,10 @@ impl PendingGltf<'_> {
         let mut meshes = Vec::with_capacity(gltf.meshes.len());
         const TOTAL_BUFFERS: usize = MAX_VERTEX_BUFFERS + 1; // vertex buffers + index buffer
         let mut mesh_buffers_memmaps: ArrayVec<Option<Mmap>, TOTAL_BUFFERS> = (0..TOTAL_BUFFERS).map(|_| None).collect();
-        for primitives_params in &self.meshes {
-            let mut primitives = Vec::with_capacity(primitives_params.len());
-            for (params, material_index) in primitives_params {
+        for mesh_params in &self.meshes {
+            profiling::scope!("uploading mesh", mesh_params.name.as_deref().unwrap_or("<no name>"));
+            let mut primitives = Vec::with_capacity(mesh_params.primitives.len());
+            for (params, material_index) in &mesh_params.primitives {
                 let mut buffers = params
                     .vertex_buffers
                     .iter()
@@ -115,6 +121,7 @@ impl PendingGltf<'_> {
 
         let mut images = Vec::with_capacity(self.images.len());
         for (i, image) in self.images.into_iter().enumerate() {
+            profiling::scope!("uploading image", &image.name);
             let image_bytes = match image.data {
                 ImageData::File(uri) => {
                     let mut path = self.resource_path.join(uri);

@@ -3,7 +3,8 @@ use core::mem;
 use arrayvec::ArrayVec;
 use ash::vk;
 use enum_map::{Enum, EnumMap};
-use glam::{Vec2, Vec3};
+use glam::Vec3;
+use half::f16;
 
 use crate::renderer::pipeline_parameters::constants::*;
 
@@ -54,8 +55,8 @@ pub enum VertexBinding {
 pub fn get_vertex_sizes(vertex_layout: VertexLayout, vertex_binding: VertexBinding) -> (usize, usize) {
     use VertexLayout::{SkinnedMesh, StaticMesh};
     match (vertex_layout, vertex_binding) {
-        (StaticMesh | SkinnedMesh, VertexBinding::Position) => (mem::size_of::<[f32; 3]>(), mem::size_of::<[f32; 3]>()),
-        (StaticMesh | SkinnedMesh, VertexBinding::Texcoord0) => (mem::size_of::<[f32; 2]>(), mem::size_of::<[f32; 2]>()),
+        (StaticMesh | SkinnedMesh, VertexBinding::Position) => (mem::size_of::<[f32; 3]>(), mem::size_of::<[f16; 4]>()),
+        (StaticMesh | SkinnedMesh, VertexBinding::Texcoord0) => (mem::size_of::<[f32; 2]>(), mem::size_of::<[f16; 2]>()),
         (StaticMesh | SkinnedMesh, VertexBinding::Normal) => (mem::size_of::<[f32; 3]>(), mem::size_of::<[u32; 1]>()),
         (StaticMesh | SkinnedMesh, VertexBinding::Tangent) => (mem::size_of::<[f32; 4]>(), mem::size_of::<[u32; 1]>()),
         (SkinnedMesh, VertexBinding::Joints0) => (mem::size_of::<[u8; 4]>(), mem::size_of::<[u8; 4]>()),
@@ -85,6 +86,23 @@ pub fn write_vertices(vertex_layout: VertexLayout, binding: VertexBinding, src: 
 
     use VertexLayout::{SkinnedMesh, StaticMesh};
     match (vertex_layout, binding) {
+        (StaticMesh | SkinnedMesh, VertexBinding::Position) => {
+            let src = bytemuck::cast_slice::<u8, [f32; 3]>(src);
+            let dst = bytemuck::cast_slice_mut::<u8, [f16; 4]>(dst);
+            for (&src, dst) in src.iter().zip(dst) {
+                dst[0] = f16::from_f32(src[0]);
+                dst[1] = f16::from_f32(src[1]);
+                dst[2] = f16::from_f32(src[2]);
+            }
+        }
+        (StaticMesh | SkinnedMesh, VertexBinding::Texcoord0) => {
+            let src = bytemuck::cast_slice::<u8, [f32; 2]>(src);
+            let dst = bytemuck::cast_slice_mut::<u8, [f16; 2]>(dst);
+            for (&src, dst) in src.iter().zip(dst) {
+                dst[0] = f16::from_f32(src[0]);
+                dst[1] = f16::from_f32(src[1]);
+            }
+        }
         (StaticMesh | SkinnedMesh, VertexBinding::Normal) => {
             let src = bytemuck::cast_slice::<u8, [f32; 3]>(src);
             let dst = bytemuck::cast_slice_mut::<u8, u32>(dst);
@@ -127,12 +145,12 @@ static INSTANCED_TRANSFORM_BINDING: vk::VertexInputBindingDescription = vk::Vert
 };
 static POSITION_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Position as u32,
-    stride: mem::size_of::<Vec3>() as u32,
+    stride: mem::size_of::<[f16; 4]>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static TEXCOORD0_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Texcoord0 as u32,
-    stride: mem::size_of::<Vec2>() as u32,
+    stride: mem::size_of::<[f16; 2]>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static NORMAL_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
@@ -208,13 +226,13 @@ static INSTANCED_TRANSFORM_BINDING_ATTRIBUTES: [vk::VertexInputAttributeDescript
 static POSITION_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Position as u32,
     location: IN_POSITION_LOCATION,
-    format: vk::Format::R32G32B32_SFLOAT,
+    format: vk::Format::R16G16B16A16_SFLOAT,
     offset: 0,
 };
 static TEXCOORD0_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Texcoord0 as u32,
     location: IN_TEXCOORD_0_LOCATION,
-    format: vk::Format::R32G32_SFLOAT,
+    format: vk::Format::R16G16_SFLOAT,
     offset: 0,
 };
 static NORMAL_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {

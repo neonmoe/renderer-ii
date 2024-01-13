@@ -340,7 +340,7 @@ fn create_gltf<'a>(
             let material_index = primitive.material.ok_or(GltfLoadingError::Misc("material missing"))?;
             primitives.push((params, material_index));
         }
-        meshes.push(primitives);
+        meshes.push(MeshParameters { name: mesh.name.clone(), primitives });
     }
 
     let mut nodes = Vec::with_capacity(gltf.nodes.len());
@@ -605,7 +605,7 @@ fn map_file<'a>(memmap_holder: &'a mut Option<Mmap>, path: &Path, range: Option<
 }
 
 #[profiling::function]
-fn create_primitive(gltf: &gltf_json::GltfJson, primitive: &gltf_json::Primitive) -> Result<MeshParameters, GltfLoadingError> {
+fn create_primitive(gltf: &gltf_json::GltfJson, primitive: &gltf_json::Primitive) -> Result<PrimitiveParameters, GltfLoadingError> {
     let index_accessor = primitive.indices.ok_or(GltfLoadingError::Misc("missing indices"))?;
     let (index_buffer, index_ctype) = get_buffer_view_from_accessor(gltf, index_accessor, None, "SCALAR")?;
     let large_indices = if index_ctype == GLTF_UNSIGNED_SHORT {
@@ -644,7 +644,7 @@ fn create_primitive(gltf: &gltf_json::GltfJson, primitive: &gltf_json::Primitive
         pipeline = PipelineIndex::PbrSkinnedOpaque;
     }
 
-    Ok(MeshParameters { pipeline, vertex_buffers, index_buffer, large_indices })
+    Ok(PrimitiveParameters { pipeline, vertex_buffers, index_buffer, large_indices })
 }
 
 #[profiling::function]

@@ -56,6 +56,7 @@ pub(crate) struct Node {
 
 #[derive(Deserialize)]
 pub(crate) struct Mesh {
+    pub name: Option<String>,
     pub primitives: Vec<Primitive>,
 }
 
