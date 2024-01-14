@@ -49,18 +49,34 @@ pub enum VertexBinding {
     Weights0,
 }
 
+pub(crate) struct VertexSizes {
+    pub in_vertex_size: usize,
+    pub out_vertex_size: usize,
+    pub out_vertex_alignment: usize,
+}
+
+impl VertexSizes {
+    pub fn from_types<In, Out>() -> VertexSizes {
+        VertexSizes {
+            in_vertex_size: mem::size_of::<In>(),
+            out_vertex_size: mem::size_of::<Out>(),
+            out_vertex_alignment: mem::align_of::<Out>(),
+        }
+    }
+}
+
 /// Returns the size of a single vertex expected by [`write_vertex_buffer`], and
 /// the size of a single vertex written out by it, in that order.
 #[allow(clippy::match_same_arms)]
-pub fn get_vertex_sizes(vertex_layout: VertexLayout, vertex_binding: VertexBinding) -> (usize, usize) {
+pub fn get_vertex_sizes(vertex_layout: VertexLayout, vertex_binding: VertexBinding) -> VertexSizes {
     use VertexLayout::{SkinnedMesh, StaticMesh};
     match (vertex_layout, vertex_binding) {
-        (StaticMesh | SkinnedMesh, VertexBinding::Position) => (mem::size_of::<[f32; 3]>(), mem::size_of::<[f16; 4]>()),
-        (StaticMesh | SkinnedMesh, VertexBinding::Texcoord0) => (mem::size_of::<[f32; 2]>(), mem::size_of::<[f16; 2]>()),
-        (StaticMesh | SkinnedMesh, VertexBinding::Normal) => (mem::size_of::<[f32; 3]>(), mem::size_of::<[u32; 1]>()),
-        (StaticMesh | SkinnedMesh, VertexBinding::Tangent) => (mem::size_of::<[f32; 4]>(), mem::size_of::<[u32; 1]>()),
-        (SkinnedMesh, VertexBinding::Joints0) => (mem::size_of::<[u8; 4]>(), mem::size_of::<[u8; 4]>()),
-        (SkinnedMesh, VertexBinding::Weights0) => (mem::size_of::<[f32; 4]>(), mem::size_of::<[u8; 4]>()),
+        (StaticMesh | SkinnedMesh, VertexBinding::Position) => VertexSizes::from_types::<[f32; 3], [f16; 3]>(),
+        (StaticMesh | SkinnedMesh, VertexBinding::Texcoord0) => VertexSizes::from_types::<[f32; 2], [f16; 2]>(),
+        (StaticMesh | SkinnedMesh, VertexBinding::Normal) => VertexSizes::from_types::<[f32; 3], u32>(),
+        (StaticMesh | SkinnedMesh, VertexBinding::Tangent) => VertexSizes::from_types::<[f32; 4], u32>(),
+        (SkinnedMesh, VertexBinding::Joints0) => VertexSizes::from_types::<[u8; 4], [u8; 4]>(),
+        (SkinnedMesh, VertexBinding::Weights0) => VertexSizes::from_types::<[f32; 4], [u8; 4]>(),
         _ => unimplemented!("binding {vertex_binding:?} is not used in {vertex_layout:?}"),
     }
 }
@@ -88,7 +104,7 @@ pub fn write_vertices(vertex_layout: VertexLayout, binding: VertexBinding, src: 
     match (vertex_layout, binding) {
         (StaticMesh | SkinnedMesh, VertexBinding::Position) => {
             let src = bytemuck::cast_slice::<u8, [f32; 3]>(src);
-            let dst = bytemuck::cast_slice_mut::<u8, [f16; 4]>(dst);
+            let dst = bytemuck::cast_slice_mut::<u8, [f16; 3]>(dst);
             for (&src, dst) in src.iter().zip(dst) {
                 dst[0] = f16::from_f32(src[0]);
                 dst[1] = f16::from_f32(src[1]);
@@ -145,7 +161,7 @@ static INSTANCED_TRANSFORM_BINDING: vk::VertexInputBindingDescription = vk::Vert
 };
 static POSITION_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Position as u32,
-    stride: mem::size_of::<[f16; 4]>() as u32,
+    stride: mem::size_of::<[f16; 3]>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static TEXCOORD0_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
@@ -226,7 +242,7 @@ static INSTANCED_TRANSFORM_BINDING_ATTRIBUTES: [vk::VertexInputAttributeDescript
 static POSITION_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
     binding: VertexBinding::Position as u32,
     location: IN_POSITION_LOCATION,
-    format: vk::Format::R16G16B16A16_SFLOAT,
+    format: vk::Format::R16G16B16_SFLOAT,
     offset: 0,
 };
 static TEXCOORD0_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {

@@ -1031,6 +1031,13 @@
                         ]
                     }
                 },
+                "VK_FORMAT_R16G16B16_SNORM": {
+                    "VkFormatProperties": {
+                        "bufferFeatures": [
+                            "VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT"
+                        ]
+                    }
+                },
                 "VK_FORMAT_R16G16_SFLOAT": {
                     "VkFormatProperties": {
                         "linearTilingFeatures": [
@@ -1943,6 +1950,12 @@
             "description": "A custom profile for this renderer based on the VP_LUNARG_desktop_baseline_2022 profile",
             "contributors": {},
             "history": [
+                {
+                    "revision": 3,
+                    "date": "2024-01-14",
+                    "author": "Jens Pitkanen",
+                    "comment": "Added a requirement that VK_FORMAT_R16G16B16_SNORM vertex buffers are supported, removed reqs for shaderInputAttachmentArrayNonUniformIndexingNative, shaderSampledImageArrayNonUniformIndexingNative, shaderStorageImageArrayNonUniformIndexingNative"
+                },
                 {
                     "revision": 2,
                     "date": "2024-01-09",

@@ -11,7 +11,7 @@ use crate::arena::buffers::{BufferUsage, ForBuffers, MappedBuffer};
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::memory_measurement::VulkanArenaMeasurer;
 use crate::renderer::pipeline_parameters::vertex_buffers::{
-    get_vertex_sizes, write_vertices, VertexBindingMap, VertexLayout, VertexLayoutMap,
+    get_vertex_sizes, write_vertices, VertexBindingMap, VertexLayout, VertexLayoutMap, VertexSizes,
 };
 use crate::renderer::scene::mesh::{IndexType, Mesh};
 use crate::uploader::Uploader;
@@ -157,12 +157,13 @@ impl VertexLibraryBuilder<'_> {
         }
 
         for vertex_binding in vertex_layout.required_inputs() {
-            let (in_vert_size, out_vert_size) = get_vertex_sizes(vertex_layout, vertex_binding);
+            let VertexSizes { in_vertex_size, out_vertex_size, out_vertex_alignment } = get_vertex_sizes(vertex_layout, vertex_binding);
             let dst_offset = self.vertex_buffer_infos[vertex_layout][vertex_binding].as_mut().unwrap();
+            dst_offset.offset = dst_offset.offset.next_multiple_of(out_vertex_alignment);
             let src = vertex_buffers[vertex_binding].expect("all bindings required by the vertex layout must be provided");
-            let matches_stride = src.len() % in_vert_size == 0;
+            let matches_stride = src.len() % in_vertex_size == 0;
             assert!(matches_stride, "given vertices do not have the correct stride, check vertex layout and binding");
-            let write_len = out_vert_size * (src.len() / in_vert_size);
+            let write_len = out_vertex_size * (src.len() / in_vertex_size);
             let fits = write_len <= dst_offset.size;
             assert!(fits, "given vertex buffer does not fit, check that the measurements are correct");
             let dst = &mut self.vertex_staging.data_mut()[dst_offset.offset..dst_offset.offset + write_len];
@@ -246,14 +247,15 @@ impl VertexLibraryMeasurer {
     }
 
     fn measure(&self) -> MeasurementResults {
-        let mut vertex_buffer_size = 0;
+        let mut vertex_buffer_size = 0usize;
         let mut vertex_buffer_infos = VertexLayoutMap::from_fn(|_| VertexBindingMap::<BufferInfo>::default());
         for (vertex_layout, &vertex_count) in &self.vertex_counts {
             for vertex_binding in vertex_layout.required_inputs() {
-                let (_, out_vert_size) = get_vertex_sizes(vertex_layout, vertex_binding);
-                let offset = vertex_buffer_size;
-                let size = out_vert_size * vertex_count;
-                vertex_buffer_size += size;
+                let VertexSizes { out_vertex_size, out_vertex_alignment, .. } = get_vertex_sizes(vertex_layout, vertex_binding);
+                let offset = vertex_buffer_size.next_multiple_of(out_vertex_alignment);
+                let padding = offset - vertex_buffer_size;
+                let size = out_vertex_size * vertex_count;
+                vertex_buffer_size += padding + size;
                 vertex_buffer_infos[vertex_layout][vertex_binding] = Some(BufferInfo { offset, size });
             }
         }
@@ -281,9 +283,9 @@ impl VertexLibraryMeasurer {
 fn get_vertex_count(vertex_layout: VertexLayout, vertex_buffer_lengths: &VertexBindingMap<usize>) -> usize {
     let mut prev_vertex_count = None;
     for (vertex_binding, buf_len) in vertex_buffer_lengths.into_iter().filter_map(|(binding, len)| len.map(|len| (binding, len))) {
-        let (in_vert_size, _) = get_vertex_sizes(vertex_layout, vertex_binding);
-        assert_eq!(0, buf_len % in_vert_size, "vertex buffer lengths must be divisible by their vertex sizes");
-        let vertex_count = buf_len / in_vert_size;
+        let VertexSizes { in_vertex_size, .. } = get_vertex_sizes(vertex_layout, vertex_binding);
+        assert_eq!(0, buf_len % in_vertex_size, "vertex buffer lengths must be divisible by their vertex sizes");
+        let vertex_count = buf_len / in_vertex_size;
         if let Some(prev_vertex_count) = prev_vertex_count {
             assert_eq!(prev_vertex_count, vertex_count, "each buffer must describe the same amount of vertices");
         }

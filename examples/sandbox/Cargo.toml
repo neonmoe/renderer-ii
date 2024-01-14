@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = { version = "1.0" }
 glam = { version = "0.23", default-features = false, features = ["libm", "bytemuck"] }
 gltf = { path = "../../gltf" }
 log = { version = "0.4" }
