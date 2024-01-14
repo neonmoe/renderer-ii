@@ -17,9 +17,9 @@ use crate::renderer::scene::mesh::{IndexType, Mesh};
 use crate::uploader::Uploader;
 use crate::vulkan_raii::Buffer;
 
-pub type VertexLibraryIndexType = u32;
+pub type VertexLibraryIndexType = u16;
 
-pub const VERTEX_LIBRARY_INDEX_TYPE: vk::IndexType = vk::IndexType::UINT32;
+pub const VERTEX_LIBRARY_INDEX_TYPE: vk::IndexType = vk::IndexType::UINT16;
 const VERTEX_LIBRARY_INDEX_SIZE: usize = mem::size_of::<VertexLibraryIndexType>();
 
 struct BufferInfo {
@@ -151,8 +151,8 @@ impl VertexLibraryBuilder<'_> {
         let index_bytes: &mut [u8] = &mut self.index_staging.data_mut()[index_buffer_start..index_buffer_end];
         let indices_dst: &mut [VertexLibraryIndexType] = bytemuck::cast_slice_mut(index_bytes);
         for (src_index, dst_index) in index_buffer.iter().zip(indices_dst) {
-            let index = src_index.to_u32();
-            debug_assert!(index < vertex_count as u32, "index is {index} but mesh has {vertex_count} vertices");
+            let index = src_index.to_index_type();
+            debug_assert!(index < vertex_count as VertexLibraryIndexType, "index is {index} but mesh has {vertex_count} vertices");
             *dst_index = index;
         }
 

@@ -3,7 +3,7 @@ use alloc::rc::Rc;
 use ash::vk;
 
 use crate::renderer::pipeline_parameters::vertex_buffers::VertexLayout;
-use crate::vertex_library::VertexLibrary;
+use crate::vertex_library::{VertexLibrary, VertexLibraryIndexType};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct Mesh {
@@ -19,8 +19,8 @@ pub trait IndexType {
     const SIZE: usize;
     /// Returns the appropriate [`vk::IndexType`] for the implementing type.
     fn vk_index_type() -> vk::IndexType;
-    /// Converts the implementing type to a u32.
-    fn to_u32(self) -> u32;
+    /// Converts the implementing type to [`VertexLibraryIndexType`].
+    fn to_index_type(self) -> VertexLibraryIndexType;
 }
 
 impl IndexType for u16 {
@@ -28,8 +28,8 @@ impl IndexType for u16 {
     fn vk_index_type() -> vk::IndexType {
         vk::IndexType::UINT16
     }
-    fn to_u32(self) -> u32 {
-        self as u32
+    fn to_index_type(self) -> VertexLibraryIndexType {
+        self as VertexLibraryIndexType
     }
 }
 
@@ -38,7 +38,7 @@ impl IndexType for u32 {
     fn vk_index_type() -> vk::IndexType {
         vk::IndexType::UINT32
     }
-    fn to_u32(self) -> u32 {
-        self
+    fn to_index_type(self) -> VertexLibraryIndexType {
+        self as VertexLibraryIndexType
     }
 }
