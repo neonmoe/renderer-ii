@@ -1,7 +1,7 @@
 use alloc::rc::{Rc, Weak};
 use core::mem;
 
-use arrayvec::{ArrayString, ArrayVec};
+use arrayvec::ArrayVec;
 use ash::vk;
 use bytemuck::Zeroable;
 use enum_map::Enum;
@@ -10,8 +10,8 @@ use crate::arena::buffers::{BufferUsage, ForBuffers};
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::pipeline_parameters::constants::{
-    MAX_TEXTURE_COUNT, UF_DRAW_CALL_FRAG_PARAMS_BINDING, UF_DRAW_CALL_VERT_PARAMS_BINDING, UF_IMGUI_TEXTURES_BINDING,
-    UF_RENDER_SETTINGS_BINDING, UF_TEX_BASE_COLOR_BINDING, UF_TRANSFORMS_BINDING,
+    MAX_PBR_FACTORS_COUNT, MAX_TEXTURE_COUNT, UF_DRAW_CALL_FRAG_PARAMS_BINDING, UF_DRAW_CALL_VERT_PARAMS_BINDING, UF_PBR_FACTORS_BINDING,
+    UF_RENDER_SETTINGS_BINDING, UF_TEXTURES_BINDING, UF_TRANSFORMS_BINDING,
 };
 use crate::renderer::pipeline_parameters::{
     uniforms, DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_PARAMETERS,
@@ -21,20 +21,7 @@ use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, Descripto
 
 pub(crate) mod material;
 
-use material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
-
-pub(crate) const MAX_PIPELINES_PER_MATERIAL: usize = 2;
-
-fn get_pipelines(data: &PipelineSpecificData) -> ArrayVec<PipelineIndex, MAX_PIPELINES_PER_MATERIAL> {
-    match data {
-        PipelineSpecificData::Pbr { alpha_mode, .. } => match alpha_mode {
-            AlphaMode::Opaque => [PipelineIndex::PbrOpaque, PipelineIndex::PbrSkinnedOpaque].into(),
-            AlphaMode::AlphaToCoverage => [PipelineIndex::PbrAlphaToCoverage, PipelineIndex::PbrSkinnedAlphaToCoverage].into(),
-            AlphaMode::Blend => [PipelineIndex::PbrBlended, PipelineIndex::PbrSkinnedBlended].into(),
-        },
-        PipelineSpecificData::ImGui { .. } => ArrayVec::from_iter([PipelineIndex::ImGui]),
-    }
-}
+use material::PbrFactors;
 
 pub struct PbrDefaults {
     pub base_color: ImageView,
@@ -44,7 +31,13 @@ pub struct PbrDefaults {
     pub emissive: ImageView,
 }
 
-type MaterialSlot = Option<Weak<Material>>;
+pub struct PbrDefaultTextureSlots {
+    pub base_color: (Rc<ImageView>, u32),
+    pub metallic_roughness: (Rc<ImageView>, u32),
+    pub normal: (Rc<ImageView>, u32),
+    pub occlusion: (Rc<ImageView>, u32),
+    pub emissive: (Rc<ImageView>, u32),
+}
 
 #[derive(Default)]
 struct PendingWrite<'a> {
@@ -53,51 +46,34 @@ struct PendingWrite<'a> {
     _image_info: Option<Box<vk::DescriptorImageInfo>>,
 }
 
-pub(crate) struct MaterialTempUniforms {
+pub(crate) struct TempUniforms {
     pub buffer: Buffer,
-    pbr_factors_offsets_and_sizes: PipelineMap<(vk::DeviceSize, vk::DeviceSize)>,
+    pbr_factors_offset_and_size: (vk::DeviceSize, vk::DeviceSize),
 }
 
-const MATERIAL_UPDATES: usize = PipelineIndex::LENGTH * MAX_TEXTURE_COUNT as usize;
 /// Descriptor writes:
 /// - HDR framebuffer attachment (one post-process descriptor set)
 /// - Global transforms (one shared descriptor set)
 /// - Render settings (one shared descriptor set)
 /// - Joints (one for each of the skinned pipelines)
 /// - Material textures and buffers (two for each slot of each pipeline)
-const MAX_DESCRIPTOR_WRITES: usize = 3 + SKINNED_PIPELINES.len() + 2 * MATERIAL_UPDATES;
+// TODO: Revise this, descriptor write counts will definitely change with the unified texture array change
+const MAX_DESCRIPTOR_WRITES: usize = 7 + MAX_TEXTURE_COUNT as usize;
 
 type PendingWritesVec<'a> = ArrayVec<PendingWrite<'a>, MAX_DESCRIPTOR_WRITES>;
+
+type TextureSlot = Option<Weak<ImageView>>;
+type PbrFactorsSlot = Option<Weak<PbrFactors>>;
 
 pub struct Descriptors {
     pub(crate) pipeline_layouts: PipelineMap<PipelineLayout>,
     descriptor_sets: PipelineMap<DescriptorSets>,
     device: Device,
-    pbr_defaults: PbrDefaults,
-    // TODO(next?): Use a shared array of materials instead of one array for each descriptor set?
-    material_slots_per_pipeline: PipelineMap<ArrayVec<MaterialSlot, { MAX_TEXTURE_COUNT as usize }>>,
-    material_updated_per_pipeline: PipelineMap<ArrayVec<bool, { MAX_TEXTURE_COUNT as usize }>>,
+    pbr_defaults: PbrDefaultTextureSlots,
+    pbr_factors_slots: ArrayVec<PbrFactorsSlot, { MAX_PBR_FACTORS_COUNT as usize }>,
+    texture_slots: ArrayVec<TextureSlot, { MAX_TEXTURE_COUNT as usize }>,
+    texture_updates: ArrayVec<bool, { MAX_TEXTURE_COUNT as usize }>,
     uniform_buffer_offset_alignment: vk::DeviceSize,
-}
-
-impl Material {
-    /// Reserves a new Material, if there's space.
-    pub fn new(descriptors: &mut Descriptors, data: PipelineSpecificData, name: ArrayString<64>) -> Option<Rc<Material>> {
-        profiling::scope!("material slot reservation");
-        let array_indices = get_pipelines(&data)
-            .iter()
-            .map(|&pipeline| {
-                let i = descriptors.material_slots_per_pipeline[pipeline].iter_mut().position(|slot| slot.is_none())?;
-                Some((pipeline, i as u32))
-            })
-            .collect::<Option<ArrayVec<(PipelineIndex, u32), MAX_PIPELINES_PER_MATERIAL>>>()?;
-        let material = Rc::new(Material { name, array_indices, data });
-        for &(pipeline, index) in &material.array_indices {
-            descriptors.material_slots_per_pipeline[pipeline][index as usize] = Some(Rc::downgrade(&material));
-            descriptors.material_updated_per_pipeline[pipeline][index as usize] = false;
-        }
-        Some(material)
-    }
 }
 
 impl Descriptors {
@@ -199,9 +175,25 @@ impl Descriptors {
         });
         drop(descriptor_set_layouts_per_pipeline);
 
-        let material_slots_per_pipeline =
-            PipelineMap::from_fn(|_| ArrayVec::from_iter([None].into_iter().cycle().take(MAX_TEXTURE_COUNT as usize)));
-        let material_updated_per_pipeline = PipelineMap::from_fn(|_| [true; MAX_TEXTURE_COUNT as usize].into());
+        let pbr_factors_slots = ArrayVec::from_iter([None].into_iter().cycle().take(MAX_PBR_FACTORS_COUNT as usize));
+        let mut texture_slots = ArrayVec::from_iter([None].into_iter().cycle().take(MAX_TEXTURE_COUNT as usize));
+        let mut texture_updates = ArrayVec::from_iter([true; MAX_TEXTURE_COUNT as usize]);
+
+        let pbr_defaults = PbrDefaultTextureSlots {
+            base_color: (Rc::new(pbr_defaults.base_color), 0),
+            metallic_roughness: (Rc::new(pbr_defaults.metallic_roughness), 1),
+            normal: (Rc::new(pbr_defaults.normal), 2),
+            occlusion: (Rc::new(pbr_defaults.occlusion), 3),
+            emissive: (Rc::new(pbr_defaults.emissive), 4),
+        };
+        texture_slots[0] = Some(Rc::downgrade(&pbr_defaults.base_color.0));
+        texture_slots[1] = Some(Rc::downgrade(&pbr_defaults.metallic_roughness.0));
+        texture_slots[2] = Some(Rc::downgrade(&pbr_defaults.normal.0));
+        texture_slots[3] = Some(Rc::downgrade(&pbr_defaults.occlusion.0));
+        texture_slots[4] = Some(Rc::downgrade(&pbr_defaults.emissive.0));
+        for texture_updated in &mut texture_updates[0..=4] {
+            *texture_updated = false;
+        }
 
         let uniform_buffer_offset_alignment = physical_device.properties.limits.min_uniform_buffer_offset_alignment;
 
@@ -209,68 +201,84 @@ impl Descriptors {
             pipeline_layouts,
             descriptor_sets,
             device: device.clone(),
-            material_slots_per_pipeline,
-            material_updated_per_pipeline,
+            pbr_factors_slots,
+            texture_slots,
+            texture_updates,
             pbr_defaults,
             uniform_buffer_offset_alignment,
         }
     }
 
-    pub(crate) fn create_materials_temp_uniform(
-        &mut self,
-        temp_arena: &mut VulkanArena<ForBuffers>,
-    ) -> Result<MaterialTempUniforms, VulkanArenaError> {
-        profiling::scope!("creating material temp buffer");
+    fn allocate_texture_slot(&mut self, texture: Weak<ImageView>) -> Option<u32> {
+        let (i, slot) = self
+            .texture_slots
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| if let Some(slot) = &slot { slot.strong_count() == 0 } else { true })?;
+        let _ = slot.insert(texture);
+        self.texture_updates[i] = false;
+        Some(i as u32)
+    }
 
-        let mut factors_bytes = Vec::with_capacity(PBR_PIPELINES.len() * mem::size_of::<uniforms::PbrFactors>());
-        let mut pbr_factors_offsets_and_sizes = PipelineMap::from_fn(|_| (0, 0));
-        for pipeline in PBR_PIPELINES {
+    fn allocate_pbr_factors_slot(&mut self, pbr_factors: Weak<PbrFactors>) -> Option<u32> {
+        let (i, slot) = self
+            .pbr_factors_slots
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| if let Some(slot) = &slot { slot.strong_count() == 0 } else { true })?;
+        let _ = slot.insert(pbr_factors);
+        Some(i as u32)
+    }
+
+    // TODO: Should this function be somewhere else? uniforms.rs?
+    pub(crate) fn create_temp_uniforms(&mut self, temp_arena: &mut VulkanArena<ForBuffers>) -> Result<TempUniforms, VulkanArenaError> {
+        profiling::scope!("creating temp uniform buffer");
+
+        let mut buffer = Vec::with_capacity(mem::size_of::<uniforms::PbrFactors>());
+
+        let pbr_factors_offset_and_size;
+        {
             profiling::scope!("copying over pbr factors");
-
-            let factors = self.material_slots_per_pipeline[pipeline]
+            let factors = self
+                .pbr_factors_slots
                 .iter()
-                .map(|slot| {
-                    if let Some(slot) = slot.as_ref().and_then(Weak::upgrade) {
-                        if let PipelineSpecificData::Pbr { factors, .. } = slot.data {
-                            return factors;
-                        }
-                    }
-                    PbrFactors::default()
-                })
-                .collect::<ArrayVec<_, { MAX_TEXTURE_COUNT as usize }>>();
-            if factors.is_empty() {
-                continue;
-            }
+                .map(|slot| if let Some(factors) = slot.as_ref().and_then(Weak::upgrade) { *factors } else { PbrFactors::zeroed() })
+                .collect::<ArrayVec<PbrFactors, { MAX_PBR_FACTORS_COUNT as usize }>>();
 
             let mut factors_soa = uniforms::PbrFactors::zeroed();
             for (i, factors) in factors.iter().enumerate() {
                 factors_soa.base_color[i] = factors.base_color;
                 factors_soa.emissive_and_occlusion[i] = factors.emissive_and_occlusion;
                 factors_soa.alpha_rgh_mtl_normal[i] = factors.alpha_rgh_mtl_normal;
+                factors_soa.textures[i] = factors.textures;
             }
             let factors_soa = [factors_soa];
             let factors_soa = bytemuck::cast_slice(&factors_soa);
 
-            let offset = (factors_bytes.len() as vk::DeviceSize).next_multiple_of(self.uniform_buffer_offset_alignment);
-            pbr_factors_offsets_and_sizes[pipeline] = (offset, factors_soa.len() as vk::DeviceSize);
-            factors_bytes.resize(offset as usize, 0);
-            factors_bytes.extend_from_slice(factors_soa);
+            let offset = (buffer.len() as vk::DeviceSize).next_multiple_of(self.uniform_buffer_offset_alignment);
+            pbr_factors_offset_and_size = (offset, factors_soa.len() as vk::DeviceSize);
+            buffer.resize(offset as usize, 0);
+            buffer.extend_from_slice(factors_soa);
         }
+        // TODO: Allocate and write the other dynamic uniforms here as well? (most write_descriptors params)
+        // Maybe also an appropriate place where the zeroed areas could be
+        // eliminated, just include (to, from) pairs of byte ranges for the each
+        // uniform write.
 
         let buffer_create_info = vk::BufferCreateInfo::default()
-            .size(factors_bytes.len() as u64)
+            .size(buffer.len() as u64)
             .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let buffer = temp_arena.create_buffer(
             buffer_create_info,
             BufferUsage::UNIFORM,
-            &factors_bytes,
+            &buffer,
             None,
             None,
             format_args!("uniform (temp material buffer)"),
         )?;
 
-        Ok(MaterialTempUniforms { buffer, pbr_factors_offsets_and_sizes })
+        Ok(TempUniforms { buffer, pbr_factors_offset_and_size })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -281,20 +289,17 @@ impl Descriptors {
         skinned_mesh_joints_buffer: &Buffer,
         draw_call_vert_params: &Buffer,
         draw_call_frag_params: &Buffer,
-        material_buffers: &MaterialTempUniforms,
+        material_buffers: &TempUniforms,
         hdr_attachment: &ImageView,
     ) {
         profiling::scope!("updating descriptors");
 
-        const UPDATE_COUNT: usize = PipelineIndex::LENGTH * MAX_TEXTURE_COUNT as usize;
-        let mut materials_needing_update = ArrayVec::<_, UPDATE_COUNT>::new();
-        for (pipeline, material_slots) in &self.material_slots_per_pipeline {
-            for (i, material_slot) in material_slots.iter().enumerate() {
-                if let Some(material) = material_slot.as_ref().and_then(Weak::upgrade) {
-                    let written = self.material_updated_per_pipeline[pipeline][i];
-                    if !written {
-                        materials_needing_update.push((pipeline, i as u32, material));
-                    }
+        let mut textures_needing_update = ArrayVec::<_, { MAX_TEXTURE_COUNT as usize }>::new();
+        for (i, texture_slot) in self.texture_slots.iter().enumerate() {
+            if let Some(texture) = texture_slot.as_ref().and_then(Weak::upgrade) {
+                let written = self.texture_updates[i];
+                if !written {
+                    textures_needing_update.push((i as u32, texture));
                 }
             }
         }
@@ -314,24 +319,24 @@ impl Descriptors {
         let frag_params_buffer = (draw_call_frag_params.inner, 0, draw_call_frag_params.size);
         self.set_uniform_buffer(shared_pipeline, &mut pending_writes, (0, UF_DRAW_CALL_FRAG_PARAMS_BINDING, 0), frag_params_buffer);
 
+        for (i, texture) in &textures_needing_update {
+            self.set_uniform_images(shared_pipeline, &mut pending_writes, (0, UF_TEXTURES_BINDING, *i), &[texture.inner]);
+            self.texture_updates[*i as usize] = true;
+        }
+
         for pipeline in SKINNED_PIPELINES {
             let skinned_mesh_joints_buffer = (skinned_mesh_joints_buffer.inner, 0, skinned_mesh_joints_buffer.size);
             self.set_uniform_buffer(pipeline, &mut pending_writes, (2, 0, 0), skinned_mesh_joints_buffer);
         }
 
         for pipeline in PBR_PIPELINES {
-            let pbr_factors_offset_and_size = material_buffers.pbr_factors_offsets_and_sizes[pipeline];
+            let pbr_factors_offset_and_size = material_buffers.pbr_factors_offset_and_size;
             let (offset, size) = pbr_factors_offset_and_size;
             let buffer = (material_buffers.buffer.inner, offset, size);
-            self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 6, 0), buffer);
+            self.set_uniform_buffer(pipeline, &mut pending_writes, (1, UF_PBR_FACTORS_BINDING, 0), buffer);
         }
 
         // TODO: Update imgui draw call data for the vertex shader
-
-        for (pipeline, i, material) in &materials_needing_update {
-            self.write_material(*pipeline, *i, material, &mut pending_writes);
-            self.material_updated_per_pipeline[*pipeline][*i as usize] = true;
-        }
 
         // NOTE: pending_writes owns the image/buffers that are pointed to by
         // the write_descriptor_sets, and they need to be dropped only after
@@ -345,25 +350,7 @@ impl Descriptors {
             unsafe { self.device.update_descriptor_sets(&writes, &[]) };
         }
         drop(pending_writes);
-        drop(materials_needing_update);
-    }
-
-    fn write_material(&self, pipeline: PipelineIndex, index: u32, material: &Material, pending_writes: &mut PendingWritesVec) {
-        match &material.data {
-            PipelineSpecificData::Pbr { base_color, metallic_roughness, normal, occlusion, emissive, .. } => {
-                let images = [
-                    base_color.as_ref().map_or(&self.pbr_defaults.base_color, Rc::as_ref).inner,
-                    metallic_roughness.as_ref().map_or(&self.pbr_defaults.metallic_roughness, Rc::as_ref).inner,
-                    normal.as_ref().map_or(&self.pbr_defaults.normal, Rc::as_ref).inner,
-                    occlusion.as_ref().map_or(&self.pbr_defaults.occlusion, Rc::as_ref).inner,
-                    emissive.as_ref().map_or(&self.pbr_defaults.emissive, Rc::as_ref).inner,
-                ];
-                self.set_uniform_images(pipeline, pending_writes, (1, UF_TEX_BASE_COLOR_BINDING, index), &images);
-            }
-            PipelineSpecificData::ImGui { texture } => {
-                self.set_uniform_images(pipeline, pending_writes, (1, UF_IMGUI_TEXTURES_BINDING, index), &[texture.inner]);
-            }
-        }
+        drop(textures_needing_update);
     }
 
     #[profiling::function]

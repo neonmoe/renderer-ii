@@ -147,7 +147,7 @@ pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
 
 mod renderer;
 
-pub use renderer::descriptors::material::{AlphaMode, Material, PbrFactors, PipelineSpecificData};
+pub use renderer::descriptors::material::{AlphaMode, Material, PbrMaterialParameters};
 pub use renderer::descriptors::{Descriptors, PbrDefaults};
 pub use renderer::framebuffers::Framebuffers;
 pub use renderer::pipeline_parameters::constants::{MAX_DRAW_CALLS, MAX_JOINT_COUNT};

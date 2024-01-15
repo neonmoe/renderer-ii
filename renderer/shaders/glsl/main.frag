@@ -16,37 +16,35 @@ layout(set = 0, binding = UF_RENDER_SETTINGS_BINDING) uniform RenderSettings {
     uint debug_value;
 }
 uf_render_settings;
-
 layout(set = 0, binding = UF_DRAW_CALL_FRAG_PARAMS_BINDING, std430) uniform DrawCallFragParams {
     uint material_index[MAX_DRAW_CALLS];
 }
 uf_draw_call;
+layout(set = 0, binding = UF_SAMPLER_BINDING) uniform sampler uf_sampler;
+layout(set = 0, binding = UF_TEXTURES_BINDING) uniform texture2D textures[MAX_TEXTURE_COUNT];
 
-layout(set = 1, binding = UF_SAMPLER_BINDING) uniform sampler uf_sampler;
-layout(set = 1,
-       binding = UF_TEX_BASE_COLOR_BINDING) uniform texture2D base_color[MAX_TEXTURE_COUNT];
-layout(set = 1, binding = UF_TEX_METALLIC_ROUGHNESS_BINDING) uniform texture2D
-    metallic_roughness[MAX_TEXTURE_COUNT];
-layout(set = 1, binding = UF_TEX_NORMAL_BINDING) uniform texture2D normal[MAX_TEXTURE_COUNT];
-layout(set = 1, binding = UF_TEX_OCCLUSION_BINDING) uniform texture2D occlusion[MAX_TEXTURE_COUNT];
-layout(set = 1, binding = UF_TEX_EMISSIVE_BINDING) uniform texture2D emissive[MAX_TEXTURE_COUNT];
-
-layout(set = 1, binding = UF_PBR_FACTORS_BINDING, std430) uniform PbrFactorsSoa {
-    vec4 base_color[MAX_TEXTURE_COUNT];
-    vec4 emissive_and_occlusion[MAX_TEXTURE_COUNT];
-    vec4 alpha_rgh_mtl_normal[MAX_TEXTURE_COUNT];
+layout(set = 1, binding = UF_PBR_FACTORS_BINDING, std430) uniform PbrFactors {
+    vec4 base_color[MAX_PBR_FACTORS_COUNT];
+    vec4 emissive_and_occlusion[MAX_PBR_FACTORS_COUNT];
+    vec4 alpha_rgh_mtl_normal[MAX_PBR_FACTORS_COUNT];
+    uvec4 textures[MAX_PBR_FACTORS_COUNT];
 }
 uf_factors;
 
 void main() {
     uint material_index = uf_draw_call.material_index[in_draw_id];
 
-    vec4 base_color = texture(sampler2D(base_color[material_index], uf_sampler), in_uv);
-    vec4 metallic_roughness_tex =
-        texture(sampler2D(metallic_roughness[material_index], uf_sampler), in_uv);
-    vec3 normal_tex = texture(sampler2D(normal[material_index], uf_sampler), in_uv).xyz * 2.0 - 1.0;
-    vec4 occlusion_tex = texture(sampler2D(occlusion[material_index], uf_sampler), in_uv);
-    vec3 emissive = texture(sampler2D(emissive[material_index], uf_sampler), in_uv).xyz;
+    uint base_color_idx = uf_factors.textures[material_index].x >> 16;
+    uint mtl_rgh_idx = uf_factors.textures[material_index].x & 0xFFFF;
+    uint normal_idx = uf_factors.textures[material_index].y;
+    uint occlusion_idx = uf_factors.textures[material_index].z;
+    uint emissive_idx = uf_factors.textures[material_index].w;
+
+    vec4 base_color = texture(sampler2D(textures[base_color_idx], uf_sampler), in_uv);
+    vec4 metallic_roughness_tex = texture(sampler2D(textures[mtl_rgh_idx], uf_sampler), in_uv);
+    vec3 normal_tex = texture(sampler2D(textures[normal_idx], uf_sampler), in_uv).xyz * 2.0 - 1.0;
+    vec4 occlusion_tex = texture(sampler2D(textures[occlusion_idx], uf_sampler), in_uv);
+    vec3 emissive = texture(sampler2D(textures[emissive_idx], uf_sampler), in_uv).xyz;
 
     vec4 base_color_factor = uf_factors.base_color[material_index];
     vec3 emissive_factor = uf_factors.emissive_and_occlusion[material_index].rgb;

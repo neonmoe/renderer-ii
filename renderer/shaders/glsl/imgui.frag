@@ -13,9 +13,8 @@ layout(set = 0, binding = UF_DRAW_CALL_FRAG_PARAMS_BINDING, std430) uniform Draw
     uint texture_index[MAX_DRAW_CALLS];
 }
 uf_draw_call;
-
-layout(set = 1, binding = UF_IMGUI_SAMPLER_BINDING) uniform sampler uf_sampler;
-layout(set = 1, binding = UF_IMGUI_TEXTURES_BINDING) uniform texture2D textures[MAX_TEXTURE_COUNT];
+layout(set = 0, binding = UF_SAMPLER_BINDING) uniform sampler uf_sampler;
+layout(set = 0, binding = UF_TEXTURES_BINDING) uniform texture2D textures[MAX_TEXTURE_COUNT];
 
 void main() {
     uint texture_index = uf_draw_call.texture_index[in_draw_id];

@@ -8,8 +8,8 @@ use memmap2::Mmap;
 use renderer::image_loading::ntex::{self};
 use renderer::image_loading::{self, TextureKind};
 use renderer::{
-    vk, AlphaMode, Descriptors, Device, ForBuffers, ForImages, ImageView, Material, PbrFactors, PipelineIndex, PipelineSpecificData,
-    Uploader, VertexBinding, VertexBindingMap, VertexLibraryBuilder, VulkanArena,
+    vk, AlphaMode, Descriptors, Device, ForBuffers, ForImages, ImageView, Material, PbrMaterialParameters, PipelineIndex, Uploader,
+    VertexBinding, VertexBindingMap, VertexLibraryBuilder, VulkanArena,
 };
 
 use crate::gltf_json::{self, GltfJson};
@@ -184,33 +184,35 @@ fn create_materials(
         let emissive = handle_optional_result!(mat.emissive_texture.as_ref().and_then(|tex| mktex(images, tex)));
 
         let pbr = mat.pbr_metallic_roughness.as_ref().ok_or(GltfLoadingError::Misc("pbr missing"))?;
-        let mtl = pbr.metallic_factor;
-        let rgh = pbr.roughness_factor;
-        let em_factor = Vec3::from(mat.emissive_factor);
-        let norm_factor = mat.normal_texture.as_ref().map(|t| t.scale).unwrap_or(1.0);
-        let occl_factor = mat.occlusion_texture.as_ref().map(|t| t.strength).unwrap_or(1.0);
+        let metallic_factor = pbr.metallic_factor;
+        let roughness_factor = pbr.roughness_factor;
+        let base_color_factor = Vec4::from_array(pbr.base_color_factor);
+        let emissive_factor = Vec3::from(mat.emissive_factor);
+        let normal_strength = mat.normal_texture.as_ref().map(|t| t.scale).unwrap_or(1.0);
+        let occlusion_factor = mat.occlusion_texture.as_ref().map(|t| t.strength).unwrap_or(1.0);
         let alpha_cutoff = if mat.alpha_mode == gltf_json::AlphaMode::Mask { mat.alpha_cutoff } else { 0.0 };
-        let factors = PbrFactors {
-            base_color: Vec4::from(pbr.base_color_factor),
-            emissive_and_occlusion: Vec4::from((em_factor, occl_factor)),
-            alpha_rgh_mtl_normal: Vec4::new(alpha_cutoff, rgh, mtl, norm_factor),
-        };
 
-        let pipeline_specific_data = PipelineSpecificData::Pbr {
+        let params = PbrMaterialParameters {
             base_color,
             metallic_roughness,
             normal,
             occlusion,
             emissive,
-            factors,
+            base_color_factor,
+            emissive_factor,
+            occlusion_factor,
+            roughness_factor,
+            metallic_factor,
+            normal_strength,
+            alpha_cutoff,
             alpha_mode: match mat.alpha_mode {
                 gltf_json::AlphaMode::Opaque => AlphaMode::Opaque,
                 gltf_json::AlphaMode::Mask => AlphaMode::AlphaToCoverage,
-                gltf_json::AlphaMode::Blend => AlphaMode::Blend,
+                gltf_json::AlphaMode::Blend => AlphaMode::Blended,
             },
         };
         let name = mat.name.unwrap_or_else(|| ArrayString::from("unnamed material").unwrap());
-        materials.push(Material::new(descriptors, pipeline_specific_data, name).ok_or(GltfLoadingError::NotEnoughMaterialSlots)?);
+        materials.push(Material::for_pbr(descriptors, name, params).ok_or(GltfLoadingError::NotEnoughMaterialSlots)?);
     }
     Ok(materials)
 }

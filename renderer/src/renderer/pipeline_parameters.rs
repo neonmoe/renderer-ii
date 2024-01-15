@@ -54,11 +54,6 @@ impl PipelineIndex {
     /// from, where the shared descriptor set is concerned.
     pub const SHARED_DESCRIPTOR_PIPELINE: PipelineIndex = PipelineIndex::PbrOpaque;
 
-    pub(crate) fn skinned(self) -> bool {
-        use PipelineIndex::{PbrSkinnedAlphaToCoverage, PbrSkinnedBlended, PbrSkinnedOpaque};
-        [PbrSkinnedOpaque, PbrSkinnedAlphaToCoverage, PbrSkinnedBlended].contains(&self)
-    }
-
     pub fn vertex_layout(self) -> VertexLayout {
         match self {
             PipelineIndex::PbrOpaque | PipelineIndex::PbrAlphaToCoverage | PipelineIndex::PbrBlended => VertexLayout::StaticMesh,
@@ -156,11 +151,8 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::empty(),
-        descriptor_size: Some(mem::size_of::<uniforms::MaterialIndices>() as vk::DeviceSize),
+        descriptor_size: Some(mem::size_of::<uniforms::MaterialIds>() as vk::DeviceSize),
     },
-];
-
-static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
     DescriptorSetLayoutParams {
         binding: UF_SAMPLER_BINDING,
         descriptor_type: vk::DescriptorType::SAMPLER,
@@ -170,54 +162,23 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[
         descriptor_size: None,
     },
     DescriptorSetLayoutParams {
-        binding: UF_TEX_BASE_COLOR_BINDING,
+        binding: UF_TEXTURES_BINDING,
         descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
         descriptor_count: MAX_TEXTURE_COUNT,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
         descriptor_size: None,
-    },
-    DescriptorSetLayoutParams {
-        binding: UF_TEX_METALLIC_ROUGHNESS_BINDING,
-        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-        descriptor_count: MAX_TEXTURE_COUNT,
-        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-        descriptor_size: None,
-    },
-    DescriptorSetLayoutParams {
-        binding: UF_TEX_NORMAL_BINDING,
-        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-        descriptor_count: MAX_TEXTURE_COUNT,
-        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-        descriptor_size: None,
-    },
-    DescriptorSetLayoutParams {
-        binding: UF_TEX_OCCLUSION_BINDING,
-        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-        descriptor_count: MAX_TEXTURE_COUNT,
-        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-        descriptor_size: None,
-    },
-    DescriptorSetLayoutParams {
-        binding: UF_TEX_EMISSIVE_BINDING,
-        descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-        descriptor_count: MAX_TEXTURE_COUNT,
-        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-        descriptor_size: None,
-    },
-    DescriptorSetLayoutParams {
-        binding: UF_PBR_FACTORS_BINDING,
-        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-        descriptor_count: 1,
-        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-        binding_flags: vk::DescriptorBindingFlags::empty(),
-        descriptor_size: Some(mem::size_of::<uniforms::PbrFactors>() as vk::DeviceSize),
     },
 ];
+
+static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[DescriptorSetLayoutParams {
+    binding: UF_PBR_FACTORS_BINDING,
+    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+    descriptor_count: 1,
+    stage_flags: vk::ShaderStageFlags::FRAGMENT,
+    binding_flags: vk::DescriptorBindingFlags::empty(),
+    descriptor_size: Some(mem::size_of::<uniforms::PbrFactors>() as vk::DeviceSize),
+}];
 
 static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,
@@ -310,32 +271,14 @@ static IMGUI: PipelineParameters = PipelineParameters {
     attributes: VERTEX_ATTRIBUTE_DESCRIPTIONS.as_array()[VertexLayout::ImGui as usize],
     descriptor_sets: &[
         SHARED_DESCRIPTOR_SET_0,
-        &[
-            DescriptorSetLayoutParams {
-                binding: UF_IMGUI_DRAW_CALL_PARAMS_BINDING,
-                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::VERTEX,
-                binding_flags: vk::DescriptorBindingFlags::empty(),
-                descriptor_size: Some(mem::size_of::<uniforms::ImGuiDrawCallParams>() as vk::DeviceSize),
-            },
-            DescriptorSetLayoutParams {
-                binding: UF_IMGUI_SAMPLER_BINDING,
-                descriptor_type: vk::DescriptorType::SAMPLER,
-                descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                binding_flags: vk::DescriptorBindingFlags::empty(),
-                descriptor_size: None,
-            },
-            DescriptorSetLayoutParams {
-                binding: UF_IMGUI_TEXTURES_BINDING,
-                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: MAX_TEXTURE_COUNT,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-                descriptor_size: None,
-            },
-        ],
+        &[DescriptorSetLayoutParams {
+            binding: UF_IMGUI_DRAW_CALL_PARAMS_BINDING,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::VERTEX,
+            binding_flags: vk::DescriptorBindingFlags::empty(),
+            descriptor_size: Some(mem::size_of::<uniforms::ImGuiDrawCallParams>() as vk::DeviceSize),
+        }],
     ],
 };
 

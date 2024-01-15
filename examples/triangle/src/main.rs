@@ -95,22 +95,13 @@ fn main() {
         (mesh1, mesh2)
     };
 
-    let triangle_material = renderer::Material::new(
+    let triangle_material = renderer::Material::for_pbr(
         &mut descriptors,
-        renderer::PipelineSpecificData::Pbr {
-            base_color: None,
-            metallic_roughness: None,
-            normal: None,
-            occlusion: None,
-            emissive: None,
-            factors: renderer::PbrFactors {
-                base_color: Vec4::new(0.2, 0.8, 0.2, 1.0),
-                emissive_and_occlusion: Vec4::ZERO,
-                alpha_rgh_mtl_normal: Vec4::ONE * 0.5,
-            },
-            alpha_mode: renderer::AlphaMode::Opaque,
-        },
         ArrayString::from("triangle material").unwrap(),
+        renderer::PbrMaterialParameters {
+            base_color_factor: Vec4::new(0.2, 0.8, 0.2, 1.0),
+            ..Default::default()
+        },
     )
     .unwrap();
 

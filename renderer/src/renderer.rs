@@ -64,7 +64,7 @@ pub struct Renderer {
     command_pool: Rc<CommandPool>,
     command_buffer: Option<CommandBuffer>,
     uniform_joints_offsets: uniforms::JointsOffsets,
-    uniform_material_indices: uniforms::MaterialIndices,
+    uniform_material_indices: uniforms::MaterialIds,
 }
 
 impl Renderer {
@@ -116,7 +116,7 @@ impl Renderer {
             command_pool,
             command_buffer: None,
             uniform_joints_offsets: uniforms::JointsOffsets::zeroed(),
-            uniform_material_indices: uniforms::MaterialIndices::zeroed(),
+            uniform_material_indices: uniforms::MaterialIds::zeroed(),
         }
     }
 
@@ -237,8 +237,7 @@ impl Renderer {
                     vertex_offset,
                     first_instance,
                 }));
-                let material_index = draw.tag.material.array_index(pipeline).unwrap();
-                self.uniform_material_indices.material_index[first_instance as usize] = material_index;
+                self.uniform_material_indices.material_id[first_instance as usize] = draw.tag.material.material_id;
                 if let Some(JointsOffset(joints_offset)) = draw.joints {
                     self.uniform_joints_offsets.joints_offset[first_instance as usize] = joints_offset;
                 }
@@ -274,7 +273,7 @@ impl Renderer {
             .expect("renderer's temp arena should have enough memory for the joint transforms buffer");
 
         let materials_temp_uniform = descriptors
-            .create_materials_temp_uniform(&mut self.temp_arena)
+            .create_temp_uniforms(&mut self.temp_arena)
             .expect("renderer's temp arena should have enough memory for the materials buffer");
 
         let draw_call_vert_params = &[self.uniform_joints_offsets];

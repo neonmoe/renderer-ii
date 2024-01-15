@@ -72,10 +72,9 @@ impl<'a> Scene<'a> {
         self.skinned_mesh_joints_buffer.clear();
     }
 
-    /// Returns true if the mesh could be added to the queue. The only reason it
-    /// cannot, is if the Scene has reached maximum supported draws
-    /// ([`MAX_DRAW_CALLS`]). If `mesh` has a vertex layout of
-    /// `VertexLayout::SkinnedMesh`, `joints` must be defined, and vice-versa.
+    /// Returns true if the mesh could be added to the queue. If `mesh` has a
+    /// vertex layout of `VertexLayout::SkinnedMesh`, `joints` must be defined,
+    /// and vice-versa.
     pub fn queue_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, joints: Option<JointsOffset>, transform: Affine3A) -> bool {
         profiling::scope!("queue mesh");
         if self.draws.len() < MAX_DRAW_CALLS as usize {
