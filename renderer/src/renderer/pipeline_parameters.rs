@@ -45,6 +45,8 @@ pub enum PipelineIndex {
     PbrSkinnedBlended,
     /// Post-processing pass before MSAA resolve and up/downsampling.
     RenderResolutionPostProcess,
+    /// ImGui pass after MSAA resolve.
+    ImGui,
 }
 
 impl PipelineIndex {
@@ -64,6 +66,7 @@ impl PipelineIndex {
                 VertexLayout::SkinnedMesh
             }
             PipelineIndex::RenderResolutionPostProcess => VertexLayout::FullscreenQuad,
+            PipelineIndex::ImGui => VertexLayout::ImGui,
         }
     }
 }
@@ -145,7 +148,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::VERTEX,
         binding_flags: vk::DescriptorBindingFlags::empty(),
-        descriptor_size: Some(mem::size_of::<uniforms::DrawCallVertParams>() as vk::DeviceSize),
+        descriptor_size: Some(mem::size_of::<uniforms::JointsOffsets>() as vk::DeviceSize),
     },
     DescriptorSetLayoutParams {
         binding: UF_DRAW_CALL_FRAG_PARAMS_BINDING,
@@ -153,7 +156,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::empty(),
-        descriptor_size: Some(mem::size_of::<uniforms::DrawCallFragParams>() as vk::DeviceSize),
+        descriptor_size: Some(mem::size_of::<uniforms::MaterialIndices>() as vk::DeviceSize),
     },
 ];
 
@@ -278,8 +281,8 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
         single_sample: shader!("variants/render_res_pp-singlesample.frag"),
         multi_sample: shader!("variants/render_res_pp-multisample.frag"),
     },
-    bindings: &[],
-    attributes: &[],
+    bindings: VERTEX_BINDING_DESCRIPTIONS.as_array()[VertexLayout::FullscreenQuad as usize],
+    attributes: VERTEX_ATTRIBUTE_DESCRIPTIONS.as_array()[VertexLayout::FullscreenQuad as usize],
     descriptor_sets: &[
         SHARED_DESCRIPTOR_SET_0,
         &[DescriptorSetLayoutParams {
@@ -293,6 +296,49 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     ],
 };
 
+static IMGUI: PipelineParameters = PipelineParameters {
+    alpha_to_coverage: false,
+    blended: true,
+    depth_test: false,
+    depth_write: false,
+    sample_shading: false,
+    min_sample_shading_factor: 1.0,
+    render_pass: RenderPass::PostProcess,
+    vertex_shader: Shader::SingleVariant(shader!("imgui.vert")),
+    fragment_shader: Shader::SingleVariant(shader!("imgui.frag")),
+    bindings: VERTEX_BINDING_DESCRIPTIONS.as_array()[VertexLayout::ImGui as usize],
+    attributes: VERTEX_ATTRIBUTE_DESCRIPTIONS.as_array()[VertexLayout::ImGui as usize],
+    descriptor_sets: &[
+        SHARED_DESCRIPTOR_SET_0,
+        &[
+            DescriptorSetLayoutParams {
+                binding: UF_IMGUI_DRAW_CALL_PARAMS_BINDING,
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::VERTEX,
+                binding_flags: vk::DescriptorBindingFlags::empty(),
+                descriptor_size: Some(mem::size_of::<uniforms::ImGuiDrawCallParams>() as vk::DeviceSize),
+            },
+            DescriptorSetLayoutParams {
+                binding: UF_IMGUI_SAMPLER_BINDING,
+                descriptor_type: vk::DescriptorType::SAMPLER,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::empty(),
+                descriptor_size: None,
+            },
+            DescriptorSetLayoutParams {
+                binding: UF_IMGUI_TEXTURES_BINDING,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_TEXTURE_COUNT,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+                descriptor_size: None,
+            },
+        ],
+    ],
+};
+
 pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = PipelineMap::from_array([
     OPAQUE_PARAMETERS,
     SKINNED_OPAQUE_PARAMETERS,
@@ -301,4 +347,5 @@ pub(crate) static PIPELINE_PARAMETERS: PipelineMap<PipelineParameters> = Pipelin
     BLENDED_PARAMETERS,
     SKINNED_BLENDED_PARAMETERS,
     RENDER_RESOLUTION_POST_PROCESS,
+    IMGUI,
 ]);

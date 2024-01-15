@@ -128,6 +128,9 @@ pub use display_utils::*;
 
 pub mod image_loading;
 
+#[cfg(feature = "imgui-support")]
+pub mod imgui_support;
+
 pub mod include_words;
 
 mod instance;

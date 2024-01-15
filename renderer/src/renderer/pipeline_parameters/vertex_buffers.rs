@@ -13,6 +13,7 @@ pub enum VertexLayout {
     StaticMesh,
     SkinnedMesh,
     FullscreenQuad,
+    ImGui,
 }
 
 impl VertexLayout {
@@ -32,6 +33,7 @@ impl VertexLayout {
                 VertexBinding::Weights0,
             ]),
             VertexLayout::FullscreenQuad => ArrayVec::new(),
+            VertexLayout::ImGui => ArrayVec::from_iter([VertexBinding::Position, VertexBinding::Texcoord0, VertexBinding::Color]),
         }
     }
 }
@@ -47,6 +49,7 @@ pub enum VertexBinding {
     Tangent,
     Joints0,
     Weights0,
+    Color,
 }
 
 pub(crate) struct VertexSizes {
@@ -69,7 +72,7 @@ impl VertexSizes {
 /// the size of a single vertex written out by it, in that order.
 #[allow(clippy::match_same_arms)]
 pub fn get_vertex_sizes(vertex_layout: VertexLayout, vertex_binding: VertexBinding) -> VertexSizes {
-    use VertexLayout::{SkinnedMesh, StaticMesh};
+    use VertexLayout::{SkinnedMesh, StaticMesh, ImGui};
     match (vertex_layout, vertex_binding) {
         (StaticMesh | SkinnedMesh, VertexBinding::Position) => VertexSizes::from_types::<[f32; 3], [f16; 3]>(),
         (StaticMesh | SkinnedMesh, VertexBinding::Texcoord0) => VertexSizes::from_types::<[f32; 2], [f16; 2]>(),
@@ -77,6 +80,9 @@ pub fn get_vertex_sizes(vertex_layout: VertexLayout, vertex_binding: VertexBindi
         (StaticMesh | SkinnedMesh, VertexBinding::Tangent) => VertexSizes::from_types::<[f32; 4], u32>(),
         (SkinnedMesh, VertexBinding::Joints0) => VertexSizes::from_types::<[u8; 4], [u8; 4]>(),
         (SkinnedMesh, VertexBinding::Weights0) => VertexSizes::from_types::<[f32; 4], [u8; 4]>(),
+        (ImGui, VertexBinding::Position) => VertexSizes::from_types::<[f32; 3], [f32; 3]>(),
+        (ImGui, VertexBinding::Texcoord0) => VertexSizes::from_types::<[f32; 2], [f32; 2]>(),
+        (ImGui, VertexBinding::Color) => VertexSizes::from_types::<[f32; 4], [f32; 4]>(),
         _ => unimplemented!("binding {vertex_binding:?} is not used in {vertex_layout:?}"),
     }
 }
@@ -100,7 +106,7 @@ pub fn write_vertices(vertex_layout: VertexLayout, binding: VertexBinding, src: 
         (max as f32 * f.clamp(-1.0, 1.0)) as i32 as u32 & mask
     }
 
-    use VertexLayout::{SkinnedMesh, StaticMesh};
+    use VertexLayout::{ImGui, SkinnedMesh, StaticMesh};
     match (vertex_layout, binding) {
         (StaticMesh | SkinnedMesh, VertexBinding::Position) => {
             let src = bytemuck::cast_slice::<u8, [f32; 3]>(src);
@@ -139,7 +145,10 @@ pub fn write_vertices(vertex_layout: VertexLayout, binding: VertexBinding, src: 
                 *dst = (src * 0xFF as f32) as u8;
             }
         }
-        (StaticMesh | SkinnedMesh, _) => dst.copy_from_slice(src),
+        (SkinnedMesh, VertexBinding::Joints0) => dst.copy_from_slice(src),
+        (ImGui, VertexBinding::Position) => todo!(),
+        (ImGui, VertexBinding::Texcoord0) => todo!(),
+        (ImGui, VertexBinding::Color) => todo!(),
         _ => unimplemented!("binding {binding:?} is not used in {vertex_layout:?}"),
     }
 }
@@ -148,10 +157,10 @@ pub type VertexLayoutMap<T> = EnumMap<VertexLayout, T>;
 pub type VertexBindingMap<T> = EnumMap<VertexBinding, Option<T>>;
 
 pub static VERTEX_BINDING_DESCRIPTIONS: VertexLayoutMap<&[vk::VertexInputBindingDescription]> =
-    EnumMap::from_array([STATIC_MESH_VERTEX_BINDINGS, SKINNED_MESH_VERTEX_BINDINGS, &[]]);
+    EnumMap::from_array([STATIC_MESH_VERTEX_BINDINGS, SKINNED_MESH_VERTEX_BINDINGS, &[], IMGUI_VERTEX_BINDINGS]);
 
 pub static VERTEX_ATTRIBUTE_DESCRIPTIONS: VertexLayoutMap<&[vk::VertexInputAttributeDescription]> =
-    EnumMap::from_array([STATIC_MESH_VERTEX_ATTRIBUTES, SKINNED_MESH_VERTEX_ATTRIBUTES, &[]]);
+    EnumMap::from_array([STATIC_MESH_VERTEX_ATTRIBUTES, SKINNED_MESH_VERTEX_ATTRIBUTES, &[], IMGUI_VERTEX_ATTRIBUTES]);
 
 static INSTANCED_TRANSFORM_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
     binding: VertexBinding::Transforms as u32,
@@ -194,6 +203,23 @@ static STATIC_MESH_VERTEX_BINDINGS: &[vk::VertexInputBindingDescription] =
     &[INSTANCED_TRANSFORM_BINDING, POSITION_BINDING, TEXCOORD0_BINDING, NORMAL_BINDING, TANGENT_BINDING];
 static SKINNED_MESH_VERTEX_BINDINGS: &[vk::VertexInputBindingDescription] =
     &[INSTANCED_TRANSFORM_BINDING, POSITION_BINDING, TEXCOORD0_BINDING, NORMAL_BINDING, TANGENT_BINDING, JOINTS0_BINDING, WEIGHTS0_BINDING];
+static IMGUI_VERTEX_BINDINGS: &[vk::VertexInputBindingDescription] = &[
+    vk::VertexInputBindingDescription {
+        binding: VertexBinding::Position as u32,
+        stride: mem::size_of::<imgui::DrawVert>() as u32,
+        input_rate: vk::VertexInputRate::VERTEX,
+    },
+    vk::VertexInputBindingDescription {
+        binding: VertexBinding::Texcoord0 as u32,
+        stride: mem::size_of::<imgui::DrawVert>() as u32,
+        input_rate: vk::VertexInputRate::VERTEX,
+    },
+    vk::VertexInputBindingDescription {
+        binding: VertexBinding::Color as u32,
+        stride: mem::size_of::<imgui::DrawVert>() as u32,
+        input_rate: vk::VertexInputRate::VERTEX,
+    },
+];
 
 static INSTANCED_TRANSFORM_BINDING_ATTRIBUTES: [vk::VertexInputAttributeDescription; 7] = [
     vk::VertexInputAttributeDescription {
@@ -303,4 +329,24 @@ static SKINNED_MESH_VERTEX_ATTRIBUTES: &[vk::VertexInputAttributeDescription] = 
     TANGENT_BINDING_ATTRIBUTE,
     JOINTS0_BINDING_ATTRIBUTE,
     WEIGHTS0_BINDING_ATTRIBUTE,
+];
+static IMGUI_VERTEX_ATTRIBUTES: &[vk::VertexInputAttributeDescription] = &[
+    vk::VertexInputAttributeDescription {
+        binding: VertexBinding::Position as u32,
+        location: IN_POSITION_LOCATION,
+        format: vk::Format::R32G32_SFLOAT,
+        offset: 0,
+    },
+    vk::VertexInputAttributeDescription {
+        binding: VertexBinding::Texcoord0 as u32,
+        location: IN_TEXCOORD_0_LOCATION,
+        format: vk::Format::R32G32_SFLOAT,
+        offset: mem::size_of::<[f32; 2]>() as u32,
+    },
+    vk::VertexInputAttributeDescription {
+        binding: VertexBinding::Color as u32,
+        location: IN_COLOR_LOCATION,
+        format: vk::Format::R8G8B8A8_UNORM,
+        offset: mem::size_of::<[f32; 4]>() as u32,
+    },
 ];

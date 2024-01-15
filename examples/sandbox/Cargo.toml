@@ -6,10 +6,12 @@ edition = "2021"
 [dependencies]
 glam = { version = "0.23", default-features = false, features = ["libm", "bytemuck"] }
 gltf = { path = "../../gltf" }
+imgui = { version = "0.11.0" }
+imgui-sdl2-support = { path = "../../imgui-sdl2-support" }
 log = { version = "0.4" }
 profiling = { version = "1.0" }
-renderer = { path = "../../renderer" }
-sdl2 = { git = "https://github.com/Rust-SDL2/rust-sdl2", features = ["raw-window-handle"] }
+renderer = { path = "../../renderer", features = ["imgui-support"] }
+sdl2 = { version = "0.36.0", features = ["raw-window-handle"] }
 thiserror = { version = "1.0" }
 tracy-client = { version = "0.16.3", optional = true }
 

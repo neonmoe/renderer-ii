@@ -159,7 +159,7 @@ fn main() {
 
         let frame_index = renderer.wait_frame(&swapchain).unwrap();
         renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, 3);
-        match { renderer.present_frame(frame_index, &swapchain) } {
+        match renderer.present_frame(frame_index, &swapchain) {
             Ok(_) => {}
             Err(renderer::SwapchainError::OutOfDate) => swapchain_recreation_requested = Some(time.ticks()),
         }

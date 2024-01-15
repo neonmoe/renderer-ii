@@ -1,7 +1,8 @@
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec4};
+use glam::{Mat4, Vec2, Vec4};
 
 use crate::renderer::pipeline_parameters::constants::{MAX_DRAW_CALLS, MAX_TEXTURE_COUNT};
+use crate::renderer::pipeline_parameters::MAX_IMGUI_DRAW_CALLS;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -27,7 +28,7 @@ pub struct RenderSettings {
 /// instance, so the rest is left zeroed.
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
-pub struct DrawCallFragParams {
+pub struct MaterialIndices {
     pub material_index: [u32; MAX_DRAW_CALLS as usize],
 }
 
@@ -41,7 +42,7 @@ pub struct DrawCallFragParams {
 /// instance, so the rest is left zeroed.
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
-pub struct DrawCallVertParams {
+pub struct JointsOffsets {
     pub joints_offset: [u32; MAX_DRAW_CALLS as usize],
 }
 
@@ -56,4 +57,13 @@ pub struct PbrFactors {
     pub emissive_and_occlusion: [Vec4; MAX_TEXTURE_COUNT as usize],
     /// (alpha cutoff, roughness, metallic, normal scale)
     pub alpha_rgh_mtl_normal: [Vec4; MAX_TEXTURE_COUNT as usize],
+}
+
+/// Rust-side representation of the std430-layout `ImGuiDrawCallParams` struct
+/// in imgui.vert.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct ImGuiDrawCallParams {
+    pub scale: [Vec2; MAX_IMGUI_DRAW_CALLS as usize],
+    pub translate: [Vec2; MAX_IMGUI_DRAW_CALLS as usize],
 }

@@ -4,24 +4,6 @@
 
 #include "constants.glsl"
 
-layout(set = 0, binding = UF_TRANSFORMS_BINDING) uniform GlobalTransforms {
-    mat4 proj;
-    mat4 view;
-}
-uf_transforms;
-
-layout(set = 0, binding = UF_DRAW_CALL_VERT_PARAMS_BINDING, std430) uniform DrawCallVertParams {
-    uint joints_offset[MAX_DRAW_CALLS];
-}
-uf_draw_call;
-
-#ifdef SKINNED
-layout(set = 2, binding = UF_SKELETON_BINDING) uniform Joint {
-    mat4 joints[MAX_JOINT_COUNT];
-}
-uf_skin;
-#endif
-
 // mat4x3 causes the validation layer to complain the location 3 is not used, so
 // it's represented as mat3 + vec3 here.
 layout(location = IN_TRANSFORMS_LOCATION) in mat3 in_transform_rotationscale;
@@ -41,6 +23,24 @@ layout(location = 1) out vec3 out_normal;
 layout(location = 2) out vec4 out_tangent;
 layout(location = 3) out vec3 out_debug_color;
 layout(location = 4) out uint out_draw_id;
+
+layout(set = 0, binding = UF_TRANSFORMS_BINDING) uniform GlobalTransforms {
+    mat4 proj;
+    mat4 view;
+}
+uf_transforms;
+
+layout(set = 0, binding = UF_DRAW_CALL_VERT_PARAMS_BINDING, std430) uniform DrawCallVertParams {
+    uint joints_offset[MAX_DRAW_CALLS];
+}
+uf_draw_call;
+
+#ifdef SKINNED
+layout(set = 2, binding = UF_SKELETON_BINDING) uniform Joint {
+    mat4 joints[MAX_JOINT_COUNT];
+}
+uf_skin;
+#endif
 
 vec3 hsv(float hue, float saturation, float value) {
     float h = mod(hue * 6.0, 6.0);

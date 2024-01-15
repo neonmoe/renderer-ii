@@ -22,20 +22,10 @@ pub struct DrawCallTag<'a> {
 
 impl Ord for DrawCallTag<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        let inequality = |draw_before_other: bool| {
-            if draw_before_other { Ordering::Less } else { Ordering::Greater }
-        };
-        if (self.pipeline as u32) != (other.pipeline as u32) {
-            inequality((self.pipeline as u32) < (other.pipeline as u32))
-        } else if self.vertex_library != other.vertex_library {
-            inequality(self.vertex_library < other.vertex_library)
-        } else if self.mesh != other.mesh {
-            inequality(self.mesh < other.mesh)
-        } else if self.material != other.material {
-            inequality(self.material < other.material)
-        } else {
-            Ordering::Equal
-        }
+        (self.pipeline.cmp(&other.pipeline))
+            .then_with(|| self.vertex_library.cmp(other.vertex_library))
+            .then_with(|| self.mesh.cmp(other.mesh))
+            .then_with(|| self.material.cmp(other.material))
     }
 }
 

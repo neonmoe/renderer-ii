@@ -73,7 +73,7 @@ impl Display for RejectionReasonList {
 }
 
 /// A unique id for every distinct GPU.
-pub struct GpuId([u8; 16]);
+pub struct GpuId(pub [u8; 16]);
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct QueueFamily {

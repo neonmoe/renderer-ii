@@ -37,6 +37,9 @@ pub enum PipelineSpecificData {
         factors: PbrFactors,
         alpha_mode: AlphaMode,
     },
+    ImGui {
+        texture: Rc<ImageView>,
+    },
 }
 
 /// A unique index into one pipeline's textures and other material data.

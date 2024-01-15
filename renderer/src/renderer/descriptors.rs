@@ -10,8 +10,8 @@ use crate::arena::buffers::{BufferUsage, ForBuffers};
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::pipeline_parameters::constants::{
-    MAX_TEXTURE_COUNT, UF_DRAW_CALL_FRAG_PARAMS_BINDING, UF_DRAW_CALL_VERT_PARAMS_BINDING, UF_RENDER_SETTINGS_BINDING,
-    UF_TRANSFORMS_BINDING,
+    MAX_TEXTURE_COUNT, UF_DRAW_CALL_FRAG_PARAMS_BINDING, UF_DRAW_CALL_VERT_PARAMS_BINDING, UF_IMGUI_TEXTURES_BINDING,
+    UF_RENDER_SETTINGS_BINDING, UF_TEX_BASE_COLOR_BINDING, UF_TRANSFORMS_BINDING,
 };
 use crate::renderer::pipeline_parameters::{
     uniforms, DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_PARAMETERS,
@@ -32,6 +32,7 @@ fn get_pipelines(data: &PipelineSpecificData) -> ArrayVec<PipelineIndex, MAX_PIP
             AlphaMode::AlphaToCoverage => [PipelineIndex::PbrAlphaToCoverage, PipelineIndex::PbrSkinnedAlphaToCoverage].into(),
             AlphaMode::Blend => [PipelineIndex::PbrBlended, PipelineIndex::PbrSkinnedBlended].into(),
         },
+        PipelineSpecificData::ImGui { .. } => ArrayVec::from_iter([PipelineIndex::ImGui]),
     }
 }
 
@@ -230,11 +231,11 @@ impl Descriptors {
                 .iter()
                 .map(|slot| {
                     if let Some(slot) = slot.as_ref().and_then(Weak::upgrade) {
-                        let PipelineSpecificData::Pbr { factors, .. } = slot.data;
-                        factors
-                    } else {
-                        PbrFactors::default()
+                        if let PipelineSpecificData::Pbr { factors, .. } = slot.data {
+                            return factors;
+                        }
                     }
+                    PbrFactors::default()
                 })
                 .collect::<ArrayVec<_, { MAX_TEXTURE_COUNT as usize }>>();
             if factors.is_empty() {
@@ -325,6 +326,8 @@ impl Descriptors {
             self.set_uniform_buffer(pipeline, &mut pending_writes, (1, 6, 0), buffer);
         }
 
+        // TODO: Update imgui draw call data for the vertex shader
+
         for (pipeline, i, material) in &materials_needing_update {
             self.write_material(*pipeline, *i, material, &mut pending_writes);
             self.material_updated_per_pipeline[*pipeline][*i as usize] = true;
@@ -355,7 +358,10 @@ impl Descriptors {
                     occlusion.as_ref().map_or(&self.pbr_defaults.occlusion, Rc::as_ref).inner,
                     emissive.as_ref().map_or(&self.pbr_defaults.emissive, Rc::as_ref).inner,
                 ];
-                self.set_uniform_images(pipeline, pending_writes, (1, 1, index), &images);
+                self.set_uniform_images(pipeline, pending_writes, (1, UF_TEX_BASE_COLOR_BINDING, index), &images);
+            }
+            PipelineSpecificData::ImGui { texture } => {
+                self.set_uniform_images(pipeline, pending_writes, (1, UF_IMGUI_TEXTURES_BINDING, index), &[texture.inner]);
             }
         }
     }

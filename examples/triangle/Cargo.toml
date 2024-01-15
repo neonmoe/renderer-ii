@@ -9,7 +9,7 @@ bytemuck = { version = "1.9" }
 glam = { version = "0.23", default-features = false, features = ["libm", "bytemuck"] }
 log = { version = "0.4" }
 renderer = { path = "../../renderer" }
-sdl2 = { git = "https://github.com/Rust-SDL2/rust-sdl2", features = ["raw-window-handle"] }
+sdl2 = { version = "0.36.0", features = ["raw-window-handle"] }
 
 [features]
 vulkan-validation = ["renderer/vulkan-validation", "renderer/vulkan-debug-utils"]

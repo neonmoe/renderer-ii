@@ -63,8 +63,8 @@ pub struct Renderer {
     temp_arena: VulkanArena<ForBuffers>,
     command_pool: Rc<CommandPool>,
     command_buffer: Option<CommandBuffer>,
-    draw_call_vertex_params: uniforms::DrawCallVertParams,
-    draw_call_fragment_params: uniforms::DrawCallFragParams,
+    uniform_joints_offsets: uniforms::JointsOffsets,
+    uniform_material_indices: uniforms::MaterialIndices,
 }
 
 impl Renderer {
@@ -115,8 +115,8 @@ impl Renderer {
             temp_arena,
             command_pool,
             command_buffer: None,
-            draw_call_vertex_params: uniforms::DrawCallVertParams::zeroed(),
-            draw_call_fragment_params: uniforms::DrawCallFragParams::zeroed(),
+            uniform_joints_offsets: uniforms::JointsOffsets::zeroed(),
+            uniform_material_indices: uniforms::MaterialIndices::zeroed(),
         }
     }
 
@@ -238,9 +238,9 @@ impl Renderer {
                     first_instance,
                 }));
                 let material_index = draw.tag.material.array_index(pipeline).unwrap();
-                self.draw_call_fragment_params.material_index[first_instance as usize] = material_index;
+                self.uniform_material_indices.material_index[first_instance as usize] = material_index;
                 if let Some(JointsOffset(joints_offset)) = draw.joints {
-                    self.draw_call_vertex_params.joints_offset[first_instance as usize] = joints_offset;
+                    self.uniform_joints_offsets.joints_offset[first_instance as usize] = joints_offset;
                 }
                 prev_tag = Some(draw.tag);
                 prev_joints = Some(draw.joints);
@@ -277,12 +277,12 @@ impl Renderer {
             .create_materials_temp_uniform(&mut self.temp_arena)
             .expect("renderer's temp arena should have enough memory for the materials buffer");
 
-        let draw_call_vert_params = &[self.draw_call_vertex_params];
+        let draw_call_vert_params = &[self.uniform_joints_offsets];
         let draw_call_vert_params_buffer =
             create_uniform_buffer(&mut self.temp_arena, draw_call_vert_params, "draw call params (for vertex shader)")
                 .expect("renderer's temp arena should have enough memory for the draw call params buffer");
 
-        let draw_call_frag_params = &[self.draw_call_fragment_params];
+        let draw_call_frag_params = &[self.uniform_material_indices];
         let draw_call_frag_params_buffer =
             create_uniform_buffer(&mut self.temp_arena, draw_call_frag_params, "draw call params (for fragment shader)")
                 .expect("renderer's temp arena should have enough memory for the draw call params buffer");

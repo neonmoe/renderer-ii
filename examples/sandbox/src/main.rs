@@ -105,14 +105,6 @@ fn main_() {
     };
     let state_mutex = Arc::new(Mutex::new(state));
 
-    let game_thread = std::thread::Builder::new()
-        .name(format!("{}-update", env!("CARGO_CRATE_NAME")))
-        .spawn({
-            let state_mutex = state_mutex.clone();
-            move || game_main(state_mutex)
-        })
-        .unwrap();
-
     #[cfg(feature = "profile-with-tracy")]
     std::thread::Builder::new()
         .name(format!("{}-vram-monitor", env!("CARGO_CRATE_NAME")))
@@ -152,6 +144,13 @@ fn main_() {
         })
         .unwrap();
 
+    let mut imgui = imgui::Context::create();
+    imgui.set_ini_filename(None);
+    imgui.set_log_filename(None);
+    imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData { config: None }]);
+    let mut imgui_platform = imgui_sdl2_support::SdlPlatform::init(&mut imgui);
+    renderer::imgui_support::init(&mut imgui);
+
     let controller_subsystem = {
         profiling::scope!("SDL controller subsystem init");
         sdl_context.game_controller().unwrap()
@@ -174,6 +173,8 @@ fn main_() {
 
     let mut event_pump = sdl_context.event_pump().unwrap();
     let mut opened_controller = None;
+    let mut last_wait_time = Instant::now();
+    let mut last_frame_start = Instant::now();
     'main: loop {
         if let Some(which) = opened_controller {
             profiling::scope!("opening controller");
@@ -181,11 +182,6 @@ fn main_() {
             opened_controller = None;
         }
 
-        let event = {
-            profiling::scope!("waiting for an event");
-            event_pump.wait_event_timeout(2)
-        };
-        profiling::scope!("handle event");
         let mut state = {
             profiling::scope!("waiting for lock");
             state_mutex.lock().unwrap()
@@ -194,7 +190,12 @@ fn main_() {
             break 'main;
         }
 
-        if let Some(event) = event {
+        for event in event_pump.poll_iter() {
+            {
+                profiling::scope!("imgui event processing", &format!("event: {event:?}"));
+                imgui_platform.handle_event(&mut imgui, &event);
+            }
+
             profiling::scope!("event-specific processing", &format!("event: {event:?}"));
             match event {
                 Event::Quit { .. } => {
@@ -319,65 +320,18 @@ fn main_() {
             }
         }
 
-        let next_update_time = &mut fps_counter_update_deadlines[fps_counter_accumulator_index];
-        if Instant::now() >= *next_update_time {
-            profiling::scope!("updating performance counters");
-            *next_update_time += Duration::from_secs(1);
-
-            let latest_renders = state.cumulative_render_count;
-            let latest_avg_render_time = state.cumulative_render_time / state.cumulative_render_count.max(1);
-            let latest_avg_update_time = state.cumulative_update_time / state.cumulative_update_count.max(1);
-            state.cumulative_render_count = 0;
-            state.cumulative_update_count = 0;
-            state.cumulative_render_time = Duration::ZERO;
-            state.cumulative_update_time = Duration::ZERO;
-
-            fps_counter_ready |= fps_counter_accumulator_index == fps_counter_accumulators.len() - 1;
-            fps_counter_accumulator_index = (fps_counter_accumulator_index + 1) % fps_counter_accumulators.len();
-            let (fps_store, render_time_store, update_time_store) = &mut fps_counter_accumulators[fps_counter_accumulator_index];
-            *fps_store = latest_renders;
-            *render_time_store = latest_avg_render_time;
-            *update_time_store = latest_avg_update_time;
-
-            if fps_counter_ready {
-                let (fps, render_time, update_time) = fps_counter_accumulators.iter().fold(
-                    (0, Duration::ZERO, Duration::ZERO),
-                    |(acc_fps, acc_r, acc_u), (renders, render_time, update_time)| {
-                        (acc_fps + *renders, acc_r + *render_time, acc_u + *update_time)
-                    },
-                );
-                let render_time = render_time / fps_counter_accumulators.len() as u32;
-                let update_time = update_time / fps_counter_accumulators.len() as u32;
-                let title = format!("sandbox (fps: {fps:4}, render time: {render_time:.2?}, dt: {update_time:.2?})");
-
-                drop(state);
-                profiling::scope!("updating window title (dropped state lock)");
-                let _ = window.set_title(&title);
-            }
+        {
+            profiling::scope!("imgui prepare frame");
+            imgui_platform.prepare_frame(&mut imgui, &window, &event_pump);
+            let ui = imgui.frame();
+            ui.show_demo_window(&mut true);
+            renderer::imgui_support::prepare_render(imgui.render());
         }
-    }
 
-    game_thread.join().unwrap();
-    rendering_thread.join().unwrap();
-}
-
-fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
-    let mut last_wait_time = Instant::now();
-    let mut last_frame_start = Instant::now();
-
-    loop {
         let too_slow;
         let dt_duration;
         {
-            profiling::scope!("main loop update");
-
-            let mut state = {
-                profiling::scope!("waiting for lock");
-                state_mutex.lock().unwrap()
-            };
-            if !state.running {
-                break;
-            }
+            profiling::scope!("game update");
 
             let frame_start = Instant::now();
             let real_dt = frame_start - last_frame_start;
@@ -410,6 +364,47 @@ fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
             state.frame += 1;
         }
 
+        let next_update_time = &mut fps_counter_update_deadlines[fps_counter_accumulator_index];
+        let mut updated_title = None;
+        if Instant::now() >= *next_update_time {
+            profiling::scope!("updating performance counters");
+            *next_update_time += Duration::from_secs(1);
+
+            let latest_renders = state.cumulative_render_count;
+            let latest_avg_render_time = state.cumulative_render_time / state.cumulative_render_count.max(1);
+            let latest_avg_update_time = state.cumulative_update_time / state.cumulative_update_count.max(1);
+            state.cumulative_render_count = 0;
+            state.cumulative_update_count = 0;
+            state.cumulative_render_time = Duration::ZERO;
+            state.cumulative_update_time = Duration::ZERO;
+
+            fps_counter_ready |= fps_counter_accumulator_index == fps_counter_accumulators.len() - 1;
+            fps_counter_accumulator_index = (fps_counter_accumulator_index + 1) % fps_counter_accumulators.len();
+            let (fps_store, render_time_store, update_time_store) = &mut fps_counter_accumulators[fps_counter_accumulator_index];
+            *fps_store = latest_renders;
+            *render_time_store = latest_avg_render_time;
+            *update_time_store = latest_avg_update_time;
+
+            if fps_counter_ready {
+                let (fps, render_time, update_time) = fps_counter_accumulators.iter().fold(
+                    (0, Duration::ZERO, Duration::ZERO),
+                    |(acc_fps, acc_r, acc_u), (renders, render_time, update_time)| {
+                        (acc_fps + *renders, acc_r + *render_time, acc_u + *update_time)
+                    },
+                );
+                let render_time = render_time / fps_counter_accumulators.len() as u32;
+                let update_time = update_time / fps_counter_accumulators.len() as u32;
+                updated_title = Some(format!("sandbox (fps: {fps:4}, render time: {render_time:.2?}, dt: {update_time:.2?})"));
+            }
+        }
+
+        drop(state);
+
+        if let Some(title) = updated_title {
+            profiling::scope!("updating window title (dropped state lock)");
+            let _ = window.set_title(&title);
+        }
+
         if !too_slow {
             profiling::scope!("sleeping until the next update");
             let deadline = last_wait_time + dt_duration;
@@ -423,6 +418,8 @@ fn game_main(state_mutex: Arc<Mutex<SharedState>>) {
             last_wait_time = Instant::now();
         }
     }
+
+    rendering_thread.join().unwrap();
 }
 
 fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, state_mutex: Arc<Mutex<SharedState>>) {
@@ -653,7 +650,7 @@ fn rendering_main(instance: renderer::Instance, surface: renderer::Surface, stat
             match renderer.wait_frame(&swapchain) {
                 Ok(frame_index) => {
                     renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, debug_value);
-                    match { renderer.present_frame(frame_index, &swapchain) } {
+                    match renderer.present_frame(frame_index, &swapchain) {
                         Ok(()) => {}
                         Err(renderer::SwapchainError::OutOfDate) => recreate_swapchain = true,
                     }
