@@ -206,7 +206,7 @@ pub fn filter_event(window: &Window, event: &Event) -> bool {
 /// 2. Pass events to the platform (every frame)
 /// 3. Call frame preparation callback (every frame)
 pub struct SdlPlatform {
-    cursor_instance: Option<Cursor>, /* to avoid dropping cursor instances */
+    cursor_instance: Option<(Cursor, MouseCursor)>, /* to avoid dropping cursor instances and re-creating the cursor unnecessarily */
     last_frame: Instant,
 }
 
@@ -343,11 +343,13 @@ impl SdlPlatform {
 
             match mouse_cursor {
                 Some(mouse_cursor) if !io.mouse_draw_cursor => {
-                    let cursor = Cursor::from_system(to_sdl_cursor(mouse_cursor)).unwrap();
-                    cursor.set();
+                    if self.cursor_instance.iter().all(|(_, existing)| mouse_cursor != *existing) {
+                        let cursor = Cursor::from_system(to_sdl_cursor(mouse_cursor)).unwrap();
+                        cursor.set();
 
-                    mouse_util.show_cursor(true);
-                    self.cursor_instance = Some(cursor);
+                        mouse_util.show_cursor(true);
+                        self.cursor_instance = Some((cursor, mouse_cursor));
+                    }
                 }
 
                 _ => {

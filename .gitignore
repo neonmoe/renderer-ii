@@ -6,3 +6,5 @@ Cargo.lock
 *.dll*
 *.lib*
 /.idea
+flamegraph.svg
+perf.data*
