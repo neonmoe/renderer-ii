@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, UVec4, Vec2, Vec4};
+use glam::{Mat4, UVec4, Vec4};
 
 use crate::renderer::pipeline_parameters::constants::{MAX_DRAW_CALLS, MAX_PBR_FACTORS_COUNT};
 use crate::renderer::pipeline_parameters::MAX_IMGUI_DRAW_CALLS;
@@ -63,11 +63,11 @@ pub struct PbrFactors {
     pub textures: [UVec4; MAX_PBR_FACTORS_COUNT as usize],
 }
 
-/// Rust-side representation of the std430-layout `ImGuiDrawCallParams` struct
-/// in imgui.vert.
+/// Rust-side representation of the std430-layout `ImGuiDrawCmdParams` struct
+/// in imgui.frag.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-pub struct ImGuiDrawCallParams {
-    pub scale: [Vec2; MAX_IMGUI_DRAW_CALLS as usize],
-    pub translate: [Vec2; MAX_IMGUI_DRAW_CALLS as usize],
+pub struct ImGuiDrawCmdParams {
+    pub clip_rect: [Vec4; MAX_IMGUI_DRAW_CALLS as usize],
+    pub texture_index: [u32; MAX_IMGUI_DRAW_CALLS as usize],
 }

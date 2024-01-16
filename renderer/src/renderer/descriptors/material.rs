@@ -31,6 +31,12 @@ pub enum AlphaMode {
     Blended,
 }
 
+#[derive(Clone, Copy, Zeroable)]
+pub struct ImGuiDrawCmd {
+    pub clip_rect: Vec4,
+    pub texture_index: u32,
+}
+
 #[derive(Clone)]
 pub enum PipelineSpecificData {
     Pbr {
@@ -44,6 +50,7 @@ pub enum PipelineSpecificData {
     },
     ImGui {
         texture: Rc<ImageView>,
+        cmd: Rc<ImGuiDrawCmd>,
     },
 }
 
@@ -99,7 +106,7 @@ pub struct Material {
 impl Material {
     pub fn for_pbr(descriptors: &mut Descriptors, name: ArrayString<64>, params: PbrMaterialParameters) -> Option<Rc<Material>> {
         fn allocate_texture_slot(descriptors: &mut Descriptors, tex: &Option<Rc<ImageView>>, fallback: u32) -> Option<u32> {
-            if let Some(tex) = tex { descriptors.allocate_texture_slot(Rc::downgrade(tex)) } else { Some(fallback) }
+            if let Some(tex) = tex { descriptors.texture_slots.try_allocate_slot(Rc::downgrade(tex)) } else { Some(fallback) }
         }
         let PbrMaterialParameters { base_color, metallic_roughness, normal, occlusion, emissive, .. } = params;
         let idx_base_col = allocate_texture_slot(descriptors, &base_color, descriptors.pbr_defaults.base_color.1)?;
@@ -117,7 +124,7 @@ impl Material {
             alpha_rgh_mtl_normal,
             textures: UVec4::new((idx_base_col << 16) | idx_mtl_rgh, idx_normal, idx_occlusion, idx_emissive),
         });
-        let material_id = descriptors.allocate_pbr_factors_slot(Rc::downgrade(&factors))?;
+        let material_id = descriptors.pbr_factors_slots.try_allocate_slot(Rc::downgrade(&factors))?;
         let data = PipelineSpecificData::Pbr {
             base_color,
             metallic_roughness,
@@ -130,9 +137,31 @@ impl Material {
         Some(Rc::new(Material { name, material_id, data }))
     }
 
-    pub fn for_imgui(descriptors: &mut Descriptors, name: ArrayString<64>, texture: Rc<ImageView>) -> Option<Rc<Material>> {
-        let material_id = descriptors.allocate_texture_slot(Rc::downgrade(&texture))?;
-        let data = PipelineSpecificData::ImGui { texture };
+    pub fn for_imgui(
+        descriptors: &mut Descriptors,
+        name: ArrayString<64>,
+        texture: Rc<ImageView>,
+        clip_rect: Vec4,
+    ) -> Option<Rc<Material>> {
+        let texture_index = descriptors.texture_slots.try_allocate_slot(Rc::downgrade(&texture))?;
+        let cmd = Rc::new(ImGuiDrawCmd { clip_rect, texture_index });
+        let material_id = descriptors.imgui_cmd_slots.try_allocate_slot(Rc::downgrade(&cmd))?;
+        let data = PipelineSpecificData::ImGui { texture, cmd };
+        Some(Rc::new(Material { name, material_id, data }))
+    }
+
+    pub fn from_existing_imgui(
+        descriptors: &mut Descriptors,
+        name: ArrayString<64>,
+        material: &Material,
+        clip_rect: Vec4,
+    ) -> Option<Rc<Material>> {
+        let PipelineSpecificData::ImGui { texture, cmd } = &material.data else {
+            return None;
+        };
+        let cmd = Rc::new(ImGuiDrawCmd { clip_rect, texture_index: cmd.texture_index });
+        let material_id = descriptors.imgui_cmd_slots.try_allocate_slot(Rc::downgrade(&cmd))?;
+        let data = PipelineSpecificData::ImGui { texture: texture.clone(), cmd };
         Some(Rc::new(Material { name, material_id, data }))
     }
 

@@ -5,8 +5,8 @@ use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use enum_map::enum_map;
-use glam::{Affine3A, Mat4};
-use imgui::{BackendFlags, DrawData, DrawIdx, TextureId};
+use glam::{Affine3A, Mat4, Vec4};
+use imgui::{BackendFlags, DrawCmdParams, DrawData, DrawIdx, TextureId};
 
 use crate::arena::buffers::ForBuffers;
 use crate::arena::images::ForImages;
@@ -17,20 +17,19 @@ use crate::memory_measurement::VulkanArenaMeasurer;
 use crate::physical_device::PhysicalDevice;
 use crate::renderer::descriptors::material::Material;
 use crate::renderer::descriptors::Descriptors;
-use crate::renderer::pipeline_parameters::vertex_buffers::VertexLayout;
+use crate::renderer::pipeline_parameters::vertex_buffers::{VertexBinding, VertexLayout};
 use crate::renderer::scene::mesh::Mesh;
 use crate::renderer::scene::Scene;
 use crate::uploader::Uploader;
 use crate::vertex_library::{VertexLibraryBuilder, VertexLibraryMeasurer};
-use crate::vulkan_raii::Device;
-use crate::VertexBinding;
+use crate::vulkan_raii::{Device, ImageView};
 
 const MIN_VTX_AND_IDX_BUF_SIZE: vk::DeviceSize = 10_000_000;
 
 pub struct ImGuiRenderer {
-    font_material: Rc<Material>,
+    pub texture_map: TextureMap,
     mesh_arena: VulkanArena<ForBuffers>,
-    meshes: Vec<Mesh>,
+    frame_draws: Vec<(Mesh, Rc<Material>)>,
 }
 
 impl ImGuiRenderer {
@@ -98,15 +97,15 @@ impl ImGuiRenderer {
         assert!(uploader.wait(None));
         drop(uploader);
         mesh_arena.reset().unwrap();
-        let material =
-            Material::for_imgui(descriptors, ArrayString::from("imgui font texture material").unwrap(), Rc::new(fonts_texture)).unwrap();
-        fonts.tex_id = TextureId::new(material.material_id as usize);
 
-        ImGuiRenderer { font_material: material, mesh_arena, meshes: Vec::new() }
+        let mut texture_map = TextureMap { materials: Vec::new() };
+        fonts.tex_id = texture_map.allocate_texture_id(descriptors, Rc::new(fonts_texture)).unwrap();
+
+        ImGuiRenderer { texture_map, mesh_arena, frame_draws: Vec::new() }
     }
 
-    pub fn render<'a>(&'a mut self, draw_data: &DrawData, scene: &mut Scene<'a>) {
-        self.meshes.clear();
+    pub fn render<'a>(&'a mut self, draw_data: &DrawData, scene: &mut Scene<'a>, descriptors: &mut Descriptors) {
+        self.frame_draws.clear();
         self.mesh_arena.reset().unwrap();
 
         let mut vertex_library_measurer = VertexLibraryMeasurer::default();
@@ -142,14 +141,16 @@ impl ImGuiRenderer {
             let base_mesh = vertex_library_builder.add_mesh(VertexLayout::ImGui, &vertex_buffers, draw_list.idx_buffer());
             for draw_cmd in draw_list.commands() {
                 if let imgui::DrawCmd::Elements { count, cmd_params } = draw_cmd {
-                    self.meshes.push(Mesh {
+                    let mesh = Mesh {
                         library: base_mesh.library.clone(),
                         vertex_layout: base_mesh.vertex_layout,
                         vertex_offset: base_mesh.vertex_offset + cmd_params.vtx_offset as i32,
                         first_index: base_mesh.first_index + cmd_params.idx_offset as u32,
                         index_count: count as u32,
                         index_type: base_mesh.index_type,
-                    });
+                    };
+                    let material = create_material_with_clip_area(descriptors, &self.texture_map, cmd_params).unwrap();
+                    self.frame_draws.push((mesh, material));
                 }
             }
         }
@@ -157,8 +158,40 @@ impl ImGuiRenderer {
         let &DrawData { display_pos: [x, y], display_size: [w, h], .. } = draw_data;
         // Mat4 -> Affine3A misses out on the last row, but luckily, orthographic projections don't need the last one!
         let proj_matrix = Affine3A::from_mat4(Mat4::orthographic_rh(x, x + w, y, y + h, -1.0, 1.0));
-        for mesh in &self.meshes {
-            scene.queue_mesh(mesh, &self.font_material, None, proj_matrix);
+        for (mesh, material) in &self.frame_draws {
+            scene.queue_mesh(mesh, material, None, proj_matrix);
         }
     }
+}
+
+pub struct TextureMap {
+    materials: Vec<Option<Rc<Material>>>,
+}
+
+impl TextureMap {
+    pub fn allocate_texture_id(&mut self, descriptors: &mut Descriptors, texture: Rc<ImageView>) -> Option<TextureId> {
+        use core::fmt::Write;
+        let mut name = ArrayString::new();
+        let id = self.materials.len();
+        write!(&mut name, "imgui font texture material #{id}").unwrap();
+        let material = Material::for_imgui(descriptors, name, texture, Vec4::ZERO)?;
+        self.materials.push(Some(material));
+        Some(TextureId::new(id))
+    }
+
+    pub fn remove_texture_id(&mut self, id: TextureId) {
+        self.materials[id.id()].take();
+    }
+}
+
+fn create_material_with_clip_area(
+    descriptors: &mut Descriptors,
+    texture_map: &TextureMap,
+    draw_cmd: DrawCmdParams,
+) -> Option<Rc<Material>> {
+    use core::fmt::Write;
+    let material = texture_map.materials[draw_cmd.texture_id.id()].as_ref()?;
+    let mut name = ArrayString::new();
+    write!(&mut name, "{} clone", material.name).unwrap();
+    Material::from_existing_imgui(descriptors, name, material, Vec4::from_array(draw_cmd.clip_rect))
 }

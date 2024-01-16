@@ -9,9 +9,10 @@ use enum_map::Enum;
 use crate::arena::buffers::{BufferUsage, ForBuffers};
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
+use crate::renderer::descriptors::material::ImGuiDrawCmd;
 use crate::renderer::pipeline_parameters::constants::{
-    MAX_PBR_FACTORS_COUNT, MAX_TEXTURE_COUNT, UF_DRAW_CALL_FRAG_PARAMS_BINDING, UF_DRAW_CALL_VERT_PARAMS_BINDING, UF_PBR_FACTORS_BINDING,
-    UF_RENDER_SETTINGS_BINDING, UF_TEXTURES_BINDING, UF_TRANSFORMS_BINDING,
+    MAX_IMGUI_DRAW_CALLS, MAX_PBR_FACTORS_COUNT, MAX_TEXTURE_COUNT, UF_DRAW_CALL_FRAG_PARAMS_BINDING, UF_DRAW_CALL_VERT_PARAMS_BINDING,
+    UF_IMGUI_DRAW_CMD_PARAMS_BINDING, UF_PBR_FACTORS_BINDING, UF_RENDER_SETTINGS_BINDING, UF_TEXTURES_BINDING, UF_TRANSFORMS_BINDING,
 };
 use crate::renderer::pipeline_parameters::{
     uniforms, DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_PARAMETERS,
@@ -49,6 +50,7 @@ struct PendingWrite<'a> {
 pub(crate) struct TempUniforms {
     pub buffer: Buffer,
     pbr_factors_offset_and_size: (vk::DeviceSize, vk::DeviceSize),
+    imgui_cmds_offset_and_size: (vk::DeviceSize, vk::DeviceSize),
 }
 
 /// Descriptor writes:
@@ -62,17 +64,35 @@ const MAX_DESCRIPTOR_WRITES: usize = 7 + MAX_TEXTURE_COUNT as usize;
 
 type PendingWritesVec<'a> = ArrayVec<PendingWrite<'a>, MAX_DESCRIPTOR_WRITES>;
 
-type TextureSlot = Option<Weak<ImageView>>;
-type PbrFactorsSlot = Option<Weak<PbrFactors>>;
+pub(crate) struct ReusableSlots<T, const LEN: usize> {
+    slots: ArrayVec<Option<Weak<T>>, LEN>,
+    dirty: ArrayVec<bool, LEN>,
+}
+
+impl<T, const LEN: usize> ReusableSlots<T, LEN> {
+    pub(crate) fn new() -> ReusableSlots<T, LEN> {
+        let slots = ArrayVec::from_iter([None].into_iter().cycle().take(LEN));
+        let dirty = ArrayVec::from_iter([false; LEN]);
+        ReusableSlots { slots, dirty }
+    }
+
+    pub(crate) fn try_allocate_slot(&mut self, data: Weak<T>) -> Option<u32> {
+        let (i, slot) =
+            self.slots.iter_mut().enumerate().find(|(_, slot)| if let Some(slot) = &slot { slot.strong_count() == 0 } else { true })?;
+        let _ = slot.insert(data);
+        self.dirty[i] = true;
+        Some(i as u32)
+    }
+}
 
 pub struct Descriptors {
     pub(crate) pipeline_layouts: PipelineMap<PipelineLayout>,
     descriptor_sets: PipelineMap<DescriptorSets>,
     device: Device,
     pbr_defaults: PbrDefaultTextureSlots,
-    pbr_factors_slots: ArrayVec<PbrFactorsSlot, { MAX_PBR_FACTORS_COUNT as usize }>,
-    texture_slots: ArrayVec<TextureSlot, { MAX_TEXTURE_COUNT as usize }>,
-    texture_updates: ArrayVec<bool, { MAX_TEXTURE_COUNT as usize }>,
+    pub(crate) pbr_factors_slots: ReusableSlots<PbrFactors, { MAX_PBR_FACTORS_COUNT as usize }>,
+    pub(crate) imgui_cmd_slots: ReusableSlots<ImGuiDrawCmd, { MAX_IMGUI_DRAW_CALLS as usize }>,
+    pub(crate) texture_slots: ReusableSlots<ImageView, { MAX_TEXTURE_COUNT as usize }>,
     uniform_buffer_offset_alignment: vk::DeviceSize,
 }
 
@@ -175,24 +195,23 @@ impl Descriptors {
         });
         drop(descriptor_set_layouts_per_pipeline);
 
-        let pbr_factors_slots = ArrayVec::from_iter([None].into_iter().cycle().take(MAX_PBR_FACTORS_COUNT as usize));
-        let mut texture_slots = ArrayVec::from_iter([None].into_iter().cycle().take(MAX_TEXTURE_COUNT as usize));
-        let mut texture_updates = ArrayVec::from_iter([true; MAX_TEXTURE_COUNT as usize]);
+        let mut texture_slots = ReusableSlots::new();
 
-        let pbr_defaults = PbrDefaultTextureSlots {
+        let mut pbr_defaults = PbrDefaultTextureSlots {
             base_color: (Rc::new(pbr_defaults.base_color), 0),
-            metallic_roughness: (Rc::new(pbr_defaults.metallic_roughness), 1),
-            normal: (Rc::new(pbr_defaults.normal), 2),
-            occlusion: (Rc::new(pbr_defaults.occlusion), 3),
-            emissive: (Rc::new(pbr_defaults.emissive), 4),
+            metallic_roughness: (Rc::new(pbr_defaults.metallic_roughness), 0),
+            normal: (Rc::new(pbr_defaults.normal), 0),
+            occlusion: (Rc::new(pbr_defaults.occlusion), 0),
+            emissive: (Rc::new(pbr_defaults.emissive), 0),
         };
-        texture_slots[0] = Some(Rc::downgrade(&pbr_defaults.base_color.0));
-        texture_slots[1] = Some(Rc::downgrade(&pbr_defaults.metallic_roughness.0));
-        texture_slots[2] = Some(Rc::downgrade(&pbr_defaults.normal.0));
-        texture_slots[3] = Some(Rc::downgrade(&pbr_defaults.occlusion.0));
-        texture_slots[4] = Some(Rc::downgrade(&pbr_defaults.emissive.0));
-        for texture_updated in &mut texture_updates[0..=4] {
-            *texture_updated = false;
+        for (texture, slot) in [
+            &mut pbr_defaults.base_color,
+            &mut pbr_defaults.metallic_roughness,
+            &mut pbr_defaults.normal,
+            &mut pbr_defaults.occlusion,
+            &mut pbr_defaults.emissive,
+        ] {
+            *slot = texture_slots.try_allocate_slot(Rc::downgrade(texture)).unwrap();
         }
 
         let uniform_buffer_offset_alignment = physical_device.properties.limits.min_uniform_buffer_offset_alignment;
@@ -201,33 +220,12 @@ impl Descriptors {
             pipeline_layouts,
             descriptor_sets,
             device: device.clone(),
-            pbr_factors_slots,
+            pbr_factors_slots: ReusableSlots::new(),
+            imgui_cmd_slots: ReusableSlots::new(),
             texture_slots,
-            texture_updates,
             pbr_defaults,
             uniform_buffer_offset_alignment,
         }
-    }
-
-    fn allocate_texture_slot(&mut self, texture: Weak<ImageView>) -> Option<u32> {
-        let (i, slot) = self
-            .texture_slots
-            .iter_mut()
-            .enumerate()
-            .find(|(_, slot)| if let Some(slot) = &slot { slot.strong_count() == 0 } else { true })?;
-        let _ = slot.insert(texture);
-        self.texture_updates[i] = false;
-        Some(i as u32)
-    }
-
-    fn allocate_pbr_factors_slot(&mut self, pbr_factors: Weak<PbrFactors>) -> Option<u32> {
-        let (i, slot) = self
-            .pbr_factors_slots
-            .iter_mut()
-            .enumerate()
-            .find(|(_, slot)| if let Some(slot) = &slot { slot.strong_count() == 0 } else { true })?;
-        let _ = slot.insert(pbr_factors);
-        Some(i as u32)
     }
 
     // TODO: Should this function be somewhere else? uniforms.rs?
@@ -241,6 +239,7 @@ impl Descriptors {
             profiling::scope!("copying over pbr factors");
             let factors = self
                 .pbr_factors_slots
+                .slots
                 .iter()
                 .map(|slot| if let Some(factors) = slot.as_ref().and_then(Weak::upgrade) { *factors } else { PbrFactors::zeroed() })
                 .collect::<ArrayVec<PbrFactors, { MAX_PBR_FACTORS_COUNT as usize }>>();
@@ -260,6 +259,31 @@ impl Descriptors {
             buffer.resize(offset as usize, 0);
             buffer.extend_from_slice(factors_soa);
         }
+
+        let imgui_cmds_offset_and_size;
+        {
+            profiling::scope!("copying over imgui cmds");
+            let draw_cmds = self
+                .imgui_cmd_slots
+                .slots
+                .iter()
+                .map(|slot| if let Some(draw_cmd) = slot.as_ref().and_then(Weak::upgrade) { *draw_cmd } else { ImGuiDrawCmd::zeroed() })
+                .collect::<ArrayVec<ImGuiDrawCmd, { MAX_IMGUI_DRAW_CALLS as usize }>>();
+
+            let mut imgui_draw_cmds = uniforms::ImGuiDrawCmdParams::zeroed();
+            for (i, draw_cmd) in draw_cmds.iter().enumerate() {
+                imgui_draw_cmds.texture_index[i] = draw_cmd.texture_index;
+                imgui_draw_cmds.clip_rect[i] = draw_cmd.clip_rect;
+            }
+            let imgui_draw_cmds_soa = [imgui_draw_cmds];
+            let imgui_draw_cmds_soa = bytemuck::cast_slice(&imgui_draw_cmds_soa);
+
+            let offset = (buffer.len() as vk::DeviceSize).next_multiple_of(self.uniform_buffer_offset_alignment);
+            imgui_cmds_offset_and_size = (offset, imgui_draw_cmds_soa.len() as vk::DeviceSize);
+            buffer.resize(offset as usize, 0);
+            buffer.extend_from_slice(imgui_draw_cmds_soa);
+        }
+
         // TODO: Allocate and write the other dynamic uniforms here as well? (most write_descriptors params)
         // Maybe also an appropriate place where the zeroed areas could be
         // eliminated, just include (to, from) pairs of byte ranges for the each
@@ -278,7 +302,7 @@ impl Descriptors {
             format_args!("uniform (temp material buffer)"),
         )?;
 
-        Ok(TempUniforms { buffer, pbr_factors_offset_and_size })
+        Ok(TempUniforms { buffer, pbr_factors_offset_and_size, imgui_cmds_offset_and_size })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -295,12 +319,9 @@ impl Descriptors {
         profiling::scope!("updating descriptors");
 
         let mut textures_needing_update = ArrayVec::<_, { MAX_TEXTURE_COUNT as usize }>::new();
-        for (i, texture_slot) in self.texture_slots.iter().enumerate() {
+        for (i, texture_slot) in self.texture_slots.slots.iter().enumerate().filter(|(i, _)| self.texture_slots.dirty[*i]) {
             if let Some(texture) = texture_slot.as_ref().and_then(Weak::upgrade) {
-                let written = self.texture_updates[i];
-                if !written {
-                    textures_needing_update.push((i as u32, texture));
-                }
+                textures_needing_update.push((i as u32, texture));
             }
         }
 
@@ -321,7 +342,7 @@ impl Descriptors {
 
         for (i, texture) in &textures_needing_update {
             self.set_uniform_images(shared_pipeline, &mut pending_writes, (0, UF_TEXTURES_BINDING, *i), &[texture.inner]);
-            self.texture_updates[*i as usize] = true;
+            self.texture_slots.dirty[*i as usize] = false;
         }
 
         for pipeline in SKINNED_PIPELINES {
@@ -330,13 +351,17 @@ impl Descriptors {
         }
 
         for pipeline in PBR_PIPELINES {
-            let pbr_factors_offset_and_size = material_buffers.pbr_factors_offset_and_size;
-            let (offset, size) = pbr_factors_offset_and_size;
+            let (offset, size) = material_buffers.pbr_factors_offset_and_size;
             let buffer = (material_buffers.buffer.inner, offset, size);
             self.set_uniform_buffer(pipeline, &mut pending_writes, (1, UF_PBR_FACTORS_BINDING, 0), buffer);
         }
 
-        // TODO: Update imgui draw call data for the vertex shader
+        {
+            let pipeline = PipelineIndex::ImGui;
+            let (offset, size) = material_buffers.imgui_cmds_offset_and_size;
+            let buffer = (material_buffers.buffer.inner, offset, size);
+            self.set_uniform_buffer(pipeline, &mut pending_writes, (1, UF_IMGUI_DRAW_CMD_PARAMS_BINDING, 0), buffer);
+        }
 
         // NOTE: pending_writes owns the image/buffers that are pointed to by
         // the write_descriptor_sets, and they need to be dropped only after

@@ -277,12 +277,12 @@ static IMGUI: PipelineParameters = PipelineParameters {
     descriptor_sets: &[
         SHARED_DESCRIPTOR_SET_0,
         &[DescriptorSetLayoutParams {
-            binding: UF_IMGUI_DRAW_CALL_PARAMS_BINDING,
+            binding: UF_IMGUI_DRAW_CMD_PARAMS_BINDING,
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
             descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::VERTEX,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
             binding_flags: vk::DescriptorBindingFlags::empty(),
-            descriptor_size: Some(mem::size_of::<uniforms::ImGuiDrawCallParams>() as vk::DeviceSize),
+            descriptor_size: Some(mem::size_of::<uniforms::ImGuiDrawCmdParams>() as vk::DeviceSize),
         }],
     ],
 };

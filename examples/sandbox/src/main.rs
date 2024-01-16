@@ -294,10 +294,10 @@ fn main_() {
         for event in event_pump.poll_iter() {
             {
                 profiling::scope!("imgui event processing", &format!("event: {event:?}"));
-                if imgui_platform.handle_event(&mut imgui, &event) { 
-                    continue;
-                }
+                imgui_platform.handle_event(&mut imgui, &event);
             }
+            let handle_mouse_events = !imgui.io().want_capture_mouse;
+            let handle_keyboard_events = !imgui.io().want_capture_keyboard;
 
             profiling::scope!("event-specific processing", &format!("event: {event:?}"));
             match event {
@@ -307,7 +307,7 @@ fn main_() {
                     break 'main;
                 }
 
-                Event::KeyDown { keycode, .. } => {
+                Event::KeyDown { keycode, .. } if handle_keyboard_events => {
                     analog_controls = false;
                     match keycode {
                         Some(Keycode::Num0) => debug_value = 0,
@@ -329,12 +329,13 @@ fn main_() {
                             mouse_look = false;
                             sdl_context.mouse().set_relative_mouse_mode(false);
                             sdl_context.mouse().show_cursor(true);
+                            imgui.io_mut().config_flags.set(imgui::ConfigFlags::NO_MOUSE, mouse_look);
                         }
                         _ => {}
                     }
                 }
 
-                Event::KeyUp { keycode, .. } => match keycode {
+                Event::KeyUp { keycode, .. } if handle_keyboard_events => match keycode {
                     Some(Keycode::I) => {
                         immediate_present = !immediate_present;
                         queued_resize = Some(Instant::now());
@@ -363,7 +364,7 @@ fn main_() {
                     }
                 }
 
-                Event::MouseButtonDown { mouse_btn: MouseButton::Left, .. } => {
+                Event::MouseButtonDown { mouse_btn: MouseButton::Left, .. } if handle_mouse_events => {
                     mouse_look = !mouse_look;
                     if mouse_look {
                         sdl_context.mouse().set_relative_mouse_mode(true);
@@ -372,6 +373,7 @@ fn main_() {
                         sdl_context.mouse().set_relative_mouse_mode(false);
                         sdl_context.mouse().show_cursor(true);
                     }
+                    imgui.io_mut().config_flags.set(imgui::ConfigFlags::NO_MOUSE, mouse_look);
                 }
 
                 Event::MouseMotion { xrel, yrel, .. } => {
@@ -385,6 +387,7 @@ fn main_() {
                     mouse_look = false;
                     sdl_context.mouse().set_relative_mouse_mode(false);
                     sdl_context.mouse().show_cursor(true);
+                    imgui.io_mut().config_flags.set(imgui::ConfigFlags::NO_MOUSE, mouse_look);
                     (width, height) = window.vulkan_drawable_size();
                     queued_resize = Some(Instant::now());
                 }
@@ -531,7 +534,7 @@ fn main_() {
                         imgui_platform.prepare_frame(&mut imgui, &window, &event_pump);
                         let ui = imgui.frame();
                         ui.show_demo_window(&mut true);
-                        imgui_renderer.render(imgui.render(), &mut scene);
+                        imgui_renderer.render(imgui.render(), &mut scene, &mut descriptors);
                     }
                     {
                         profiling::scope!("rendering (the vulkan part)");

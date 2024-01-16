@@ -13,6 +13,7 @@ layout(location = IN_COLOR_LOCATION) in vec4 in_color;
 layout(location = 0) out vec2 out_uv;
 layout(location = 1) out vec4 out_color;
 layout(location = 2) out uint out_draw_id;
+layout(location = 3) out vec2 out_screen_space_coords;
 
 void main() {
     uint draw_id = gl_BaseInstanceARB;
@@ -22,4 +23,5 @@ void main() {
     out_color = in_color;
     out_uv = in_uv;
     out_draw_id = draw_id;
+    out_screen_space_coords = in_position;
 }
