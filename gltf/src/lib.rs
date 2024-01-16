@@ -628,7 +628,7 @@ fn create_primitive(gltf: &gltf_json::GltfJson, primitive: &gltf_json::Primitive
 
     let normal_accessor = *primitive.attributes.get("NORMAL").ok_or(GltfLoadingError::Misc("missing normal attributes"))?;
     let (normal_buffer, _) = get_buffer_view_from_accessor(gltf, normal_accessor, Some(GLTF_FLOAT), "VEC3")?;
-    vertex_buffers[VertexBinding::Normal] = Some(normal_buffer);
+    vertex_buffers[VertexBinding::NormalOrColor] = Some(normal_buffer);
 
     let tangent_accessor = *primitive.attributes.get("TANGENT").ok_or(GltfLoadingError::Misc("missing tangent attributes"))?;
     let (tangent_buffer, _) = get_buffer_view_from_accessor(gltf, tangent_accessor, Some(GLTF_FLOAT), "VEC4")?;

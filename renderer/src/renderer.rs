@@ -7,6 +7,7 @@ use arrayvec::ArrayVec;
 use ash::{vk, Instance};
 use bytemuck::{Pod, Zeroable};
 use enum_map::Enum;
+use glam::Mat4;
 use hashbrown::HashMap;
 
 use crate::arena::buffers::{BufferUsage, ForBuffers};
@@ -269,6 +270,10 @@ impl Renderer {
             .expect("renderer's temp arena should have enough memory for the render settings buffer");
 
         let skinned_mesh_joints = &mut scene.skinned_mesh_joints_buffer;
+        if skinned_mesh_joints.is_empty() {
+            // Easier to just never have empty buffers than deal with this actually being optional
+            skinned_mesh_joints.resize(mem::size_of::<Mat4>(), 0);
+        }
         let skinned_mesh_joints_buffer = create_uniform_buffer(&mut self.temp_arena, skinned_mesh_joints, "joint transforms")
             .expect("renderer's temp arena should have enough memory for the joint transforms buffer");
 
@@ -422,6 +427,7 @@ impl Renderer {
             PipelineIndex::PbrAlphaToCoverage,
             PipelineIndex::PbrBlended,
             PipelineIndex::PbrSkinnedBlended,
+            PipelineIndex::ImGui,
         ] {
             profiling::scope!("pipeline");
             let draws = &draws[pl_idx];

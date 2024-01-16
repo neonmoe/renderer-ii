@@ -1,4 +1,5 @@
 use core::fmt::Arguments;
+use core::ptr;
 use core::sync::atomic::Ordering;
 
 use ash::vk;
@@ -9,8 +10,8 @@ use crate::vulkan_raii::Buffer;
 
 #[derive(Clone, Copy)]
 pub struct BufferUsage {
-    access_mask: vk::AccessFlags2,
-    stage_mask: vk::PipelineStageFlags2,
+    pub access_mask: vk::AccessFlags2,
+    pub stage_mask: vk::PipelineStageFlags2,
 }
 
 impl BufferUsage {
@@ -31,15 +32,21 @@ pub struct MappedBuffer {
     /// Safety: as long as the `buffer` exists, the arena can't be reset, and the device memory is
     /// not destroyed, thus there can't be any other pointers pointing at the same memory, and the
     /// memory stays alive.
-    ptr: *mut u8,
-    len: usize,
+    ptr: *mut [u8],
 }
 
 impl MappedBuffer {
     pub fn data_mut(&mut self) -> &mut [u8] {
         // Safety: as long as this mutable borrow exists, self.buffer can't be dropped, and thus the
         // backing memory is exclusively ours and is not deallocated.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len) }
+        unsafe { &mut *self.ptr }
+    }
+
+    /// Returns the internal mapped pointer and the buffer separately. Nothing
+    /// happens to the required preconditions however, so the caller must keep
+    /// Buffer alive at least as long as the pointer.
+    pub unsafe fn split(self) -> (Buffer, *mut [u8]) {
+        (self.buffer, self.ptr)
     }
 }
 
@@ -72,41 +79,7 @@ impl VulkanArena<ForBuffers> {
         let buffer = self.create_empty_buffer(buffer_create_info, name)?;
         let ptr = unsafe { self.mapped_memory_ptr.offset(buffer.offset as isize) };
         let len = buffer.size as usize;
-        Ok(MappedBuffer { buffer, ptr, len })
-    }
-
-    /// Copies from the `src` to the `dst` using the `uploader`.
-    #[profiling::function]
-    pub fn copy_buffer(&mut self, usage: BufferUsage, src: Buffer, dst: &Buffer, uploader: &mut Uploader, name: Arguments) {
-        let &mut Uploader { graphics_queue_family, transfer_queue_family, .. } = uploader;
-        let buffer_memory_barrier = vk::BufferMemoryBarrier2::default().buffer(dst.inner).offset(0).size(vk::WHOLE_SIZE);
-        uploader.start_upload(
-            src,
-            name,
-            |device, staging_buffer, command_buffer| {
-                let (src_buf, dst_buf) = (staging_buffer.inner, dst.inner);
-                let copy_regions = [vk::BufferCopy::default().size(dst.size)];
-                unsafe { device.cmd_copy_buffer(command_buffer, src_buf, dst_buf, &copy_regions) };
-                let release_from_transfer_to_graphics = [buffer_memory_barrier
-                    .src_queue_family_index(transfer_queue_family)
-                    .dst_queue_family_index(graphics_queue_family)
-                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .src_stage_mask(vk::PipelineStageFlags2::COPY)];
-                let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&release_from_transfer_to_graphics);
-                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
-            },
-            |device, command_buffer| {
-                let barrier_from_transfer_to_graphics = [buffer_memory_barrier
-                    .src_queue_family_index(transfer_queue_family)
-                    .dst_queue_family_index(graphics_queue_family)
-                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .dst_access_mask(usage.access_mask)
-                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                    .dst_stage_mask(usage.stage_mask)];
-                let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&barrier_from_transfer_to_graphics);
-                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
-            },
-        );
+        Ok(MappedBuffer { buffer, ptr: ptr::slice_from_raw_parts_mut(ptr, len) })
     }
 
     #[profiling::function]
@@ -133,7 +106,7 @@ impl VulkanArena<ForBuffers> {
                     profiling::scope!("copying data to vulkan staging buffer");
                     staging_data.copy_from_slice(src);
                 }
-                self.copy_buffer(usage, staging_buffer.buffer, &dst_buffer, uploader, name);
+                uploader.copy_buffer(usage, staging_buffer.buffer, &dst_buffer, name);
                 Ok(dst_buffer)
             } else {
                 return Err(VulkanArenaError::NotWritable);

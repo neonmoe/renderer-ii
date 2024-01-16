@@ -3,6 +3,7 @@ use core::time::Duration;
 
 use ash::vk;
 
+use crate::arena::buffers::BufferUsage;
 use crate::physical_device::PhysicalDevice;
 use crate::vulkan_raii::{Buffer, CommandPool, Device, Fence, Semaphore};
 
@@ -230,6 +231,40 @@ impl Uploader {
         self.staging_buffers.push(staging_buffer);
         self.upload_fences.push(upload_fence);
         self.transfer_semaphores.push(transfer_signal_semaphore);
+    }
+
+    /// Copies from the `src` to the `dst`.
+    #[profiling::function]
+    pub fn copy_buffer(&mut self, usage: BufferUsage, src: Buffer, dst: &Buffer, name: Arguments) {
+        let &mut Uploader { graphics_queue_family, transfer_queue_family, .. } = self;
+        let buffer_memory_barrier = vk::BufferMemoryBarrier2::default().buffer(dst.inner).offset(0).size(vk::WHOLE_SIZE);
+        self.start_upload(
+            src,
+            name,
+            |device, staging_buffer, command_buffer| {
+                let (src_buf, dst_buf) = (staging_buffer.inner, dst.inner);
+                let copy_regions = [vk::BufferCopy::default().size(dst.size)];
+                unsafe { device.cmd_copy_buffer(command_buffer, src_buf, dst_buf, &copy_regions) };
+                let release_from_transfer_to_graphics = [buffer_memory_barrier
+                    .src_queue_family_index(transfer_queue_family)
+                    .dst_queue_family_index(graphics_queue_family)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)];
+                let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&release_from_transfer_to_graphics);
+                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+            },
+            |device, command_buffer| {
+                let barrier_from_transfer_to_graphics = [buffer_memory_barrier
+                    .src_queue_family_index(transfer_queue_family)
+                    .dst_queue_family_index(graphics_queue_family)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_access_mask(usage.access_mask)
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .dst_stage_mask(usage.stage_mask)];
+                let dep_info = vk::DependencyInfo::default().buffer_memory_barriers(&barrier_from_transfer_to_graphics);
+                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dep_info) };
+            },
+        );
     }
 
     /// Resets the uploader if all uploads have finished, and returns true.

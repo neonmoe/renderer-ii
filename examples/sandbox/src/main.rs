@@ -193,7 +193,7 @@ fn main_() {
     let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults);
     let mut vertex_library_builder = renderer::VertexLibraryBuilder::new(
         &mut staging_arena,
-        &mut buffer_arena,
+        Some(&mut buffer_arena),
         &vertex_library_measurer,
         format_args!("vertex library of babel"),
     )
@@ -206,7 +206,7 @@ fn main_() {
     let smol_ame_model = smol_ame_pending
         .upload(&device, &mut staging_arena, &mut uploader, &mut descriptors, &mut texture_arena, &mut vertex_library_builder)
         .unwrap();
-    vertex_library_builder.upload(&mut uploader, &mut buffer_arena);
+    vertex_library_builder.upload(&mut uploader);
     let upload_wait_start = Instant::now();
     {
         profiling::scope!("wait for uploads to finish");
@@ -234,7 +234,6 @@ fn main_() {
     let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device);
     print_memory_usage("after renderer creation");
 
-    let mut scene = renderer::Scene::default();
     let mut recreate_swapchain = false;
     let mut prev_duration = Duration::ZERO;
 
@@ -295,7 +294,9 @@ fn main_() {
         for event in event_pump.poll_iter() {
             {
                 profiling::scope!("imgui event processing", &format!("event: {event:?}"));
-                imgui_platform.handle_event(&mut imgui, &event);
+                if imgui_platform.handle_event(&mut imgui, &event) { 
+                    continue;
+                }
             }
 
             profiling::scope!("event-specific processing", &format!("event: {event:?}"));
@@ -466,6 +467,7 @@ fn main_() {
         // Rendering
         //
 
+        let mut scene = renderer::Scene::default();
         let frame_start;
         {
             profiling::scope!("rendering (queueing draws)");
@@ -484,7 +486,6 @@ fn main_() {
                 }
             }
 
-            scene.clear();
             scene.camera.orientation = Quat::from_rotation_y(cam_yaw) * Quat::from_rotation_x(cam_pitch);
             scene.camera.position = Vec3::new(cam_x, cam_y, cam_z);
             scene.world_space = renderer::CoordinateSystem::GLTF;
@@ -505,14 +506,6 @@ fn main_() {
                 );
                 smol_ame_model.queue_animated(&mut scene, smol_ame_transform, &animations).unwrap();
             }
-
-            {
-                profiling::scope!("imgui");
-                imgui_platform.prepare_frame(&mut imgui, &window, &event_pump);
-                let ui = imgui.frame();
-                ui.show_demo_window(&mut true);
-                imgui_renderer.render(imgui.render(), &mut scene);
-            }
         }
 
         if recreate_swapchain {
@@ -527,10 +520,24 @@ fn main_() {
         }
 
         {
-            profiling::scope!("rendering (vulkan calls)");
-            match renderer.wait_frame(&swapchain) {
+            let frame_index = {
+                profiling::scope!("wait for present", "or for the previous frame to finish");
+                renderer.wait_frame(&swapchain)
+            };
+            match frame_index {
                 Ok(frame_index) => {
-                    renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, debug_value);
+                    {
+                        profiling::scope!("imgui");
+                        imgui_platform.prepare_frame(&mut imgui, &window, &event_pump);
+                        let ui = imgui.frame();
+                        ui.show_demo_window(&mut true);
+                        imgui_renderer.render(imgui.render(), &mut scene);
+                    }
+                    {
+                        profiling::scope!("rendering (the vulkan part)");
+                        renderer.render_frame(&frame_index, &mut descriptors, &pipelines, &framebuffers, &mut scene, debug_value);
+                    }
+                    profiling::scope!("present");
                     match renderer.present_frame(frame_index, &swapchain) {
                         Ok(()) => {}
                         Err(renderer::SwapchainError::OutOfDate) => recreate_swapchain = true,

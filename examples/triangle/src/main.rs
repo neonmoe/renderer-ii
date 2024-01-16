@@ -78,7 +78,7 @@ fn main() {
         let vertex_buffers: renderer::VertexBindingMap<&[u8]> = renderer::enum_map! {
             renderer::VertexBinding::Position => Some(positions),
             renderer::VertexBinding::Texcoord0 => Some(uvs),
-            renderer::VertexBinding::Normal => Some(norms),
+            renderer::VertexBinding::NormalOrColor => Some(norms),
             renderer::VertexBinding::Tangent => Some(tangents),
             _ => None,
         };
@@ -88,20 +88,18 @@ fn main() {
         measurer.add_mesh(vertex_layout, &vertex_buffers, indices);
         measurer.add_mesh(vertex_layout, &vertex_buffers, indices);
         let mut builder =
-            renderer::VertexLibraryBuilder::new(&mut staging_arena, &mut buffer_arena, &measurer, format_args!("triangle mesh")).unwrap();
+            renderer::VertexLibraryBuilder::new(&mut staging_arena, Some(&mut buffer_arena), &measurer, format_args!("triangle mesh"))
+                .unwrap();
         let mesh1 = builder.add_mesh(vertex_layout, &vertex_buffers, indices);
         let mesh2 = builder.add_mesh(vertex_layout, &vertex_buffers, indices);
-        builder.upload(&mut uploader, &mut buffer_arena);
+        builder.upload(&mut uploader);
         (mesh1, mesh2)
     };
 
     let triangle_material = renderer::Material::for_pbr(
         &mut descriptors,
         ArrayString::from("triangle material").unwrap(),
-        renderer::PbrMaterialParameters {
-            base_color_factor: Vec4::new(0.2, 0.8, 0.2, 1.0),
-            ..Default::default()
-        },
+        renderer::PbrMaterialParameters { base_color_factor: Vec4::new(0.2, 0.8, 0.2, 1.0), ..Default::default() },
     )
     .unwrap();
 

@@ -140,11 +140,14 @@ fn create_pipelines(
     let input_assembly_create_info =
         vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST).primitive_restart_enable(false);
 
-    let rasterization_create_info = vk::PipelineRasterizationStateCreateInfo::default()
-        .polygon_mode(vk::PolygonMode::FILL)
-        .cull_mode(vk::CullModeFlags::BACK)
-        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
-        .line_width(1.0);
+    let rasterization_create_infos = PipelineMap::from_fn(|pipeline| {
+        let params = &PIPELINE_PARAMETERS[pipeline];
+        vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(if params.double_sided { vk::CullModeFlags::NONE } else { vk::CullModeFlags::BACK })
+            .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+            .line_width(1.0)
+    });
 
     let pipeline_depth_stencil_create_infos = PipelineMap::from_fn(|pipeline| {
         let params = &PIPELINE_PARAMETERS[pipeline];
@@ -178,7 +181,7 @@ fn create_pipelines(
             .vertex_input_state(&vertex_input_per_pipeline[pl_idx])
             .input_assembly_state(&input_assembly_create_info)
             .viewport_state(&viewport_create_info)
-            .rasterization_state(&rasterization_create_info)
+            .rasterization_state(&rasterization_create_infos[pl_idx])
             .multisample_state(&multisample_create_infos[pl_idx])
             .depth_stencil_state(&pipeline_depth_stencil_create_infos[pl_idx])
             .color_blend_state(&color_blend_create_infos[pl_idx])

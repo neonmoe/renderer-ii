@@ -102,6 +102,7 @@ macro_rules! shader {
 pub(crate) struct PipelineParameters {
     pub alpha_to_coverage: bool,
     pub blended: bool,
+    pub double_sided: bool,
     pub depth_test: bool,
     pub depth_write: bool,
     pub sample_shading: bool,
@@ -183,6 +184,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[DescriptorSetLayou
 static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,
     blended: false,
+    double_sided: false,
     depth_test: true,
     depth_write: true,
     sample_shading: false,
@@ -198,6 +200,7 @@ static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
 static SKINNED_OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,
     blended: false,
+    double_sided: false,
     depth_test: true,
     depth_write: true,
     sample_shading: false,
@@ -232,6 +235,7 @@ static SKINNED_BLENDED_PARAMETERS: PipelineParameters = PipelineParameters { ble
 static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,
     blended: false,
+    double_sided: true,
     depth_test: false,
     depth_write: false,
     sample_shading: true,
@@ -260,11 +264,12 @@ static RENDER_RESOLUTION_POST_PROCESS: PipelineParameters = PipelineParameters {
 static IMGUI: PipelineParameters = PipelineParameters {
     alpha_to_coverage: false,
     blended: true,
+    double_sided: true,
     depth_test: false,
     depth_write: false,
     sample_shading: false,
     min_sample_shading_factor: 1.0,
-    render_pass: RenderPass::PostProcess,
+    render_pass: RenderPass::Geometry,
     vertex_shader: Shader::SingleVariant(shader!("imgui.vert")),
     fragment_shader: Shader::SingleVariant(shader!("imgui.frag")),
     bindings: VERTEX_BINDING_DESCRIPTIONS.as_array()[VertexLayout::ImGui as usize],

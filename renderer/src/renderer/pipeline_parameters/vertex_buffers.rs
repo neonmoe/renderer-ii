@@ -21,19 +21,22 @@ impl VertexLayout {
     /// using this vertex layout.
     pub fn required_inputs(self) -> ArrayVec<VertexBinding, { VertexBinding::LENGTH }> {
         match self {
-            VertexLayout::StaticMesh => {
-                ArrayVec::from_iter([VertexBinding::Position, VertexBinding::Texcoord0, VertexBinding::Normal, VertexBinding::Tangent])
-            }
+            VertexLayout::StaticMesh => ArrayVec::from_iter([
+                VertexBinding::Position,
+                VertexBinding::Texcoord0,
+                VertexBinding::NormalOrColor,
+                VertexBinding::Tangent,
+            ]),
             VertexLayout::SkinnedMesh => ArrayVec::from_iter([
                 VertexBinding::Position,
                 VertexBinding::Texcoord0,
-                VertexBinding::Normal,
+                VertexBinding::NormalOrColor,
                 VertexBinding::Tangent,
                 VertexBinding::Joints0,
                 VertexBinding::Weights0,
             ]),
             VertexLayout::FullscreenQuad => ArrayVec::new(),
-            VertexLayout::ImGui => ArrayVec::from_iter([VertexBinding::Position, VertexBinding::Texcoord0, VertexBinding::Color]),
+            VertexLayout::ImGui => ArrayVec::from_iter([VertexBinding::Position, VertexBinding::Texcoord0, VertexBinding::NormalOrColor]),
         }
     }
 }
@@ -45,11 +48,10 @@ pub enum VertexBinding {
     Transforms,
     Position,
     Texcoord0,
-    Normal,
+    NormalOrColor,
     Tangent,
     Joints0,
     Weights0,
-    Color,
 }
 
 pub(crate) struct VertexSizes {
@@ -72,17 +74,17 @@ impl VertexSizes {
 /// the size of a single vertex written out by it, in that order.
 #[allow(clippy::match_same_arms)]
 pub fn get_vertex_sizes(vertex_layout: VertexLayout, vertex_binding: VertexBinding) -> VertexSizes {
-    use VertexLayout::{SkinnedMesh, StaticMesh, ImGui};
+    use VertexLayout::{ImGui, SkinnedMesh, StaticMesh};
     match (vertex_layout, vertex_binding) {
         (StaticMesh | SkinnedMesh, VertexBinding::Position) => VertexSizes::from_types::<[f32; 3], [f16; 3]>(),
         (StaticMesh | SkinnedMesh, VertexBinding::Texcoord0) => VertexSizes::from_types::<[f32; 2], [f16; 2]>(),
-        (StaticMesh | SkinnedMesh, VertexBinding::Normal) => VertexSizes::from_types::<[f32; 3], u32>(),
+        (StaticMesh | SkinnedMesh, VertexBinding::NormalOrColor) => VertexSizes::from_types::<[f32; 3], u32>(),
         (StaticMesh | SkinnedMesh, VertexBinding::Tangent) => VertexSizes::from_types::<[f32; 4], u32>(),
         (SkinnedMesh, VertexBinding::Joints0) => VertexSizes::from_types::<[u8; 4], [u8; 4]>(),
         (SkinnedMesh, VertexBinding::Weights0) => VertexSizes::from_types::<[f32; 4], [u8; 4]>(),
-        (ImGui, VertexBinding::Position) => VertexSizes::from_types::<[f32; 3], [f32; 3]>(),
-        (ImGui, VertexBinding::Texcoord0) => VertexSizes::from_types::<[f32; 2], [f32; 2]>(),
-        (ImGui, VertexBinding::Color) => VertexSizes::from_types::<[f32; 4], [f32; 4]>(),
+        (ImGui, VertexBinding::Position) => VertexSizes::from_types::<[u8; 20], [f32; 2]>(),
+        (ImGui, VertexBinding::Texcoord0) => VertexSizes::from_types::<[u8; 20], [f32; 2]>(),
+        (ImGui, VertexBinding::NormalOrColor) => VertexSizes::from_types::<[u8; 20], [u8; 4]>(),
         _ => unimplemented!("binding {vertex_binding:?} is not used in {vertex_layout:?}"),
     }
 }
@@ -125,7 +127,7 @@ pub fn write_vertices(vertex_layout: VertexLayout, binding: VertexBinding, src: 
                 dst[1] = f16::from_f32(src[1]);
             }
         }
-        (StaticMesh | SkinnedMesh, VertexBinding::Normal) => {
+        (StaticMesh | SkinnedMesh, VertexBinding::NormalOrColor) => {
             let src = bytemuck::cast_slice::<u8, [f32; 3]>(src);
             let dst = bytemuck::cast_slice_mut::<u8, u32>(dst);
             for (&src, dst) in src.iter().zip(dst) {
@@ -146,9 +148,32 @@ pub fn write_vertices(vertex_layout: VertexLayout, binding: VertexBinding, src: 
             }
         }
         (SkinnedMesh, VertexBinding::Joints0) => dst.copy_from_slice(src),
-        (ImGui, VertexBinding::Position) => todo!(),
-        (ImGui, VertexBinding::Texcoord0) => todo!(),
-        (ImGui, VertexBinding::Color) => todo!(),
+        (ImGui, VertexBinding::Position) => {
+            let src = bytemuck::cast_slice::<u8, [f32; 5]>(src);
+            let dst = bytemuck::cast_slice_mut::<u8, [f32; 2]>(dst);
+            for (&src, dst) in src.iter().zip(dst) {
+                dst[0] = src[0];
+                dst[1] = src[1];
+            }
+        }
+        (ImGui, VertexBinding::Texcoord0) => {
+            let src = bytemuck::cast_slice::<u8, [f32; 5]>(src);
+            let dst = bytemuck::cast_slice_mut::<u8, [f32; 2]>(dst);
+            for (&src, dst) in src.iter().zip(dst) {
+                dst[0] = src[2];
+                dst[1] = src[3];
+            }
+        }
+        (ImGui, VertexBinding::NormalOrColor) => {
+            let src = bytemuck::cast_slice::<u8, [u8; 20]>(src);
+            let dst = bytemuck::cast_slice_mut::<u8, [u8; 4]>(dst);
+            for (&src, dst) in src.iter().zip(dst) {
+                dst[0] = src[16];
+                dst[1] = src[17];
+                dst[2] = src[18];
+                dst[3] = src[19];
+            }
+        }
         _ => unimplemented!("binding {binding:?} is not used in {vertex_layout:?}"),
     }
 }
@@ -179,7 +204,7 @@ static TEXCOORD0_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBin
     input_rate: vk::VertexInputRate::VERTEX,
 };
 static NORMAL_BINDING: vk::VertexInputBindingDescription = vk::VertexInputBindingDescription {
-    binding: VertexBinding::Normal as u32,
+    binding: VertexBinding::NormalOrColor as u32,
     stride: mem::size_of::<u32>() as u32,
     input_rate: vk::VertexInputRate::VERTEX,
 };
@@ -204,19 +229,20 @@ static STATIC_MESH_VERTEX_BINDINGS: &[vk::VertexInputBindingDescription] =
 static SKINNED_MESH_VERTEX_BINDINGS: &[vk::VertexInputBindingDescription] =
     &[INSTANCED_TRANSFORM_BINDING, POSITION_BINDING, TEXCOORD0_BINDING, NORMAL_BINDING, TANGENT_BINDING, JOINTS0_BINDING, WEIGHTS0_BINDING];
 static IMGUI_VERTEX_BINDINGS: &[vk::VertexInputBindingDescription] = &[
+    INSTANCED_TRANSFORM_BINDING,
     vk::VertexInputBindingDescription {
         binding: VertexBinding::Position as u32,
-        stride: mem::size_of::<imgui::DrawVert>() as u32,
+        stride: mem::size_of::<[f32; 2]>() as u32,
         input_rate: vk::VertexInputRate::VERTEX,
     },
     vk::VertexInputBindingDescription {
         binding: VertexBinding::Texcoord0 as u32,
-        stride: mem::size_of::<imgui::DrawVert>() as u32,
+        stride: mem::size_of::<[f32; 2]>() as u32,
         input_rate: vk::VertexInputRate::VERTEX,
     },
     vk::VertexInputBindingDescription {
-        binding: VertexBinding::Color as u32,
-        stride: mem::size_of::<imgui::DrawVert>() as u32,
+        binding: VertexBinding::NormalOrColor as u32,
+        stride: mem::size_of::<[u8; 4]>() as u32,
         input_rate: vk::VertexInputRate::VERTEX,
     },
 ];
@@ -278,7 +304,7 @@ static TEXCOORD0_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::Ve
     offset: 0,
 };
 static NORMAL_BINDING_ATTRIBUTE: vk::VertexInputAttributeDescription = vk::VertexInputAttributeDescription {
-    binding: VertexBinding::Normal as u32,
+    binding: VertexBinding::NormalOrColor as u32,
     location: IN_NORMAL_LOCATION,
     format: vk::Format::A2B10G10R10_SNORM_PACK32,
     offset: 0,
@@ -331,6 +357,13 @@ static SKINNED_MESH_VERTEX_ATTRIBUTES: &[vk::VertexInputAttributeDescription] = 
     WEIGHTS0_BINDING_ATTRIBUTE,
 ];
 static IMGUI_VERTEX_ATTRIBUTES: &[vk::VertexInputAttributeDescription] = &[
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[0],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[1],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[2],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[3],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[4],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[5],
+    INSTANCED_TRANSFORM_BINDING_ATTRIBUTES[6],
     vk::VertexInputAttributeDescription {
         binding: VertexBinding::Position as u32,
         location: IN_POSITION_LOCATION,
@@ -341,12 +374,12 @@ static IMGUI_VERTEX_ATTRIBUTES: &[vk::VertexInputAttributeDescription] = &[
         binding: VertexBinding::Texcoord0 as u32,
         location: IN_TEXCOORD_0_LOCATION,
         format: vk::Format::R32G32_SFLOAT,
-        offset: mem::size_of::<[f32; 2]>() as u32,
+        offset: 0,
     },
     vk::VertexInputAttributeDescription {
-        binding: VertexBinding::Color as u32,
+        binding: VertexBinding::NormalOrColor as u32,
         location: IN_COLOR_LOCATION,
         format: vk::Format::R8G8B8A8_UNORM,
-        offset: mem::size_of::<[f32; 4]>() as u32,
+        offset: 0,
     },
 ];

@@ -4,10 +4,11 @@ use core::fmt::Arguments;
 use core::hash::{Hash, Hasher};
 use core::mem;
 
+use arrayvec::ArrayVec;
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::arena::buffers::{BufferUsage, ForBuffers, MappedBuffer};
+use crate::arena::buffers::{BufferUsage, ForBuffers};
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::memory_measurement::VulkanArenaMeasurer;
 use crate::renderer::pipeline_parameters::vertex_buffers::{
@@ -77,8 +78,9 @@ impl Hash for VertexLibrary {
 pub struct VertexLibraryBuilder<'name> {
     debug_id: Arguments<'name>,
     library: Rc<VertexLibrary>,
-    vertex_staging: MappedBuffer,
-    index_staging: MappedBuffer,
+    vertex_staging: *mut [u8],
+    index_staging: *mut [u8],
+    backing_staging_buffers: ArrayVec<Buffer, 2>,
     vertex_buffer_infos: VertexLayoutMap<VertexBindingMap<BufferInfo>>,
     index_buffer_offsets: VertexLayoutMap<usize>,
     vertices_allocated: VertexLayoutMap<usize>,
@@ -86,27 +88,46 @@ pub struct VertexLibraryBuilder<'name> {
 }
 
 impl VertexLibraryBuilder<'_> {
+    /// Create a new [`VertexLibrary`] builder, which can be used to create
+    /// [`Mesh`]es ("vertex libraries" are the backing memory for meshes). If no
+    /// `buffer_arena` is provided, the meshes will use the `staging_arena` as
+    /// their backing memory, and [`VertexLibraryBuilder::upload`] does not need
+    /// to be called.
     pub fn new<'name>(
         staging_arena: &mut VulkanArena<ForBuffers>,
-        buffer_arena: &mut VulkanArena<ForBuffers>,
+        buffer_arena: Option<&mut VulkanArena<ForBuffers>>,
         measurer: &VertexLibraryMeasurer,
         name: Arguments<'name>,
     ) -> Result<VertexLibraryBuilder<'name>, VulkanArenaError> {
         let MeasurementResults {
-            staging_vb_create_info,
-            staging_ib_create_info,
+            mut staging_vb_create_info,
+            mut staging_ib_create_info,
             vb_create_info,
             ib_create_info,
             vertex_buffer_infos,
             index_buffer_offsets,
         } = measurer.measure();
-        let vertex_staging = staging_arena.create_staging_buffer(staging_vb_create_info, format_args!("{name} (staging vertex buffer)"))?;
-        let index_staging = staging_arena.create_staging_buffer(staging_ib_create_info, format_args!("{name} (staging index buffer)"))?;
-        let vertex_buffer = buffer_arena.create_empty_buffer(vb_create_info, format_args!("{name} (vertex buffer)"))?;
-        let index_buffer = buffer_arena.create_empty_buffer(ib_create_info, format_args!("{name} (index buffer)"))?;
         let vertex_buffer_offsets = VertexLayoutMap::from_fn(|vl| {
             VertexBindingMap::from_fn(|b| vertex_buffer_infos[vl][b].as_ref().map(|info| info.offset as vk::DeviceSize))
         });
+        if buffer_arena.is_none() {
+            staging_vb_create_info.usage |= vk::BufferUsageFlags::VERTEX_BUFFER;
+            staging_ib_create_info.usage |= vk::BufferUsageFlags::INDEX_BUFFER;
+        }
+        let vertex_staging = staging_arena.create_staging_buffer(staging_vb_create_info, format_args!("{name} (staging vertex buffer)"))?;
+        let index_staging = staging_arena.create_staging_buffer(staging_ib_create_info, format_args!("{name} (staging index buffer)"))?;
+        let (vertex_staging_buffer, vertex_staging) = unsafe { vertex_staging.split() };
+        let (index_staging_buffer, index_staging) = unsafe { index_staging.split() };
+        let mut backing_staging_buffers = ArrayVec::new();
+        let (vertex_buffer, index_buffer) = if let Some(buffer_arena) = buffer_arena {
+            backing_staging_buffers.push(vertex_staging_buffer);
+            backing_staging_buffers.push(index_staging_buffer);
+            let vertex_buffer = buffer_arena.create_empty_buffer(vb_create_info, format_args!("{name} (vertex buffer)"))?;
+            let index_buffer = buffer_arena.create_empty_buffer(ib_create_info, format_args!("{name} (index buffer)"))?;
+            (vertex_buffer, index_buffer)
+        } else {
+            (vertex_staging_buffer, index_staging_buffer)
+        };
         let library = Rc::new(VertexLibrary {
             vertex_buffer,
             index_buffer,
@@ -120,6 +141,7 @@ impl VertexLibraryBuilder<'_> {
             library,
             vertex_staging,
             index_staging,
+            backing_staging_buffers,
             vertex_buffer_infos,
             index_buffer_offsets,
             vertices_allocated,
@@ -146,9 +168,16 @@ impl VertexLibraryBuilder<'_> {
         self.vertices_allocated[vertex_layout] += vertex_count;
         self.indices_allocated[vertex_layout] += index_buffer.len();
 
+        // Safety: these mapped buffers still point to valid memory, since the
+        // buffers are either in self.backing_staging_buffers or
+        // self.vertex_library, which in turn must still exist, since we have a
+        // borrow to self for the entirety of this function.
+        let vertex_staging: &mut [u8] = unsafe { &mut *self.vertex_staging };
+        let index_staging: &mut [u8] = unsafe { &mut *self.index_staging };
+
         let index_buffer_start = self.index_buffer_offsets[vertex_layout] + first_index * VERTEX_LIBRARY_INDEX_SIZE;
         let index_buffer_end = index_buffer_start + index_buffer.len() * VERTEX_LIBRARY_INDEX_SIZE;
-        let index_bytes: &mut [u8] = &mut self.index_staging.data_mut()[index_buffer_start..index_buffer_end];
+        let index_bytes: &mut [u8] = &mut index_staging[index_buffer_start..index_buffer_end];
         let indices_dst: &mut [VertexLibraryIndexType] = bytemuck::cast_slice_mut(index_bytes);
         for (src_index, dst_index) in index_buffer.iter().zip(indices_dst) {
             let index = src_index.to_index_type();
@@ -166,7 +195,7 @@ impl VertexLibraryBuilder<'_> {
             let write_len = out_vertex_size * (src.len() / in_vertex_size);
             let fits = write_len <= dst_offset.size;
             assert!(fits, "given vertex buffer does not fit, check that the measurements are correct");
-            let dst = &mut self.vertex_staging.data_mut()[dst_offset.offset..dst_offset.offset + write_len];
+            let dst = &mut vertex_staging[dst_offset.offset..dst_offset.offset + write_len];
             dst_offset.offset += write_len;
             dst_offset.size -= write_len;
             write_vertices(vertex_layout, vertex_binding, src, dst);
@@ -182,20 +211,22 @@ impl VertexLibraryBuilder<'_> {
         }
     }
 
-    pub fn upload(self, uploader: &mut Uploader, arena: &mut VulkanArena<ForBuffers>) {
-        arena.copy_buffer(
-            BufferUsage::VERTEX,
-            self.vertex_staging.buffer,
-            &self.library.vertex_buffer,
-            uploader,
-            format_args!("{} (vertex buffer)", self.debug_id),
-        );
-        arena.copy_buffer(
+    /// Copies the buffers from the staging buffers to the real ones. Must not
+    /// be called if the [`VertexLibraryBuilder`] was created without the arena
+    /// for the real buffers.
+    pub fn upload(mut self, uploader: &mut Uploader) {
+        assert_eq!(2, self.backing_staging_buffers.len());
+        uploader.copy_buffer(
             BufferUsage::INDEX,
-            self.index_staging.buffer,
+            self.backing_staging_buffers.pop().unwrap(),
             &self.library.index_buffer,
-            uploader,
             format_args!("{} (index buffer)", self.debug_id),
+        );
+        uploader.copy_buffer(
+            BufferUsage::VERTEX,
+            self.backing_staging_buffers.pop().unwrap(),
+            &self.library.vertex_buffer,
+            format_args!("{} (vertex buffer)", self.debug_id),
         );
     }
 }
