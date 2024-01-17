@@ -55,7 +55,7 @@ fn main_() {
     let mut queued_resize: Option<Instant> = None;
     let mut width: u32;
     let mut height: u32;
-    let mut immediate_present: bool = true;
+    let mut immediate_present: bool = false;
     let mut refresh_rate: i32;
 
     // Perf visualization stuff
