@@ -1,28 +1,24 @@
 use alloc::rc::{Rc, Weak};
-use core::mem;
 
 use arrayvec::ArrayVec;
 use ash::vk;
 use bytemuck::Zeroable;
 use enum_map::Enum;
 
-use crate::arena::buffers::{BufferUsage, ForBuffers};
+use crate::arena::buffers::ForBuffers;
 use crate::arena::{VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
-use crate::renderer::descriptors::material::ImGuiDrawCmd;
 use crate::renderer::pipeline_parameters::constants::{
-    MAX_IMGUI_DRAW_CALLS, MAX_PBR_FACTORS_COUNT, MAX_TEXTURE_COUNT, UF_DRAW_CALL_FRAG_PARAMS_BINDING, UF_DRAW_CALL_VERT_PARAMS_BINDING,
-    UF_IMGUI_DRAW_CMD_PARAMS_BINDING, UF_PBR_FACTORS_BINDING, UF_RENDER_SETTINGS_BINDING, UF_TEXTURES_BINDING, UF_TRANSFORMS_BINDING,
+    MAX_TEXTURES, UF_DRAW_CALL_FRAG_PARAMS_BINDING, UF_DRAW_CALL_VERT_PARAMS_BINDING, UF_IMGUI_DRAW_CMD_PARAMS_BINDING,
+    UF_PBR_FACTORS_BINDING, UF_RENDER_SETTINGS_BINDING, UF_TEXTURES_BINDING, UF_TRANSFORMS_BINDING,
 };
+use crate::renderer::pipeline_parameters::uniforms::{ImGuiDrawCmd, PbrFactors, StructureOfArraysUniform};
 use crate::renderer::pipeline_parameters::{
-    uniforms, DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_PARAMETERS,
-    SKINNED_PIPELINES,
+    DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_PARAMETERS, SKINNED_PIPELINES,
 };
 use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 
 pub(crate) mod material;
-
-use material::PbrFactors;
 
 pub struct PbrDefaults {
     pub base_color: ImageView,
@@ -53,17 +49,6 @@ pub(crate) struct TempUniforms {
     imgui_cmds_offset_and_size: (vk::DeviceSize, vk::DeviceSize),
 }
 
-/// Descriptor writes:
-/// - HDR framebuffer attachment (one post-process descriptor set)
-/// - Global transforms (one shared descriptor set)
-/// - Render settings (one shared descriptor set)
-/// - Joints (one for each of the skinned pipelines)
-/// - Material textures and buffers (two for each slot of each pipeline)
-// TODO: Revise this, descriptor write counts will definitely change with the unified texture array change
-const MAX_DESCRIPTOR_WRITES: usize = 7 + MAX_TEXTURE_COUNT as usize;
-
-type PendingWritesVec<'a> = ArrayVec<PendingWrite<'a>, MAX_DESCRIPTOR_WRITES>;
-
 pub(crate) struct ReusableSlots<T, const LEN: usize> {
     slots: ArrayVec<Option<Weak<T>>, LEN>,
     dirty: ArrayVec<bool, LEN>,
@@ -71,6 +56,9 @@ pub(crate) struct ReusableSlots<T, const LEN: usize> {
 
 impl<T, const LEN: usize> ReusableSlots<T, LEN> {
     pub(crate) fn new() -> ReusableSlots<T, LEN> {
+        // FIXME: Don't preallocate all the slots
+        // Try_allocate_slot should still primarily try and find strong_count == 0 slots to replace, but otherwise, the Nones aren't needed anymore with the soa changes
+        // Actually, Option<Weak<>> could probably just be Weak<> now.
         let slots = ArrayVec::from_iter([None].into_iter().cycle().take(LEN));
         let dirty = ArrayVec::from_iter([false; LEN]);
         ReusableSlots { slots, dirty }
@@ -90,9 +78,9 @@ pub struct Descriptors {
     descriptor_sets: PipelineMap<DescriptorSets>,
     device: Device,
     pbr_defaults: PbrDefaultTextureSlots,
-    pub(crate) pbr_factors_slots: ReusableSlots<PbrFactors, { MAX_PBR_FACTORS_COUNT as usize }>,
-    pub(crate) imgui_cmd_slots: ReusableSlots<ImGuiDrawCmd, { MAX_IMGUI_DRAW_CALLS as usize }>,
-    pub(crate) texture_slots: ReusableSlots<ImageView, { MAX_TEXTURE_COUNT as usize }>,
+    pub(crate) pbr_factors_slots: ReusableSlots<PbrFactors, { PbrFactors::MAX_COUNT }>,
+    pub(crate) imgui_cmd_slots: ReusableSlots<ImGuiDrawCmd, { ImGuiDrawCmd::MAX_COUNT }>,
+    pub(crate) texture_slots: ReusableSlots<ImageView, { MAX_TEXTURES as usize }>,
     uniform_buffer_offset_alignment: vk::DeviceSize,
 }
 
@@ -232,7 +220,16 @@ impl Descriptors {
     pub(crate) fn create_temp_uniforms(&mut self, temp_arena: &mut VulkanArena<ForBuffers>) -> Result<TempUniforms, VulkanArenaError> {
         profiling::scope!("creating temp uniform buffer");
 
-        let mut buffer = Vec::with_capacity(mem::size_of::<uniforms::PbrFactors>());
+        let buffer_create_info = vk::BufferCreateInfo::default()
+            .size(
+                PbrFactors::DESCRIPTOR_SIZE.next_multiple_of(self.uniform_buffer_offset_alignment)
+                    + ImGuiDrawCmd::DESCRIPTOR_SIZE.next_multiple_of(self.uniform_buffer_offset_alignment),
+            )
+            .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let mut mapped_buffer = temp_arena.create_staging_buffer(buffer_create_info, format_args!("uniform (temp material buffer)"))?;
+        let buffer = mapped_buffer.data_mut();
+        let mut written = 0usize;
 
         let pbr_factors_offset_and_size;
         {
@@ -242,22 +239,12 @@ impl Descriptors {
                 .slots
                 .iter()
                 .map(|slot| if let Some(factors) = slot.as_ref().and_then(Weak::upgrade) { *factors } else { PbrFactors::zeroed() })
-                .collect::<ArrayVec<PbrFactors, { MAX_PBR_FACTORS_COUNT as usize }>>();
-
-            let mut factors_soa = uniforms::PbrFactors::zeroed();
-            for (i, factors) in factors.iter().enumerate() {
-                factors_soa.base_color[i] = factors.base_color;
-                factors_soa.emissive_and_occlusion[i] = factors.emissive_and_occlusion;
-                factors_soa.alpha_rgh_mtl_normal[i] = factors.alpha_rgh_mtl_normal;
-                factors_soa.textures[i] = factors.textures;
-            }
-            let factors_soa = [factors_soa];
-            let factors_soa = bytemuck::cast_slice(&factors_soa);
-
-            let offset = (buffer.len() as vk::DeviceSize).next_multiple_of(self.uniform_buffer_offset_alignment);
-            pbr_factors_offset_and_size = (offset, factors_soa.len() as vk::DeviceSize);
-            buffer.resize(offset as usize, 0);
-            buffer.extend_from_slice(factors_soa);
+                .collect::<ArrayVec<PbrFactors, { PbrFactors::MAX_COUNT }>>();
+            let offset = written.next_multiple_of(self.uniform_buffer_offset_alignment as usize);
+            let len = factors.soa_size();
+            pbr_factors_offset_and_size = (offset as vk::DeviceSize, len as vk::DeviceSize);
+            factors.soa_write(&mut buffer[offset..offset + len]);
+            written = offset + len;
         }
 
         let imgui_cmds_offset_and_size;
@@ -268,20 +255,13 @@ impl Descriptors {
                 .slots
                 .iter()
                 .map(|slot| if let Some(draw_cmd) = slot.as_ref().and_then(Weak::upgrade) { *draw_cmd } else { ImGuiDrawCmd::zeroed() })
-                .collect::<ArrayVec<ImGuiDrawCmd, { MAX_IMGUI_DRAW_CALLS as usize }>>();
+                .collect::<ArrayVec<ImGuiDrawCmd, { ImGuiDrawCmd::MAX_COUNT }>>();
 
-            let mut imgui_draw_cmds = uniforms::ImGuiDrawCmdParams::zeroed();
-            for (i, draw_cmd) in draw_cmds.iter().enumerate() {
-                imgui_draw_cmds.texture_index[i] = draw_cmd.texture_index;
-                imgui_draw_cmds.clip_rect[i] = draw_cmd.clip_rect;
-            }
-            let imgui_draw_cmds_soa = [imgui_draw_cmds];
-            let imgui_draw_cmds_soa = bytemuck::cast_slice(&imgui_draw_cmds_soa);
-
-            let offset = (buffer.len() as vk::DeviceSize).next_multiple_of(self.uniform_buffer_offset_alignment);
-            imgui_cmds_offset_and_size = (offset, imgui_draw_cmds_soa.len() as vk::DeviceSize);
-            buffer.resize(offset as usize, 0);
-            buffer.extend_from_slice(imgui_draw_cmds_soa);
+            let offset = written.next_multiple_of(self.uniform_buffer_offset_alignment as usize);
+            let len = draw_cmds.soa_size();
+            imgui_cmds_offset_and_size = (offset as vk::DeviceSize, len as vk::DeviceSize);
+            draw_cmds.soa_write(&mut buffer[offset..offset + len]);
+            written = offset + len;
         }
 
         // TODO: Allocate and write the other dynamic uniforms here as well? (most write_descriptors params)
@@ -289,20 +269,9 @@ impl Descriptors {
         // eliminated, just include (to, from) pairs of byte ranges for the each
         // uniform write.
 
-        let buffer_create_info = vk::BufferCreateInfo::default()
-            .size(buffer.len() as u64)
-            .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let buffer = temp_arena.create_buffer(
-            buffer_create_info,
-            BufferUsage::UNIFORM,
-            &buffer,
-            None,
-            None,
-            format_args!("uniform (temp material buffer)"),
-        )?;
+        let _ = written; // to avoid clippy complaining that written is not used. It will be used later!
 
-        Ok(TempUniforms { buffer, pbr_factors_offset_and_size, imgui_cmds_offset_and_size })
+        Ok(TempUniforms { buffer: mapped_buffer.buffer, pbr_factors_offset_and_size, imgui_cmds_offset_and_size })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -318,14 +287,14 @@ impl Descriptors {
     ) {
         profiling::scope!("updating descriptors");
 
-        let mut textures_needing_update = ArrayVec::<_, { MAX_TEXTURE_COUNT as usize }>::new();
+        let mut textures_needing_update = ArrayVec::<_, { MAX_TEXTURES as usize }>::new();
         for (i, texture_slot) in self.texture_slots.slots.iter().enumerate().filter(|(i, _)| self.texture_slots.dirty[*i]) {
             if let Some(texture) = texture_slot.as_ref().and_then(Weak::upgrade) {
                 textures_needing_update.push((i as u32, texture));
             }
         }
 
-        let mut pending_writes = PendingWritesVec::new();
+        let mut pending_writes = Vec::new();
 
         // 0 is the index of the HDR attachment.
         self.set_uniform_images(PipelineIndex::RenderResolutionPostProcess, &mut pending_writes, (1, 0, 0), &[hdr_attachment.inner]);
@@ -366,7 +335,7 @@ impl Descriptors {
         // NOTE: pending_writes owns the image/buffers that are pointed to by
         // the write_descriptor_sets, and they need to be dropped only after
         // update_descriptor_sets.
-        let mut writes = ArrayVec::<vk::WriteDescriptorSet, MAX_DESCRIPTOR_WRITES>::new();
+        let mut writes = Vec::with_capacity(pending_writes.len());
         for pending_write in &pending_writes {
             writes.push(pending_write.write_descriptor_set.unwrap());
         }
@@ -382,7 +351,7 @@ impl Descriptors {
     fn set_uniform_buffer(
         &self,
         pipeline: PipelineIndex,
-        pending_writes: &mut PendingWritesVec,
+        pending_writes: &mut Vec<PendingWrite>,
         (set, binding, array_index): (u32, u32, u32),
         (buffer, offset, size): (vk::Buffer, vk::DeviceSize, vk::DeviceSize),
     ) {
@@ -425,7 +394,7 @@ impl Descriptors {
     fn set_uniform_images(
         &self,
         pipeline: PipelineIndex,
-        pending_writes: &mut PendingWritesVec,
+        pending_writes: &mut Vec<PendingWrite>,
         (set, first_binding, array_index): (u32, u32, u32),
         image_views: &[vk::ImageView],
     ) {

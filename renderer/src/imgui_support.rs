@@ -5,7 +5,7 @@ use arrayvec::{ArrayString, ArrayVec};
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use enum_map::enum_map;
-use glam::{Affine3A, Mat4, Vec4};
+use glam::{Affine3A, Mat4};
 use imgui::{BackendFlags, DrawCmdParams, DrawData, DrawIdx, TextureId};
 
 use crate::arena::buffers::ForBuffers;
@@ -70,7 +70,7 @@ impl ImGuiRenderer {
             physical_device,
             (image_data.pixels.len() as vk::DeviceSize).max(MIN_VTX_AND_IDX_BUF_SIZE),
             MemoryProps::for_staging(),
-            format_args!("imgui images (staging)"),
+            format_args!("imgui buffers"),
         )
         .unwrap();
         let mut image_arena = VulkanArena::<ForImages>::new(
@@ -174,7 +174,7 @@ impl TextureMap {
         let mut name = ArrayString::new();
         let id = self.materials.len();
         write!(&mut name, "imgui font texture material #{id}").unwrap();
-        let material = Material::for_imgui(descriptors, name, texture, Vec4::ZERO)?;
+        let material = Material::for_imgui(descriptors, name, texture, [0.0; 4])?;
         self.materials.push(Some(material));
         Some(TextureId::new(id))
     }
@@ -193,5 +193,5 @@ fn create_material_with_clip_area(
     let material = texture_map.materials[draw_cmd.texture_id.id()].as_ref()?;
     let mut name = ArrayString::new();
     write!(&mut name, "{} clone", material.name).unwrap();
-    Material::from_existing_imgui(descriptors, name, material, Vec4::from_array(draw_cmd.clip_rect))
+    Material::from_existing_imgui(descriptors, name, material, draw_cmd.clip_rect)
 }

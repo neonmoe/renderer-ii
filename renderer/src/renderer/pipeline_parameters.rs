@@ -144,7 +144,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::VERTEX,
         binding_flags: vk::DescriptorBindingFlags::empty(),
-        descriptor_size: Some(mem::size_of::<uniforms::JointsOffsets>() as vk::DeviceSize),
+        descriptor_size: Some(uniforms::JointsOffsets::DESCRIPTOR_SIZE),
     },
     DescriptorSetLayoutParams {
         binding: UF_DRAW_CALL_FRAG_PARAMS_BINDING,
@@ -152,7 +152,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::empty(),
-        descriptor_size: Some(mem::size_of::<uniforms::MaterialIds>() as vk::DeviceSize),
+        descriptor_size: Some(uniforms::MaterialIds::DESCRIPTOR_SIZE),
     },
     DescriptorSetLayoutParams {
         binding: UF_SAMPLER_BINDING,
@@ -165,7 +165,7 @@ static SHARED_DESCRIPTOR_SET_0: &[DescriptorSetLayoutParams] = &[
     DescriptorSetLayoutParams {
         binding: UF_TEXTURES_BINDING,
         descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-        descriptor_count: MAX_TEXTURE_COUNT,
+        descriptor_count: MAX_TEXTURES,
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         binding_flags: vk::DescriptorBindingFlags::PARTIALLY_BOUND,
         descriptor_size: None,
@@ -178,7 +178,7 @@ static PBR_DESCRIPTOR_SET_1: &[DescriptorSetLayoutParams] = &[DescriptorSetLayou
     descriptor_count: 1,
     stage_flags: vk::ShaderStageFlags::FRAGMENT,
     binding_flags: vk::DescriptorBindingFlags::empty(),
-    descriptor_size: Some(mem::size_of::<uniforms::PbrFactors>() as vk::DeviceSize),
+    descriptor_size: Some(uniforms::PbrFactors::DESCRIPTOR_SIZE),
 }];
 
 static OPAQUE_PARAMETERS: PipelineParameters = PipelineParameters {
@@ -282,7 +282,7 @@ static IMGUI: PipelineParameters = PipelineParameters {
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
             binding_flags: vk::DescriptorBindingFlags::empty(),
-            descriptor_size: Some(mem::size_of::<uniforms::ImGuiDrawCmdParams>() as vk::DeviceSize),
+            descriptor_size: Some(uniforms::ImGuiDrawCmd::DESCRIPTOR_SIZE),
         }],
     ],
 };

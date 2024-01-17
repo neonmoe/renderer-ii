@@ -15,11 +15,11 @@ layout(set = 0, binding = UF_DRAW_CALL_FRAG_PARAMS_BINDING, std430) uniform Draw
 }
 uf_draw_call;
 layout(set = 0, binding = UF_SAMPLER_BINDING) uniform sampler uf_sampler;
-layout(set = 0, binding = UF_TEXTURES_BINDING) uniform texture2D textures[MAX_TEXTURE_COUNT];
+layout(set = 0, binding = UF_TEXTURES_BINDING) uniform texture2D textures[MAX_TEXTURES];
 
 layout(set = 1, binding = UF_IMGUI_DRAW_CMD_PARAMS_BINDING, std430) uniform ImGuiDrawCmdParams {
-    vec4 clip_rect[MAX_IMGUI_DRAW_CALLS];
-    uint texture_index[MAX_IMGUI_DRAW_CALLS];
+    vec4 clip_rect[MAX_MATERIALS];
+    uint texture_index[MAX_MATERIALS];
 }
 uf_imgui_params;
 
@@ -27,7 +27,7 @@ void main() {
     uint material_index = uf_draw_call.material_index[in_draw_id];
     vec4 clip_rect = uf_imgui_params.clip_rect[material_index];
     if (!(clip_rect.x < out_screen_space_coords.x && clip_rect.z >= out_screen_space_coords.x &&
-        clip_rect.y < out_screen_space_coords.y && clip_rect.w >= out_screen_space_coords.y)) {
+          clip_rect.y < out_screen_space_coords.y && clip_rect.w >= out_screen_space_coords.y)) {
         discard;
     }
     uint texture_index = uf_imgui_params.texture_index[material_index];

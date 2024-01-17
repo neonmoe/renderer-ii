@@ -21,13 +21,13 @@ layout(set = 0, binding = UF_DRAW_CALL_FRAG_PARAMS_BINDING, std430) uniform Draw
 }
 uf_draw_call;
 layout(set = 0, binding = UF_SAMPLER_BINDING) uniform sampler uf_sampler;
-layout(set = 0, binding = UF_TEXTURES_BINDING) uniform texture2D textures[MAX_TEXTURE_COUNT];
+layout(set = 0, binding = UF_TEXTURES_BINDING) uniform texture2D textures[MAX_TEXTURES];
 
 layout(set = 1, binding = UF_PBR_FACTORS_BINDING, std430) uniform PbrFactors {
-    vec4 base_color[MAX_PBR_FACTORS_COUNT];
-    vec4 emissive_and_occlusion[MAX_PBR_FACTORS_COUNT];
-    vec4 alpha_rgh_mtl_normal[MAX_PBR_FACTORS_COUNT];
-    uvec4 textures[MAX_PBR_FACTORS_COUNT];
+    vec4 base_color[MAX_MATERIALS];
+    vec4 emissive_and_occlusion[MAX_MATERIALS];
+    vec4 alpha_rgh_mtl_normal[MAX_MATERIALS];
+    uvec4 textures[MAX_MATERIALS];
 }
 uf_factors;
 

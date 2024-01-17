@@ -2,39 +2,19 @@ use alloc::rc::Rc;
 use core::cmp::Ordering;
 
 use arrayvec::ArrayString;
-use bytemuck::Zeroable;
 use glam::{UVec4, Vec3, Vec4};
 
 use crate::renderer::descriptors::Descriptors;
+use crate::renderer::pipeline_parameters::uniforms::{ImGuiDrawCmd, PbrFactors};
 use crate::renderer::pipeline_parameters::vertex_buffers::VertexLayout;
 use crate::renderer::pipeline_parameters::PipelineIndex;
 use crate::vulkan_raii::ImageView;
-
-#[derive(Clone, Copy, Zeroable)]
-pub struct PbrFactors {
-    /// (r, g, b, a).
-    pub base_color: Vec4,
-    /// (emissive r, .. g, .. b, occlusion strength)
-    pub emissive_and_occlusion: Vec4,
-    /// (alpha cutoff, roughness, metallic, normal scale)
-    pub alpha_rgh_mtl_normal: Vec4,
-    /// Texture indices for (base_color and metallic/roughness, normal,
-    /// occlusion, emissive). In the first component, base color texture is the
-    /// higher 16 bits, metallic/roughness texture is the lower 16 bits.
-    pub textures: UVec4,
-}
 
 #[derive(Clone, Copy)]
 pub enum AlphaMode {
     Opaque,
     AlphaToCoverage,
     Blended,
-}
-
-#[derive(Clone, Copy, Zeroable)]
-pub struct ImGuiDrawCmd {
-    pub clip_rect: Vec4,
-    pub texture_index: u32,
 }
 
 #[derive(Clone)]
@@ -141,7 +121,7 @@ impl Material {
         descriptors: &mut Descriptors,
         name: ArrayString<64>,
         texture: Rc<ImageView>,
-        clip_rect: Vec4,
+        clip_rect: [f32; 4],
     ) -> Option<Rc<Material>> {
         let texture_index = descriptors.texture_slots.try_allocate_slot(Rc::downgrade(&texture))?;
         let cmd = Rc::new(ImGuiDrawCmd { clip_rect, texture_index });
@@ -154,7 +134,7 @@ impl Material {
         descriptors: &mut Descriptors,
         name: ArrayString<64>,
         material: &Material,
-        clip_rect: Vec4,
+        clip_rect: [f32; 4],
     ) -> Option<Rc<Material>> {
         let PipelineSpecificData::ImGui { texture, cmd } = &material.data else {
             return None;

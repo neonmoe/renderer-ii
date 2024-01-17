@@ -27,8 +27,9 @@ pub(crate) mod swapchain;
 use descriptors::Descriptors;
 use framebuffers::Framebuffers;
 use pipeline_parameters::render_passes::{Attachment, RenderPass};
+use pipeline_parameters::uniforms::{self, StructureOfArraysUniform};
 use pipeline_parameters::vertex_buffers::VertexBinding;
-use pipeline_parameters::{uniforms, PipelineIndex, PipelineMap};
+use pipeline_parameters::{PipelineIndex, PipelineMap};
 use pipelines::Pipelines;
 use scene::Scene;
 use swapchain::{Swapchain, SwapchainError};
@@ -64,8 +65,8 @@ pub struct Renderer {
     temp_arena: VulkanArena<ForBuffers>,
     command_pool: Rc<CommandPool>,
     command_buffer: Option<CommandBuffer>,
-    uniform_joints_offsets: uniforms::JointsOffsets,
-    uniform_material_indices: uniforms::MaterialIds,
+    uniform_joints_offsets: ArrayVec<uniforms::JointsOffsets, { uniforms::JointsOffsets::MAX_COUNT }>,
+    uniform_material_indices: ArrayVec<uniforms::MaterialIds, { uniforms::MaterialIds::MAX_COUNT }>,
 }
 
 impl Renderer {
@@ -116,8 +117,8 @@ impl Renderer {
             temp_arena,
             command_pool,
             command_buffer: None,
-            uniform_joints_offsets: uniforms::JointsOffsets::zeroed(),
-            uniform_material_indices: uniforms::MaterialIds::zeroed(),
+            uniform_joints_offsets: ArrayVec::new(),
+            uniform_material_indices: ArrayVec::new(),
         }
     }
 
@@ -238,9 +239,11 @@ impl Renderer {
                     vertex_offset,
                     first_instance,
                 }));
-                self.uniform_material_indices.material_id[first_instance as usize] = draw.tag.material.material_id;
+                self.uniform_material_indices.soa_resize(first_instance as usize, false);
+                self.uniform_material_indices.push(uniforms::MaterialIds { material_id: draw.tag.material.material_id });
                 if let Some(JointsOffset(joints_offset)) = draw.joints {
-                    self.uniform_joints_offsets.joints_offset[first_instance as usize] = joints_offset;
+                    self.uniform_joints_offsets.soa_resize(first_instance as usize, false);
+                    self.uniform_joints_offsets.push(uniforms::JointsOffsets { joints_offset });
                 }
                 prev_tag = Some(draw.tag);
                 prev_joints = Some(draw.joints);
@@ -281,14 +284,16 @@ impl Renderer {
             .create_temp_uniforms(&mut self.temp_arena)
             .expect("renderer's temp arena should have enough memory for the materials buffer");
 
-        let draw_call_vert_params = &[self.uniform_joints_offsets];
+        let mut draw_call_vert_params = vec![0; self.uniform_joints_offsets.soa_size()];
+        self.uniform_joints_offsets.soa_write(&mut draw_call_vert_params);
         let draw_call_vert_params_buffer =
-            create_uniform_buffer(&mut self.temp_arena, draw_call_vert_params, "draw call params (for vertex shader)")
+            create_uniform_buffer(&mut self.temp_arena, &draw_call_vert_params, "draw call params (for vertex shader)")
                 .expect("renderer's temp arena should have enough memory for the draw call params buffer");
 
-        let draw_call_frag_params = &[self.uniform_material_indices];
+        let mut draw_call_frag_params = vec![0; self.uniform_material_indices.soa_size()];
+        self.uniform_material_indices.soa_write(&mut draw_call_frag_params);
         let draw_call_frag_params_buffer =
-            create_uniform_buffer(&mut self.temp_arena, draw_call_frag_params, "draw call params (for fragment shader)")
+            create_uniform_buffer(&mut self.temp_arena, &draw_call_frag_params, "draw call params (for fragment shader)")
                 .expect("renderer's temp arena should have enough memory for the draw call params buffer");
 
         descriptors.write_descriptors(
