@@ -50,26 +50,26 @@ pub(crate) struct TempUniforms {
 }
 
 pub(crate) struct ReusableSlots<T, const LEN: usize> {
-    slots: ArrayVec<Option<Weak<T>>, LEN>,
+    slots: ArrayVec<Weak<T>, LEN>,
     dirty: ArrayVec<bool, LEN>,
 }
 
 impl<T, const LEN: usize> ReusableSlots<T, LEN> {
     pub(crate) fn new() -> ReusableSlots<T, LEN> {
-        // FIXME: Don't preallocate all the slots
-        // Try_allocate_slot should still primarily try and find strong_count == 0 slots to replace, but otherwise, the Nones aren't needed anymore with the soa changes
-        // Actually, Option<Weak<>> could probably just be Weak<> now.
-        let slots = ArrayVec::from_iter([None].into_iter().cycle().take(LEN));
-        let dirty = ArrayVec::from_iter([false; LEN]);
-        ReusableSlots { slots, dirty }
+        ReusableSlots { slots: ArrayVec::new(), dirty: ArrayVec::new() }
     }
 
     pub(crate) fn try_allocate_slot(&mut self, data: Weak<T>) -> Option<u32> {
-        let (i, slot) =
-            self.slots.iter_mut().enumerate().find(|(_, slot)| if let Some(slot) = &slot { slot.strong_count() == 0 } else { true })?;
-        let _ = slot.insert(data);
-        self.dirty[i] = true;
-        Some(i as u32)
+        if let Some((i, slot)) = self.slots.iter_mut().enumerate().find(|(_, slot)| slot.strong_count() == 0) {
+            *slot = data;
+            self.dirty[i] = true;
+            Some(i as u32)
+        } else {
+            let i = self.slots.len();
+            self.slots.try_push(data).ok()?;
+            self.dirty.push(true);
+            Some(i as u32)
+        }
     }
 }
 
@@ -238,7 +238,7 @@ impl Descriptors {
                 .pbr_factors_slots
                 .slots
                 .iter()
-                .map(|slot| if let Some(factors) = slot.as_ref().and_then(Weak::upgrade) { *factors } else { PbrFactors::zeroed() })
+                .map(|slot| if let Some(factors) = Weak::upgrade(slot) { *factors } else { PbrFactors::zeroed() })
                 .collect::<ArrayVec<PbrFactors, { PbrFactors::MAX_COUNT }>>();
             let offset = written.next_multiple_of(self.uniform_buffer_offset_alignment as usize);
             let len = factors.soa_size();
@@ -254,7 +254,7 @@ impl Descriptors {
                 .imgui_cmd_slots
                 .slots
                 .iter()
-                .map(|slot| if let Some(draw_cmd) = slot.as_ref().and_then(Weak::upgrade) { *draw_cmd } else { ImGuiDrawCmd::zeroed() })
+                .map(|slot| if let Some(draw_cmd) = Weak::upgrade(slot) { *draw_cmd } else { ImGuiDrawCmd::zeroed() })
                 .collect::<ArrayVec<ImGuiDrawCmd, { ImGuiDrawCmd::MAX_COUNT }>>();
 
             let offset = written.next_multiple_of(self.uniform_buffer_offset_alignment as usize);
@@ -289,7 +289,7 @@ impl Descriptors {
 
         let mut textures_needing_update = ArrayVec::<_, { MAX_TEXTURES as usize }>::new();
         for (i, texture_slot) in self.texture_slots.slots.iter().enumerate().filter(|(i, _)| self.texture_slots.dirty[*i]) {
-            if let Some(texture) = texture_slot.as_ref().and_then(Weak::upgrade) {
+            if let Some(texture) = Weak::upgrade(texture_slot) {
                 textures_needing_update.push((i as u32, texture));
             }
         }
