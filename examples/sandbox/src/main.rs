@@ -389,6 +389,12 @@ fn main_() {
                     sdl_context.mouse().show_cursor(true);
                     imgui.io_mut().config_flags.set(imgui::ConfigFlags::NO_MOUSE, mouse_look);
                     (width, height) = window.vulkan_drawable_size();
+
+                    // Do an immediate_present = true resize already, the
+                    // "queued resize" will reset it to the proper mode
+                    swapchain_settings.extent = renderer::vk::Extent2D { width, height };
+                    swapchain_settings.immediate_present = true;
+                    recreate_swapchain = true;
                     queued_resize = Some(Instant::now());
                 }
 
@@ -481,7 +487,7 @@ fn main_() {
 
             if let Some(resize_timestamp) = queued_resize {
                 let duration_since_resize = Instant::now() - resize_timestamp;
-                if duration_since_resize > Duration::from_millis(100) {
+                if duration_since_resize > Duration::from_millis(500) {
                     swapchain_settings.extent = renderer::vk::Extent2D { width, height };
                     swapchain_settings.immediate_present = immediate_present;
                     recreate_swapchain = true;
