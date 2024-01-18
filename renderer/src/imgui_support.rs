@@ -156,6 +156,11 @@ impl ImGuiRenderer {
         }
 
         let &DrawData { display_pos: [x, y], display_size: [w, h], .. } = draw_data;
+
+        // Offset everything a bit, based on hovering over buttons and moving
+        // one pixel at a time, everything is offset this much for some reason?
+        let (x, y) = (x + 1.0, y + 2.0); // TODO: Test if the rendering seems offset by this amount on other systems.
+
         // Mat4 -> Affine3A misses out on the last row, but luckily, orthographic projections don't need the last one!
         let proj_matrix = Affine3A::from_mat4(Mat4::orthographic_rh(x, x + w, y, y + h, -1.0, 1.0));
         for (mesh, material) in &self.frame_draws {

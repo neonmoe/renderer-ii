@@ -81,7 +81,7 @@ fn main_() {
 
     let mut window = {
         profiling::scope!("SDL window creation");
-        video_subsystem.window("sandbox", 640, 480).position_centered().resizable().allow_highdpi().vulkan().build().unwrap()
+        video_subsystem.window("sandbox", 1280, 720).position_centered().resizable().allow_highdpi().vulkan().build().unwrap()
     };
 
     //
@@ -244,7 +244,10 @@ fn main_() {
     let mut imgui = imgui::Context::create();
     imgui.set_ini_filename(None);
     imgui.set_log_filename(None);
-    imgui.fonts().add_font(&[imgui::FontSource::DefaultFontData { config: None }]);
+    imgui.fonts().add_font(&[
+        imgui::FontSource::TtfData { data: include_bytes!("fonts/NotoSans-Regular.ttf"), size_pixels: 20.0, config: None },
+        imgui::FontSource::DefaultFontData { config: None },
+    ]);
     let mut imgui_platform = imgui_sdl2_support::SdlPlatform::init(&mut imgui);
     let mut imgui_renderer =
         renderer::imgui_support::ImGuiRenderer::new(&mut imgui, &instance, &device, &physical_device, &mut descriptors);
@@ -539,6 +542,7 @@ fn main_() {
                         profiling::scope!("imgui");
                         imgui_platform.prepare_frame(&mut imgui, &window, &event_pump);
                         let ui = imgui.frame();
+                        ui.show_about_window(&mut true);
                         ui.show_demo_window(&mut true);
                         imgui_renderer.render(imgui.render(), &mut scene, &mut descriptors);
                     }
