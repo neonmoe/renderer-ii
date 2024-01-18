@@ -97,6 +97,7 @@ pub fn load_image(
     if cfg!(debug_assertions) {
         debug_assert!(TEXTURE_FORMATS.contains(&format));
     }
+    let (texels_per_block_x, texels_per_block_y) = texel_per_block(format);
 
     let extent = vk::Extent3D::default().width(width).height(height).depth(1);
     let &mut Uploader { graphics_queue_family, transfer_queue_family, .. } = uploader;
@@ -156,12 +157,10 @@ pub fn load_image(
                     .mip_level(mip_level as u32)
                     .base_array_layer(0)
                     .layer_count(1);
-                // NOTE: Only works for square block sizes. May cause issues down the line.
-                let texel_size = (mip_range.len() as f32).sqrt() as u32;
                 let image_copy_region = vk::BufferImageCopy::default()
                     .buffer_offset(mip_range.start as vk::DeviceSize)
-                    .buffer_row_length(current_mip_level_extent.width.max(texel_size))
-                    .buffer_image_height(current_mip_level_extent.height.max(texel_size))
+                    .buffer_row_length(current_mip_level_extent.width.max(texels_per_block_x))
+                    .buffer_image_height(current_mip_level_extent.height.max(texels_per_block_y))
                     .image_subresource(subresource_layers_dst)
                     .image_extent(current_mip_level_extent);
                 unsafe {
@@ -277,5 +276,36 @@ fn to_srgb(format: vk::Format) -> vk::Format {
         vk::Format::ASTC_12X10_UNORM_BLOCK => vk::Format::ASTC_12X10_SRGB_BLOCK,
         vk::Format::ASTC_12X12_UNORM_BLOCK => vk::Format::ASTC_12X12_SRGB_BLOCK,
         f => f,
+    }
+}
+
+fn texel_per_block(format: vk::Format) -> (u32, u32) {
+    match format {
+        vk::Format::BC2_UNORM_BLOCK
+        | vk::Format::BC3_UNORM_BLOCK
+        | vk::Format::BC7_UNORM_BLOCK
+        | vk::Format::BC1_RGB_UNORM_BLOCK
+        | vk::Format::BC1_RGBA_UNORM_BLOCK
+        | vk::Format::ETC2_R8G8B8_UNORM_BLOCK
+        | vk::Format::ETC2_R8G8B8A1_UNORM_BLOCK
+        | vk::Format::ETC2_R8G8B8A8_UNORM_BLOCK
+        | vk::Format::PVRTC1_4BPP_UNORM_BLOCK_IMG
+        | vk::Format::PVRTC2_4BPP_UNORM_BLOCK_IMG
+        | vk::Format::ASTC_4X4_UNORM_BLOCK => (4, 4),
+        vk::Format::PVRTC1_2BPP_UNORM_BLOCK_IMG | vk::Format::PVRTC2_2BPP_UNORM_BLOCK_IMG => (8, 4),
+        vk::Format::ASTC_5X4_UNORM_BLOCK => (5, 4),
+        vk::Format::ASTC_5X5_UNORM_BLOCK => (5, 5),
+        vk::Format::ASTC_6X5_UNORM_BLOCK => (6, 5),
+        vk::Format::ASTC_6X6_UNORM_BLOCK => (6, 6),
+        vk::Format::ASTC_8X5_UNORM_BLOCK => (8, 5),
+        vk::Format::ASTC_8X6_UNORM_BLOCK => (8, 6),
+        vk::Format::ASTC_8X8_UNORM_BLOCK => (8, 8),
+        vk::Format::ASTC_10X5_UNORM_BLOCK => (10, 5),
+        vk::Format::ASTC_10X6_UNORM_BLOCK => (10, 6),
+        vk::Format::ASTC_10X8_UNORM_BLOCK => (10, 8),
+        vk::Format::ASTC_10X10_UNORM_BLOCK => (10, 10),
+        vk::Format::ASTC_12X10_UNORM_BLOCK => (12, 10),
+        vk::Format::ASTC_12X12_UNORM_BLOCK => (12, 12),
+        _ => (1, 1),
     }
 }
