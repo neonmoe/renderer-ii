@@ -102,6 +102,9 @@ declare_soa_uniform_struct! {
 declare_soa_uniform_struct! {
     pub struct ImGuiDrawCmd[MAX_MATERIALS as usize] {
         pub clip_rect: [f32; 4],
+        // Lower 16 bits are the texture index, top 16 bits define how it's used:
+        // - (texture_index >> 16) == 1: the red channel is multiplied into the alpha (r8_unorm)
+        // - (texture_index >> 16) == 2: all channels are multiplied into the output color (rgb/rgba)
         pub texture_index: u32,
     }
 }

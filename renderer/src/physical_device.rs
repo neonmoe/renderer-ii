@@ -16,7 +16,7 @@ use limits::PhysicalDeviceLimitBreak;
 use physical_device_features::SupportedFeatures;
 
 pub const TEXTURE_FORMATS: &[vk::Format] =
-    &[vk::Format::R8G8B8A8_SRGB, vk::Format::R8G8B8A8_UNORM, vk::Format::BC7_SRGB_BLOCK, vk::Format::BC7_UNORM_BLOCK];
+    &[vk::Format::R8_UNORM, vk::Format::R8G8B8A8_SRGB, vk::Format::R8G8B8A8_UNORM, vk::Format::BC7_SRGB_BLOCK, vk::Format::BC7_UNORM_BLOCK];
 
 #[derive(thiserror::Error, Debug)]
 pub enum PhysicalDeviceRejectionReason {

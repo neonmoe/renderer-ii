@@ -31,6 +31,15 @@ void main() {
         discard;
     }
     uint texture_index = uf_imgui_params.texture_index[material_index];
-    // TODO: Use uf_imgui_params.clip_rect
-    out_color = in_color * texture(sampler2D(textures[texture_index], uf_sampler), in_uv);
+    uint tex_kind = texture_index >> 16;
+    texture_index = texture_index & 0xFFFF;
+    if (tex_kind == 1) {
+        // The first material made for this pipeline is the R8_UNORM texture from imgui.
+        out_color = in_color;
+        out_color.a *= texture(sampler2D(textures[texture_index], uf_sampler), in_uv).r;
+    } else if (tex_kind == 2) {
+        out_color = in_color * texture(sampler2D(textures[texture_index], uf_sampler), in_uv);
+    } else {
+        discard;
+    }
 }

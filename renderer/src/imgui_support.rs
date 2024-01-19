@@ -50,12 +50,12 @@ impl ImGuiRenderer {
         imgui.io_mut().backend_flags.insert(BackendFlags::RENDERER_HAS_VTX_OFFSET);
 
         let fonts = imgui.fonts();
-        let font_atlas = fonts.build_rgba32_texture();
+        let font_atlas = fonts.build_alpha8_texture();
         let image_data: ImageData = ImageData {
             width: font_atlas.width,
             height: font_atlas.height,
             pixels: font_atlas.data,
-            format: vk::Format::R8G8B8A8_UNORM,
+            format: vk::Format::R8_UNORM,
             #[allow(clippy::single_range_in_vec_init)]
             mip_ranges: ArrayVec::from_iter([(0..font_atlas.data.len())]),
         };
@@ -99,7 +99,7 @@ impl ImGuiRenderer {
         mesh_arena.reset().unwrap();
 
         let mut texture_map = TextureMap { materials: Vec::new() };
-        fonts.tex_id = texture_map.allocate_texture_id(descriptors, Rc::new(fonts_texture)).unwrap();
+        fonts.tex_id = texture_map.allocate_texture_id(descriptors, Rc::new(fonts_texture), true).unwrap();
 
         ImGuiRenderer { texture_map, mesh_arena, frame_draws: Vec::new() }
     }
@@ -174,12 +174,12 @@ pub struct TextureMap {
 }
 
 impl TextureMap {
-    pub fn allocate_texture_id(&mut self, descriptors: &mut Descriptors, texture: Rc<ImageView>) -> Option<TextureId> {
+    pub fn allocate_texture_id(&mut self, descriptors: &mut Descriptors, texture: Rc<ImageView>, just_alpha: bool) -> Option<TextureId> {
         use core::fmt::Write;
         let mut name = ArrayString::new();
         let id = self.materials.len();
         write!(&mut name, "imgui font texture material #{id}").unwrap();
-        let material = Material::for_imgui(descriptors, name, texture, [0.0; 4])?;
+        let material = Material::for_imgui(descriptors, name, texture, [0.0; 4], just_alpha)?;
         self.materials.push(Some(material));
         Some(TextureId::new(id))
     }
@@ -198,5 +198,5 @@ fn create_material_with_clip_area(
     let material = texture_map.materials[draw_cmd.texture_id.id()].as_ref()?;
     let mut name = ArrayString::new();
     write!(&mut name, "{} clone", material.name).unwrap();
-    Material::from_existing_imgui(descriptors, name, material, draw_cmd.clip_rect)
+    Material::from_existing_imgui_texture(descriptors, name, material, draw_cmd.clip_rect)
 }

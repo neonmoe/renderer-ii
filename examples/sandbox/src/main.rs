@@ -57,12 +57,11 @@ fn main_() {
     let mut height: u32;
     let mut immediate_present: bool = false;
     let mut refresh_rate: i32;
+    let mut recreate_swapchain = false;
 
-    // Perf visualization stuff
-    let mut cumulative_render_time: Duration = Duration::from_secs(0);
-    let mut cumulative_render_count: u32 = 0;
-    let mut cumulative_update_time: Duration = Duration::from_secs(0);
-    let mut cumulative_update_count: u32 = 0;
+    // Frame pacing
+    let mut last_wait_time = Instant::now();
+    let mut last_frame_start = Instant::now();
 
     //
     // Logging, SDL setup
@@ -79,7 +78,7 @@ fn main_() {
         sdl_context.video().unwrap()
     };
 
-    let mut window = {
+    let window = {
         profiling::scope!("SDL window creation");
         video_subsystem.window("sandbox", 1280, 720).position_centered().resizable().allow_highdpi().vulkan().build().unwrap()
     };
@@ -234,9 +233,6 @@ fn main_() {
     let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device);
     print_memory_usage("after renderer creation");
 
-    let mut recreate_swapchain = false;
-    let mut prev_duration = Duration::ZERO;
-
     //
     // Imgui setup
     //
@@ -251,6 +247,7 @@ fn main_() {
     let mut imgui_platform = imgui_sdl2_support::SdlPlatform::init(&mut imgui);
     let mut imgui_renderer =
         renderer::imgui_support::ImGuiRenderer::new(&mut imgui, &instance, &device, &physical_device, &mut descriptors);
+    imgui.style_mut();
 
     print_memory_usage("after imgui setup");
 
@@ -263,25 +260,13 @@ fn main_() {
         sdl_context.game_controller().unwrap()
     };
     let mut controller: Option<GameController> = None;
+    let mut opened_controller: Option<u32> = None;
     let mut analog_controls = false;
     fn get_axis_deadzoned(raw: i16) -> f32 {
         if -9000 < raw && raw < 9000 { 0.0 } else { (raw as f32 / i16::MAX as f32).powf(3.0) }
     }
 
-    const FPS_COUNTER_UPDATES_PER_SECOND: usize = 20;
-    let now = Instant::now();
-    let mut fps_counter_accumulators = [(0, Duration::ZERO, Duration::ZERO); FPS_COUNTER_UPDATES_PER_SECOND];
-    let mut fps_counter_update_deadlines = [now; FPS_COUNTER_UPDATES_PER_SECOND];
-    let mut fps_counter_accumulator_index = 0;
-    let mut fps_counter_ready = false;
-    for (i, deadline) in fps_counter_update_deadlines.iter_mut().enumerate() {
-        *deadline = now + Duration::from_secs(1) * i as u32 / FPS_COUNTER_UPDATES_PER_SECOND as u32;
-    }
-
     let mut event_pump = sdl_context.event_pump().unwrap();
-    let mut opened_controller = None;
-    let mut last_wait_time = Instant::now();
-    let mut last_frame_start = Instant::now();
 
     //
     // Main loop
@@ -451,8 +436,6 @@ fn main_() {
             };
             dt_duration = if too_slow { real_dt } else { fixed_dt }; // fall back to variable timestep when too slow.
             last_frame_start = frame_start;
-            cumulative_update_time += dt_duration;
-            cumulative_update_count += 1;
 
             let dt = dt_duration.as_secs_f32();
             {
@@ -480,13 +463,8 @@ fn main_() {
         //
 
         let mut scene = renderer::Scene::default();
-        let frame_start;
         {
             profiling::scope!("rendering (queueing draws)");
-
-            frame_start = Instant::now();
-            cumulative_render_time += prev_duration;
-            cumulative_render_count += 1;
 
             if let Some(resize_timestamp) = queued_resize {
                 let duration_since_resize = Instant::now() - resize_timestamp;
@@ -561,51 +539,6 @@ fn main_() {
                     recreate_swapchain = true;
                 }
             }
-
-            prev_duration = Instant::now().duration_since(frame_start);
-        }
-
-        //
-        // Fps counter updates
-        //
-
-        let next_update_time = &mut fps_counter_update_deadlines[fps_counter_accumulator_index];
-        let mut updated_title = None;
-        if Instant::now() >= *next_update_time {
-            profiling::scope!("updating performance counters");
-            *next_update_time += Duration::from_secs(1);
-
-            let latest_renders = cumulative_render_count;
-            let latest_avg_render_time = cumulative_render_time / cumulative_render_count.max(1);
-            let latest_avg_update_time = cumulative_update_time / cumulative_update_count.max(1);
-            cumulative_render_count = 0;
-            cumulative_update_count = 0;
-            cumulative_render_time = Duration::ZERO;
-            cumulative_update_time = Duration::ZERO;
-
-            fps_counter_ready |= fps_counter_accumulator_index == fps_counter_accumulators.len() - 1;
-            fps_counter_accumulator_index = (fps_counter_accumulator_index + 1) % fps_counter_accumulators.len();
-            let (fps_store, render_time_store, update_time_store) = &mut fps_counter_accumulators[fps_counter_accumulator_index];
-            *fps_store = latest_renders;
-            *render_time_store = latest_avg_render_time;
-            *update_time_store = latest_avg_update_time;
-
-            if fps_counter_ready {
-                let (fps, render_time, update_time) = fps_counter_accumulators.iter().fold(
-                    (0, Duration::ZERO, Duration::ZERO),
-                    |(acc_fps, acc_r, acc_u), (renders, render_time, update_time)| {
-                        (acc_fps + *renders, acc_r + *render_time, acc_u + *update_time)
-                    },
-                );
-                let render_time = render_time / fps_counter_accumulators.len() as u32;
-                let update_time = update_time / fps_counter_accumulators.len() as u32;
-                updated_title = Some(format!("sandbox (fps: {fps:4}, render time: {render_time:.2?}, dt: {update_time:.2?})"));
-            }
-        }
-
-        if let Some(title) = updated_title {
-            profiling::scope!("updating window title (dropped state lock)");
-            let _ = window.set_title(&title);
         }
 
         //

@@ -122,15 +122,16 @@ impl Material {
         name: ArrayString<64>,
         texture: Rc<ImageView>,
         clip_rect: [f32; 4],
+        just_alpha: bool,
     ) -> Option<Rc<Material>> {
-        let texture_index = descriptors.texture_slots.try_allocate_slot(Rc::downgrade(&texture))?;
+        let texture_index = descriptors.texture_slots.try_allocate_slot(Rc::downgrade(&texture))? | ((just_alpha as u32) << 16);
         let cmd = Rc::new(ImGuiDrawCmd { clip_rect, texture_index });
         let material_id = descriptors.imgui_cmd_slots.try_allocate_slot(Rc::downgrade(&cmd))?;
         let data = PipelineSpecificData::ImGui { texture, cmd };
         Some(Rc::new(Material { name, material_id, data }))
     }
 
-    pub fn from_existing_imgui(
+    pub fn from_existing_imgui_texture(
         descriptors: &mut Descriptors,
         name: ArrayString<64>,
         material: &Material,
