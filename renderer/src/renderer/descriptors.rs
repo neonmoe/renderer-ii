@@ -137,7 +137,7 @@ impl Descriptors {
                 })
                 .collect::<ArrayVec<_, 8>>();
 
-            DescriptorSetLayouts { inner: descriptor_set_layouts, device: device.clone(), immutable_samplers: samplers_rc }
+            DescriptorSetLayouts { inner: descriptor_set_layouts, device: device.clone(), _immutable_samplers: samplers_rc }
         };
 
         let pipeline_layouts = PipelineMap::from_fn(|pipeline| {
@@ -179,7 +179,7 @@ impl Descriptors {
             for (i, descriptor_set) in descriptor_sets.iter().enumerate() {
                 crate::name_vulkan_object(device, *descriptor_set, format_args!("set {i} for pipeline {pl:?}"));
             }
-            DescriptorSets { inner: ArrayVec::from_iter(descriptor_sets), device: device.clone(), descriptor_pool: descriptor_pool.clone() }
+            DescriptorSets { inner: ArrayVec::from_iter(descriptor_sets), _descriptor_pool: descriptor_pool.clone() }
         });
         drop(descriptor_set_layouts_per_pipeline);
 

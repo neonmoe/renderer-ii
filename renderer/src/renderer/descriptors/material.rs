@@ -5,9 +5,9 @@ use arrayvec::ArrayString;
 use glam::{UVec4, Vec3, Vec4};
 
 use crate::renderer::descriptors::Descriptors;
+use crate::renderer::pipeline_parameters::PipelineIndex;
 use crate::renderer::pipeline_parameters::uniforms::{ImGuiDrawCmd, PbrFactors};
 use crate::renderer::pipeline_parameters::vertex_buffers::VertexLayout;
-use crate::renderer::pipeline_parameters::PipelineIndex;
 use crate::vulkan_raii::ImageView;
 
 #[derive(Clone, Copy)]
@@ -20,12 +20,12 @@ pub enum AlphaMode {
 #[derive(Clone)]
 pub enum PipelineSpecificData {
     Pbr {
-        base_color: Option<Rc<ImageView>>,
-        metallic_roughness: Option<Rc<ImageView>>,
-        normal: Option<Rc<ImageView>>,
-        occlusion: Option<Rc<ImageView>>,
-        emissive: Option<Rc<ImageView>>,
-        factors: Rc<PbrFactors>,
+        _base_color: Option<Rc<ImageView>>,
+        _metallic_roughness: Option<Rc<ImageView>>,
+        _normal: Option<Rc<ImageView>>,
+        _occlusion: Option<Rc<ImageView>>,
+        _emissive: Option<Rc<ImageView>>,
+        _factors: Rc<PbrFactors>,
         alpha_mode: AlphaMode,
     },
     ImGui {
@@ -106,12 +106,12 @@ impl Material {
         });
         let material_id = descriptors.pbr_factors_slots.try_allocate_slot(Rc::downgrade(&factors))?;
         let data = PipelineSpecificData::Pbr {
-            base_color,
-            metallic_roughness,
-            normal,
-            occlusion,
-            emissive,
-            factors,
+            _base_color: base_color,
+            _metallic_roughness: metallic_roughness,
+            _normal: normal,
+            _occlusion: occlusion,
+            _emissive: emissive,
+            _factors: factors,
             alpha_mode: params.alpha_mode,
         };
         Some(Rc::new(Material { name, material_id, data }))

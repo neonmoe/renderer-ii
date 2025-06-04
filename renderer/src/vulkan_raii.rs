@@ -202,7 +202,7 @@ trivial_drop_impl!(Sampler, destroy_sampler);
 pub struct DescriptorSetLayouts {
     pub inner: ArrayVec<vk::DescriptorSetLayout, 8>,
     pub device: Device,
-    pub immutable_samplers: ArrayVec<Rc<Sampler>, 1>,
+    pub _immutable_samplers: ArrayVec<Rc<Sampler>, 1>,
 }
 
 impl Drop for DescriptorSetLayouts {
@@ -232,8 +232,7 @@ trivial_drop_impl!(DescriptorPool, destroy_descriptor_pool);
 /// is destroyed.
 pub struct DescriptorSets {
     pub inner: ArrayVec<vk::DescriptorSet, 8>,
-    pub device: Device,
-    pub descriptor_pool: Rc<DescriptorPool>,
+    pub _descriptor_pool: Rc<DescriptorPool>,
 }
 
 pub struct CommandPool {
