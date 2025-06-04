@@ -4,18 +4,18 @@ use core::time::Duration;
 use std::thread;
 
 use arrayvec::ArrayVec;
-use ash::{vk, Instance};
+use ash::{Instance, vk};
 use bytemuck::{Pod, Zeroable};
 use enum_map::Enum;
 use glam::Mat4;
 use hashbrown::HashMap;
 
+use crate::JointsOffset;
 use crate::arena::buffers::{BufferUsage, ForBuffers};
 use crate::arena::{MemoryProps, VulkanArena, VulkanArenaError};
 use crate::physical_device::PhysicalDevice;
-use crate::vertex_library::{VertexLibrary, VERTEX_LIBRARY_INDEX_TYPE};
+use crate::vertex_library::{VERTEX_LIBRARY_INDEX_TYPE, VertexLibrary};
 use crate::vulkan_raii::{Buffer, CommandBuffer, CommandPool, Device, Fence, Semaphore};
-use crate::JointsOffset;
 
 pub(crate) mod descriptors;
 pub(crate) mod framebuffers;
@@ -196,7 +196,6 @@ impl Renderer {
             buffer: &[T],
             name: &str,
         ) -> Result<Buffer, VulkanArenaError> {
-            profiling::scope!(name);
             let buffer_bytes: &[u8] = bytemuck::cast_slice(buffer);
             let buffer_create_info = vk::BufferCreateInfo::default()
                 .size(buffer_bytes.len() as u64)

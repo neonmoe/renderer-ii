@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
-use ash::{vk, Instance};
+use ash::{Instance, vk};
 
 use crate::physical_device::PhysicalDevice;
 use crate::vulkan_raii::{Buffer, Device, DeviceMemory};

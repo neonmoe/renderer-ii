@@ -6,10 +6,11 @@ use std::time::{Duration, Instant};
 use glam::{Affine3A, Quat, Vec3};
 use log::LevelFilter;
 use logger::Logger;
+use profiling::tracing;
 use sdl2::controller::{Axis, GameController};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
-use sdl2::messagebox::{show_simple_message_box, MessageBoxFlag};
+use sdl2::messagebox::{MessageBoxFlag, show_simple_message_box};
 use sdl2::mouse::MouseButton;
 static LOGGER: Logger = Logger;
 
@@ -27,6 +28,15 @@ fn main() {
 }
 
 fn main_() {
+    #[cfg(feature = "profile-with-tracing")]
+    let profiling_subscriber = Box::leak(Box::new(profiling_tracing_subscriber::ProfilingSubscriber::default()));
+    #[cfg(feature = "profile-with-tracing")]
+    let _ = tracing::subscriber::set_global_default(&*profiling_subscriber);
+    #[cfg(feature = "profile-with-tracing")]
+    let startup_span = profiling::tracing::info_span!("startup");
+    #[cfg(feature = "profile-with-tracing")]
+    let startup_span_guard = startup_span.enter();
+
     //
     // General state
     //
@@ -211,8 +221,9 @@ fn main_() {
         profiling::scope!("wait for uploads to finish");
         assert!(uploader.wait(Some(Duration::from_secs(5))));
     }
-    let now = Instant::now();
-    log::info!("Spent {:.2?} loading resources, of which {:.2?} was waiting for upload.", now - upload_start, now - upload_wait_start);
+    let upload_done = Instant::now();
+    let upload_time = upload_done - upload_start;
+    log::info!("Spent {upload_time:.2?} loading resources, of which {:.2?} was waiting for upload.", upload_done - upload_wait_start);
     drop(uploader);
     drop(staging_arena);
 
@@ -252,7 +263,7 @@ fn main_() {
     print_memory_usage("after imgui setup");
 
     //
-    // The rest of setup
+    // Setup HIDs and create the event pump
     //
 
     let controller_subsystem = {
@@ -269,128 +280,150 @@ fn main_() {
     let mut event_pump = sdl_context.event_pump().unwrap();
 
     //
+    // Save startup profile when profiling with tracing (for in-game timings)
+    //
+
+    #[cfg(feature = "profile-with-tracing")]
+    let (startup_spans, mut frame_spans, mut capture_next_frame_spans) = {
+        drop(startup_span_guard);
+        (profiling_subscriber.drain_current_spans(), Vec::new(), true)
+    };
+
+    //
     // Main loop
     //
 
     'main: loop {
+        #[cfg(feature = "profile-with-tracing")]
+        if capture_next_frame_spans {
+            frame_spans = profiling_subscriber.drain_current_spans();
+        } else {
+            let _ = profiling_subscriber.drain_current_spans();
+        }
+
+        profiling::scope!("frame");
+
         if let Some(which) = opened_controller {
             profiling::scope!("opening controller");
             controller = Some(controller_subsystem.open(which).unwrap());
             opened_controller = None;
         }
 
-        for event in event_pump.poll_iter() {
-            {
-                profiling::scope!("imgui event processing", &format!("event: {event:?}"));
-                imgui_platform.handle_event(&mut imgui, &event);
-            }
-            let handle_mouse_events = !imgui.io().want_capture_mouse;
-            let handle_keyboard_events = !imgui.io().want_capture_keyboard;
-
-            profiling::scope!("event-specific processing", &format!("event: {event:?}"));
-            match event {
-                Event::Quit { .. } => {
-                    sdl_context.mouse().set_relative_mouse_mode(false);
-                    sdl_context.mouse().show_cursor(true);
-                    break 'main;
+        {
+            profiling::scope!("event handling");
+            for event in event_pump.poll_iter() {
+                {
+                    profiling::scope!("imgui event processing", &format!("event: {event:?}"));
+                    imgui_platform.handle_event(&mut imgui, &event);
                 }
+                let handle_mouse_events = !imgui.io().want_capture_mouse;
+                let handle_keyboard_events = !imgui.io().want_capture_keyboard;
 
-                Event::KeyDown { keycode, .. } if handle_keyboard_events => {
-                    analog_controls = false;
-                    match keycode {
-                        Some(Keycode::Num0) => debug_value = 0,
-                        Some(Keycode::Num1) => debug_value = 1,
-                        Some(Keycode::Num2) => debug_value = 2,
-                        Some(Keycode::Num3) => debug_value = 3,
-                        Some(Keycode::Num4) => debug_value = 4,
-                        Some(Keycode::Num5) => debug_value = 5,
-                        Some(Keycode::Num6) => debug_value = 6,
-                        Some(Keycode::Num7) => debug_value = 7,
-                        Some(Keycode::W) => dz = 1.0,
-                        Some(Keycode::S) => dz = -1.0,
-                        Some(Keycode::A) => dx = 1.0,
-                        Some(Keycode::D) => dx = -1.0,
-                        Some(Keycode::Q) => dy = 1.0,
-                        Some(Keycode::X) => dy = -1.0,
-                        Some(Keycode::LShift) => sprinting = true,
-                        Some(Keycode::Escape) if mouse_look => {
-                            mouse_look = false;
-                            sdl_context.mouse().set_relative_mouse_mode(false);
-                            sdl_context.mouse().show_cursor(true);
-                            imgui.io_mut().config_flags.set(imgui::ConfigFlags::NO_MOUSE, mouse_look);
-                        }
-                        _ => {}
-                    }
-                }
-
-                Event::KeyUp { keycode, .. } if handle_keyboard_events => match keycode {
-                    Some(Keycode::I) => {
-                        immediate_present = !immediate_present;
-                        queued_resize = Some(Instant::now());
-                        log::info!("immediate present set to: {}", immediate_present);
-                    }
-                    Some(Keycode::W) if dz > 0.0 => dz = 0.0,
-                    Some(Keycode::S) if dz < 0.0 => dz = 0.0,
-                    Some(Keycode::A) if dx > 0.0 => dx = 0.0,
-                    Some(Keycode::D) if dx < 0.0 => dx = 0.0,
-                    Some(Keycode::Q) if dy > 0.0 => dy = 0.0,
-                    Some(Keycode::X) if dy < 0.0 => dy = 0.0,
-                    Some(Keycode::LShift) => sprinting = false,
-                    _ => {}
-                },
-
-                Event::ControllerAxisMotion { axis, value, .. } => {
-                    analog_controls = true;
-                    match axis {
-                        Axis::LeftX => dx = -get_axis_deadzoned(value),
-                        Axis::LeftY => dz = -get_axis_deadzoned(value),
-                        Axis::TriggerRight if value != 0 => dy = value as f32 / i16::MAX as f32,
-                        Axis::TriggerRight if dy > 0.0 => dy = 0.0,
-                        Axis::TriggerLeft if value != 0 => dy = -(value as f32 / i16::MAX as f32),
-                        Axis::TriggerLeft if dy < 0.0 => dy = 0.0,
-                        _ => {}
-                    }
-                }
-
-                Event::MouseButtonDown { mouse_btn: MouseButton::Left, .. } if handle_mouse_events => {
-                    mouse_look = !mouse_look;
-                    if mouse_look {
-                        sdl_context.mouse().set_relative_mouse_mode(true);
-                        sdl_context.mouse().show_cursor(false);
-                    } else {
+                profiling::scope!("event-specific processing", &format!("event: {event:?}"));
+                match event {
+                    Event::Quit { .. } => {
                         sdl_context.mouse().set_relative_mouse_mode(false);
                         sdl_context.mouse().show_cursor(true);
+                        break 'main;
                     }
-                    imgui.io_mut().config_flags.set(imgui::ConfigFlags::NO_MOUSE, mouse_look);
-                }
 
-                Event::MouseMotion { xrel, yrel, .. } => {
-                    if mouse_look {
-                        cam_yaw_once_delta -= xrel as f32 / 750.0;
-                        cam_pitch_once_delta += yrel as f32 / 750.0;
+                    Event::KeyDown { keycode, .. } if handle_keyboard_events => {
+                        analog_controls = false;
+                        match keycode {
+                            Some(Keycode::Num0) => debug_value = 0,
+                            Some(Keycode::Num1) => debug_value = 1,
+                            Some(Keycode::Num2) => debug_value = 2,
+                            Some(Keycode::Num3) => debug_value = 3,
+                            Some(Keycode::Num4) => debug_value = 4,
+                            Some(Keycode::Num5) => debug_value = 5,
+                            Some(Keycode::Num6) => debug_value = 6,
+                            Some(Keycode::Num7) => debug_value = 7,
+                            Some(Keycode::W) => dz = 1.0,
+                            Some(Keycode::S) => dz = -1.0,
+                            Some(Keycode::A) => dx = 1.0,
+                            Some(Keycode::D) => dx = -1.0,
+                            Some(Keycode::Q) => dy = 1.0,
+                            Some(Keycode::X) => dy = -1.0,
+                            Some(Keycode::LShift) => sprinting = true,
+                            Some(Keycode::Escape) if mouse_look => {
+                                mouse_look = false;
+                                sdl_context.mouse().set_relative_mouse_mode(false);
+                                sdl_context.mouse().show_cursor(true);
+                                imgui.io_mut().config_flags.set(imgui::ConfigFlags::NO_MOUSE, mouse_look);
+                            }
+                            _ => {}
+                        }
                     }
+
+                    Event::KeyUp { keycode, .. } if handle_keyboard_events => match keycode {
+                        Some(Keycode::I) => {
+                            immediate_present = !immediate_present;
+                            queued_resize = Some(Instant::now());
+                            log::info!("immediate present set to: {}", immediate_present);
+                        }
+                        Some(Keycode::W) if dz > 0.0 => dz = 0.0,
+                        Some(Keycode::S) if dz < 0.0 => dz = 0.0,
+                        Some(Keycode::A) if dx > 0.0 => dx = 0.0,
+                        Some(Keycode::D) if dx < 0.0 => dx = 0.0,
+                        Some(Keycode::Q) if dy > 0.0 => dy = 0.0,
+                        Some(Keycode::X) if dy < 0.0 => dy = 0.0,
+                        Some(Keycode::LShift) => sprinting = false,
+                        _ => {}
+                    },
+
+                    Event::ControllerAxisMotion { axis, value, .. } => {
+                        analog_controls = true;
+                        match axis {
+                            Axis::LeftX => dx = -get_axis_deadzoned(value),
+                            Axis::LeftY => dz = -get_axis_deadzoned(value),
+                            Axis::TriggerRight if value != 0 => dy = value as f32 / i16::MAX as f32,
+                            Axis::TriggerRight if dy > 0.0 => dy = 0.0,
+                            Axis::TriggerLeft if value != 0 => dy = -(value as f32 / i16::MAX as f32),
+                            Axis::TriggerLeft if dy < 0.0 => dy = 0.0,
+                            _ => {}
+                        }
+                    }
+
+                    Event::MouseButtonDown { mouse_btn: MouseButton::Left, .. } if handle_mouse_events => {
+                        mouse_look = !mouse_look;
+                        if mouse_look {
+                            sdl_context.mouse().set_relative_mouse_mode(true);
+                            sdl_context.mouse().show_cursor(false);
+                        } else {
+                            sdl_context.mouse().set_relative_mouse_mode(false);
+                            sdl_context.mouse().show_cursor(true);
+                        }
+                        imgui.io_mut().config_flags.set(imgui::ConfigFlags::NO_MOUSE, mouse_look);
+                    }
+
+                    Event::MouseMotion { xrel, yrel, .. } => {
+                        if mouse_look {
+                            cam_yaw_once_delta -= xrel as f32 / 750.0;
+                            cam_pitch_once_delta += yrel as f32 / 750.0;
+                        }
+                    }
+
+                    Event::Window { win_event: WindowEvent::SizeChanged(_, _), .. } => {
+                        mouse_look = false;
+                        sdl_context.mouse().set_relative_mouse_mode(false);
+                        sdl_context.mouse().show_cursor(true);
+                        imgui.io_mut().config_flags.set(imgui::ConfigFlags::NO_MOUSE, mouse_look);
+                        (width, height) = window.vulkan_drawable_size();
+
+                        // Do an immediate_present = true resize already, the
+                        // "queued resize" will reset it to the proper mode
+                        swapchain_settings.extent = renderer::vk::Extent2D { width, height };
+                        swapchain_settings.immediate_present = true;
+                        recreate_swapchain = true;
+                        queued_resize = Some(Instant::now());
+                    }
+
+                    Event::ControllerDeviceAdded { which, .. } => {
+                        opened_controller = Some(which);
+                    }
+
+                    _ => {}
                 }
-
-                Event::Window { win_event: WindowEvent::SizeChanged(_, _), .. } => {
-                    mouse_look = false;
-                    sdl_context.mouse().set_relative_mouse_mode(false);
-                    sdl_context.mouse().show_cursor(true);
-                    imgui.io_mut().config_flags.set(imgui::ConfigFlags::NO_MOUSE, mouse_look);
-                    (width, height) = window.vulkan_drawable_size();
-
-                    // Do an immediate_present = true resize already, the
-                    // "queued resize" will reset it to the proper mode
-                    swapchain_settings.extent = renderer::vk::Extent2D { width, height };
-                    swapchain_settings.immediate_present = true;
-                    recreate_swapchain = true;
-                    queued_resize = Some(Instant::now());
-                }
-
-                Event::ControllerDeviceAdded { which, .. } => {
-                    opened_controller = Some(which);
-                }
-
-                _ => {}
             }
         }
 
@@ -459,6 +492,31 @@ fn main_() {
         }
 
         //
+        // User interface
+        //
+
+        {
+            profiling::scope!("user interface (imgui)");
+            imgui_platform.prepare_frame(&mut imgui, &window, &event_pump);
+            let ui = imgui.frame();
+            #[cfg(feature = "profile-with-tracing")]
+            ui.window("Performance stats")
+                .size([640.0, 480.0], imgui::Condition::Appearing)
+                .collapsed(true, imgui::Condition::Appearing)
+                .build(|| {
+                    if capture_next_frame_spans && ui.button("Pause frame timing capture") {
+                        capture_next_frame_spans = false;
+                    } else if !capture_next_frame_spans && ui.button("Resume frame timing capture") {
+                        capture_next_frame_spans = true;
+                    }
+                    profiling_tracing_subscriber::span_tree(ui, &frame_spans);
+                    ui.separator();
+                    ui.text("Startup timings:");
+                    profiling_tracing_subscriber::span_tree(ui, &startup_spans);
+                });
+        }
+
+        //
         // Rendering
         //
 
@@ -517,11 +575,7 @@ fn main_() {
             match frame_index {
                 Ok(frame_index) => {
                     {
-                        profiling::scope!("imgui");
-                        imgui_platform.prepare_frame(&mut imgui, &window, &event_pump);
-                        let ui = imgui.frame();
-                        ui.show_about_window(&mut true);
-                        ui.show_demo_window(&mut true);
+                        profiling::scope!("rendering (imgui)");
                         imgui_renderer.render(imgui.render(), &mut scene, &mut descriptors);
                     }
                     {
@@ -617,6 +671,152 @@ mod logger {
             use std::io::Write;
             let mut stderr = std::io::stderr().lock();
             let _ = stderr.flush();
+        }
+    }
+}
+
+#[cfg(feature = "profile-with-tracing")]
+mod profiling_tracing_subscriber {
+    use std::collections::HashMap;
+    use std::num::NonZeroU64;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    use profiling::tracing::span::{Attributes, Id, Record};
+    use profiling::tracing::{Event, Metadata, Subscriber};
+
+    #[derive(Clone, Copy)]
+    pub struct SpanData {
+        pub accumulated: Duration,
+        pub enter_time: Option<Instant>,
+        pub name: &'static str,
+        pub depth: u8,
+    }
+
+    #[derive(Default)]
+    pub struct ProfilingSubscriber {
+        spans: Arc<Mutex<Vec<(NonZeroU64, SpanData)>>>,
+        span_counter: AtomicU64,
+    }
+
+    impl ProfilingSubscriber {
+        pub fn drain_current_spans(&self) -> Vec<SpanData> {
+            self.spans.lock().unwrap().drain(..).map(|(_, span)| span).collect::<Vec<_>>()
+        }
+    }
+
+    impl Subscriber for &'static ProfilingSubscriber {
+        fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+            metadata.is_span()
+        }
+        fn record(&self, _span: &Id, _values: &Record<'_>) {}
+        fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+        fn event(&self, _event: &Event<'_>) {}
+
+        fn new_span(&self, span: &Attributes<'_>) -> Id {
+            let mut spans = self.spans.lock().unwrap();
+            let id = NonZeroU64::new(1 + self.span_counter.fetch_add(1, Ordering::Relaxed)).unwrap();
+            let depth = spans.iter().rev().find(|(_, span)| span.enter_time.is_some()).map(|(_, span)| span.depth).unwrap_or(0) + 1;
+            let data = SpanData { accumulated: Duration::ZERO, enter_time: None, name: span.metadata().name(), depth };
+            spans.push((id, data));
+            Id::from_non_zero_u64(id)
+        }
+
+        fn enter(&self, span: &Id) {
+            if let Some((_, span_data)) = self.spans.lock().unwrap().iter_mut().find(|(span_u64, _)| span.into_non_zero_u64() == *span_u64)
+            {
+                span_data.enter_time = Some(Instant::now());
+            }
+        }
+
+        fn exit(&self, span: &Id) {
+            if let Some((_, span_data)) = self.spans.lock().unwrap().iter_mut().find(|(span_u64, _)| span.into_non_zero_u64() == *span_u64)
+            {
+                if let Some(enter_time) = span_data.enter_time.take() {
+                    span_data.accumulated += Instant::now() - enter_time;
+                }
+            }
+        }
+    }
+
+    pub fn span_tree(ui: &imgui::Ui, timed_spans: &[SpanData]) {
+        fn fmt_ms(d: Duration) -> String {
+            format!("{} µs", d.as_micros())
+        }
+
+        let mut tree_nodes: Vec<(&SpanData, imgui::TreeNodeToken)> = Vec::with_capacity(timed_spans.len());
+        let mut span_iter = timed_spans.iter().peekable();
+        let mut name_counts = Vec::new();
+        name_counts.push(HashMap::new());
+        while let Some(span) = span_iter.next() {
+            // If this span is closer to the root than the latest
+            // opened span, drop that span and its TreeNodeToken to
+            // close it out.
+            while let Some(would_be_parent) = tree_nodes.pop() {
+                if would_be_parent.0.depth < span.depth {
+                    tree_nodes.push(would_be_parent);
+                    break;
+                }
+                name_counts.pop();
+            }
+
+            // Add the number of identical names seen thus far under this parent
+            // to the id stack, to differentiate between spans with the same name.
+            let _id_token = {
+                let name_count = {
+                    let name_counts = name_counts.last_mut().unwrap();
+                    let new_count = name_counts.get(&span.name).copied().unwrap_or(0) + 1;
+                    name_counts.insert(span.name, new_count);
+                    new_count
+                };
+                ui.push_id_int(name_count)
+            };
+
+            if let Some(tree_node) = ui
+                .tree_node_config(span.name)
+                .allow_item_overlap(true)
+                .default_open(tree_nodes.is_empty())
+                .leaf(if let Some(next_span) = span_iter.peek() { next_span.depth <= span.depth } else { true })
+                .push()
+            {
+                // Push this tree node into the vec, which results
+                // everything being included within this node, until
+                // it's dropped.
+                tree_nodes.push((span, tree_node));
+                name_counts.push(HashMap::new());
+            } else {
+                // This span's tree node is not open, skip over the child spans
+                while let Some(next_span) = span_iter.peek() {
+                    if next_span.depth > span.depth {
+                        let _hidden_child = span_iter.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            // Write out the % of the frame this span took
+            let parent_duration = timed_spans.first().map(|span| span.accumulated).unwrap_or(span.accumulated);
+            let pct = 100.0 * span.accumulated.as_secs_f32() / parent_duration.as_secs_f32();
+            let pct_text = format!("{pct:.1} %");
+            let [window_width, _] = ui.window_size();
+            let [pct_text_width, _] = ui.calc_text_size(&pct_text);
+            ui.same_line_with_pos(window_width - pct_text_width - 50.0);
+            ui.text_colored(
+                match pct {
+                    50.0.. => [1.0, (100.0 - pct) / 50.0, 0.0, 1.0],
+                    1.0.. => [1.0, 1.0, ((50.0 - pct) / 50.0).powf(1.0), 1.0],
+                    _ => [0.2 + 0.8 * pct, 0.2 + 0.8 * pct, 0.2 + 0.8 * pct, 1.0],
+                },
+                pct_text,
+            );
+
+            // Write out the time this span spanned
+            let timing_text = fmt_ms(span.accumulated);
+            let [timing_text_width, _] = ui.calc_text_size(&timing_text);
+            ui.same_line_with_pos(window_width - timing_text_width - 150.0);
+            ui.text(timing_text);
         }
     }
 }
