@@ -14,7 +14,7 @@ use crate::renderer::pipeline_parameters::constants::{
 };
 use crate::renderer::pipeline_parameters::uniforms::{ImGuiDrawCmd, PbrFactors, StructureOfArraysUniform};
 use crate::renderer::pipeline_parameters::{
-    DescriptorSetLayoutParams, PipelineIndex, PipelineMap, PipelineParameters, PBR_PIPELINES, PIPELINE_PARAMETERS, SKINNED_PIPELINES,
+    DescriptorSetLayoutParams, PBR_PIPELINES, PIPELINE_PARAMETERS, PipelineIndex, PipelineMap, PipelineParameters, SKINNED_PIPELINES,
 };
 use crate::vulkan_raii::{Buffer, DescriptorPool, DescriptorSetLayouts, DescriptorSets, Device, ImageView, PipelineLayout, Sampler};
 
@@ -423,7 +423,6 @@ impl Descriptors {
         }
     }
 
-    #[profiling::function]
     pub(crate) fn descriptor_sets(&self, pipeline: PipelineIndex) -> &[vk::DescriptorSet] {
         &self.descriptor_sets[pipeline].inner
     }

@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 use glam::{Affine3A, Quat, Vec3};
 use log::LevelFilter;
 use logger::Logger;
-use profiling::tracing;
 use sdl2::controller::{Axis, GameController};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
@@ -31,7 +30,7 @@ fn main_() {
     #[cfg(feature = "profile-with-tracing")]
     let profiling_subscriber = Box::leak(Box::new(profiling_tracing_subscriber::ProfilingSubscriber::default()));
     #[cfg(feature = "profile-with-tracing")]
-    let _ = tracing::subscriber::set_global_default(&*profiling_subscriber);
+    let _ = profiling::tracing::subscriber::set_global_default(&*profiling_subscriber);
     #[cfg(feature = "profile-with-tracing")]
     let startup_span = profiling::tracing::info_span!("startup");
     #[cfg(feature = "profile-with-tracing")]
@@ -140,92 +139,114 @@ fn main_() {
         };
         Path::new(path)
     };
-    let mut assets_buffers_measurer = renderer::VulkanArenaMeasurer::new(&device);
-    let mut assets_textures_measurer = renderer::VulkanArenaMeasurer::new(&device);
-    for image_create_info in renderer::image_loading::pbr_defaults::all_defaults_create_infos() {
-        assets_textures_measurer.add_image(image_create_info);
-    }
-    let mut vertex_library_measurer = renderer::VertexLibraryMeasurer::default();
     let sponza_json = std::fs::read_to_string(resources_path.join("sponza/glTF/Sponza.gltf")).unwrap();
     let smol_ame_json = std::fs::read_to_string(resources_path.join("smol-ame-by-seafoam/smol-ame.gltf")).unwrap();
-    let sponza_pending = gltf::Gltf::preload_gltf(
-        &sponza_json,
-        resources_path.join("sponza/glTF"),
-        (&mut assets_textures_measurer, &mut vertex_library_measurer),
-    )
-    .unwrap();
-    let smol_ame_pending = gltf::Gltf::preload_gltf(
-        &smol_ame_json,
-        resources_path.join("smol-ame-by-seafoam"),
-        (&mut assets_textures_measurer, &mut vertex_library_measurer),
-    )
-    .unwrap();
-    vertex_library_measurer.measure_required_arena(&mut assets_buffers_measurer);
+
+    let (assets_buffers_measurer, assets_textures_measurer, vertex_library_measurer, sponza_pending, smol_ame_pending) = {
+        profiling::scope!("gltf model memory measurement");
+        let mut assets_buffers_measurer = renderer::VulkanArenaMeasurer::new(&device);
+        let mut assets_textures_measurer = renderer::VulkanArenaMeasurer::new(&device);
+        for image_create_info in renderer::image_loading::pbr_defaults::all_defaults_create_infos() {
+            assets_textures_measurer.add_image(image_create_info);
+        }
+        let mut vertex_library_measurer = renderer::VertexLibraryMeasurer::default();
+        let sponza_pending = gltf::Gltf::preload_gltf(
+            &sponza_json,
+            resources_path.join("sponza/glTF"),
+            (&mut assets_textures_measurer, &mut vertex_library_measurer),
+        )
+        .unwrap();
+        let smol_ame_pending = gltf::Gltf::preload_gltf(
+            &smol_ame_json,
+            resources_path.join("smol-ame-by-seafoam"),
+            (&mut assets_textures_measurer, &mut vertex_library_measurer),
+        )
+        .unwrap();
+        vertex_library_measurer.measure_required_arena(&mut assets_buffers_measurer);
+        (assets_buffers_measurer, assets_textures_measurer, vertex_library_measurer, sponza_pending, smol_ame_pending)
+    };
 
     print_memory_usage("after measurements");
 
     // Allocate in order of importance: if budget runs out, the arenas allocated
     // later may be allocated from a slower heap.
-    let mut texture_arena = renderer::VulkanArena::new(
-        &instance.inner,
-        &device,
-        &physical_device,
-        assets_textures_measurer.measured_size,
-        renderer::MemoryProps::for_textures(),
-        format_args!("sandbox assets (textures)"),
-    )
-    .unwrap();
-    let mut buffer_arena = renderer::VulkanArena::new(
-        &instance.inner,
-        &device,
-        &physical_device,
-        assets_buffers_measurer.measured_size,
-        renderer::MemoryProps::for_buffers(),
-        format_args!("sandbox assets (buffers)"),
-    )
-    .unwrap();
-    let mut staging_arena = renderer::VulkanArena::new(
-        &instance.inner,
-        &device,
-        &physical_device,
-        assets_buffers_measurer.measured_size + assets_textures_measurer.measured_size,
-        renderer::MemoryProps::for_staging(),
-        format_args!("sandbox assets (staging)"),
-    )
-    .unwrap();
-    let mut uploader = renderer::Uploader::new(&device, device.graphics_queue, device.transfer_queue, &physical_device, "sandbox assets");
+    let mut texture_arena = {
+        profiling::scope!("texture arena creation");
+        renderer::VulkanArena::new(
+            &instance.inner,
+            &device,
+            &physical_device,
+            assets_textures_measurer.measured_size,
+            renderer::MemoryProps::for_textures(),
+            format_args!("sandbox assets (textures)"),
+        )
+        .unwrap()
+    };
+    let mut buffer_arena = {
+        profiling::scope!("buffer arena creation");
+        renderer::VulkanArena::new(
+            &instance.inner,
+            &device,
+            &physical_device,
+            assets_buffers_measurer.measured_size,
+            renderer::MemoryProps::for_buffers(),
+            format_args!("sandbox assets (buffers)"),
+        )
+        .unwrap()
+    };
+    let mut staging_arena = {
+        profiling::scope!("staging arena creation");
+        renderer::VulkanArena::new(
+            &instance.inner,
+            &device,
+            &physical_device,
+            assets_buffers_measurer.measured_size + assets_textures_measurer.measured_size,
+            renderer::MemoryProps::for_staging(),
+            format_args!("sandbox assets (staging)"),
+        )
+        .unwrap()
+    };
 
     print_memory_usage("after arena creation");
 
-    let pbr_defaults =
-        renderer::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena).unwrap();
-    let mut descriptors = renderer::Descriptors::new(&device, &physical_device, pbr_defaults);
-    let mut vertex_library_builder = renderer::VertexLibraryBuilder::new(
-        &mut staging_arena,
-        Some(&mut buffer_arena),
-        &vertex_library_measurer,
-        format_args!("vertex library of babel"),
-    )
-    .unwrap();
+    let mut uploader = renderer::Uploader::new(&device, device.graphics_queue, device.transfer_queue, &physical_device, "sandbox assets");
 
-    let upload_start = Instant::now();
-    let sponza_model = sponza_pending
-        .upload(&device, &mut staging_arena, &mut uploader, &mut descriptors, &mut texture_arena, &mut vertex_library_builder)
+    let mut descriptors = {
+        profiling::scope!("descriptor set creation");
+        let pbr_defaults =
+            renderer::image_loading::pbr_defaults::all_defaults(&device, &mut staging_arena, &mut uploader, &mut texture_arena).unwrap();
+        renderer::Descriptors::new(&device, &physical_device, pbr_defaults)
+    };
+
+    let (sponza_model, smol_ame_model) = {
+        profiling::scope!("upload gltf models to vram");
+
+        let mut vertex_library_builder = renderer::VertexLibraryBuilder::new(
+            &mut staging_arena,
+            Some(&mut buffer_arena),
+            &vertex_library_measurer,
+            format_args!("vertex library of babel"),
+        )
         .unwrap();
-    let smol_ame_model = smol_ame_pending
-        .upload(&device, &mut staging_arena, &mut uploader, &mut descriptors, &mut texture_arena, &mut vertex_library_builder)
-        .unwrap();
-    vertex_library_builder.upload(&mut uploader);
-    let upload_wait_start = Instant::now();
-    {
-        profiling::scope!("wait for uploads to finish");
-        assert!(uploader.wait(Some(Duration::from_secs(5))));
-    }
-    let upload_done = Instant::now();
-    let upload_time = upload_done - upload_start;
-    log::info!("Spent {upload_time:.2?} loading resources, of which {:.2?} was waiting for upload.", upload_done - upload_wait_start);
-    drop(uploader);
-    drop(staging_arena);
+
+        let sponza_model = sponza_pending
+            .upload(&device, &mut staging_arena, &mut uploader, &mut descriptors, &mut texture_arena, &mut vertex_library_builder)
+            .unwrap();
+        let smol_ame_model = smol_ame_pending
+            .upload(&device, &mut staging_arena, &mut uploader, &mut descriptors, &mut texture_arena, &mut vertex_library_builder)
+            .unwrap();
+        vertex_library_builder.upload(&mut uploader);
+        {
+            profiling::scope!("wait for uploads to finish");
+            assert!(uploader.wait(Some(Duration::from_secs(5))));
+        }
+        {
+            profiling::scope!("drop the uploader and staging arena");
+            drop(uploader);
+            drop(staging_arena);
+        }
+        (sponza_model, smol_ame_model)
+    };
 
     print_memory_usage("after uploads");
 
@@ -235,30 +256,38 @@ fn main_() {
     (width, height) = window.vulkan_drawable_size();
     let mut swapchain_settings = renderer::SwapchainSettings { extent: renderer::vk::Extent2D { width, height }, immediate_present };
 
-    let mut swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings);
-    print_memory_usage("after swapchain creation");
-    let mut pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None);
-    print_memory_usage("after pipelines creation");
-    let mut framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain);
-    print_memory_usage("after framebuffers creation");
-    let mut renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device);
-    print_memory_usage("after renderer creation");
+    let (mut swapchain, mut pipelines, mut framebuffers, mut renderer) = {
+        profiling::scope!("rest of the vulkan renderer init");
+        let swapchain = renderer::Swapchain::new(&device, &physical_device, surface, &swapchain_settings);
+        print_memory_usage("after swapchain creation");
+        let pipelines = renderer::Pipelines::new(&device, &descriptors, swapchain.extent, msaa_samples, attachment_formats, None);
+        print_memory_usage("after pipelines creation");
+        let framebuffers = renderer::Framebuffers::new(&instance.inner, &device, &physical_device, &pipelines, &swapchain);
+        print_memory_usage("after framebuffers creation");
+        let renderer = renderer::Renderer::new(&instance.inner, &device, &physical_device);
+        print_memory_usage("after renderer creation");
+        (swapchain, pipelines, framebuffers, renderer)
+    };
 
     //
     // Imgui setup
     //
 
-    let mut imgui = imgui::Context::create();
-    imgui.set_ini_filename(None);
-    imgui.set_log_filename(None);
-    imgui.fonts().add_font(&[
-        imgui::FontSource::TtfData { data: include_bytes!("fonts/NotoSans-Regular.ttf"), size_pixels: 20.0, config: None },
-        imgui::FontSource::DefaultFontData { config: None },
-    ]);
-    let mut imgui_platform = imgui_sdl2_support::SdlPlatform::init(&mut imgui);
-    let mut imgui_renderer =
-        renderer::imgui_support::ImGuiRenderer::new(&mut imgui, &instance, &device, &physical_device, &mut descriptors);
-    imgui.style_mut();
+    let (mut imgui, mut imgui_platform, mut imgui_renderer) = {
+        profiling::scope!("imgui setup");
+        let mut imgui = imgui::Context::create();
+        imgui.set_ini_filename(None);
+        imgui.set_log_filename(None);
+        imgui.fonts().add_font(&[
+            imgui::FontSource::TtfData { data: include_bytes!("fonts/NotoSans-Regular.ttf"), size_pixels: 20.0, config: None },
+            imgui::FontSource::DefaultFontData { config: None },
+        ]);
+        let imgui_platform = imgui_sdl2_support::SdlPlatform::init(&mut imgui);
+        let imgui_renderer =
+            renderer::imgui_support::ImGuiRenderer::new(&mut imgui, &instance, &device, &physical_device, &mut descriptors);
+        imgui.style_mut();
+        (imgui, imgui_platform, imgui_renderer)
+    };
 
     print_memory_usage("after imgui setup");
 
@@ -498,20 +527,17 @@ fn main_() {
         {
             profiling::scope!("user interface (imgui)");
             imgui_platform.prepare_frame(&mut imgui, &window, &event_pump);
+            #[allow(dead_code)]
             let ui = imgui.frame();
             #[cfg(feature = "profile-with-tracing")]
             ui.window("Performance stats")
                 .size([640.0, 480.0], imgui::Condition::Appearing)
                 .collapsed(true, imgui::Condition::Appearing)
                 .build(|| {
-                    if capture_next_frame_spans && ui.button("Pause frame timing capture") {
-                        capture_next_frame_spans = false;
-                    } else if !capture_next_frame_spans && ui.button("Resume frame timing capture") {
-                        capture_next_frame_spans = true;
-                    }
+                    ui.checkbox("Capture timings every frame", &mut capture_next_frame_spans);
+                    ui.separator();
                     profiling_tracing_subscriber::span_tree(ui, &frame_spans);
                     ui.separator();
-                    ui.text("Startup timings:");
                     profiling_tracing_subscriber::span_tree(ui, &startup_spans);
                 });
         }
