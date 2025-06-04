@@ -212,40 +212,47 @@ impl Renderer {
         let mut transforms: Vec<f32> = Vec::new();
         let mut draws: PipelineMap<HashMap<&VertexLibrary, Vec<DrawIndexedIndirectCommand>>> = PipelineMap::from_fn(|_| HashMap::new());
 
-        scene.draws.sort();
-        let mut prev_tag = None;
-        let mut prev_joints = None;
-        for draw in &scene.draws {
-            let pipeline = draw.tag.pipeline;
-            let index_count = draw.tag.mesh.index_count;
-            let first_index = draw.tag.mesh.first_index;
-            let vertex_offset = draw.tag.mesh.vertex_offset;
+        {
+            profiling::scope!("draw sorting");
+            scene.draws.sort();
+        }
 
-            let indirect_draw_set = draws[pipeline].entry(draw.tag.vertex_library).or_default();
+        {
+            profiling::scope!("transforms and indirect draw buffer preparation");
+            let mut prev_tag = None;
+            let mut prev_joints = None;
+            for draw in &scene.draws {
+                let pipeline = draw.tag.pipeline;
+                let index_count = draw.tag.mesh.index_count;
+                let first_index = draw.tag.mesh.first_index;
+                let vertex_offset = draw.tag.mesh.vertex_offset;
 
-            let first_instance = (transforms.len() / (4 * 3 + 3 * 3)) as u32;
-            let normal_transform = draw.transform.matrix3.inverse().transpose();
-            transforms.extend_from_slice(&draw.transform.to_cols_array());
-            transforms.extend_from_slice(&normal_transform.to_cols_array());
+                let indirect_draw_set = draws[pipeline].entry(draw.tag.vertex_library).or_default();
 
-            if Some(draw.tag) == prev_tag && Some(draw.joints) == prev_joints {
-                indirect_draw_set.last_mut().unwrap().0.instance_count += 1;
-            } else {
-                indirect_draw_set.push(DrawIndexedIndirectCommand(vk::DrawIndexedIndirectCommand {
-                    index_count,
-                    instance_count: 1,
-                    first_index,
-                    vertex_offset,
-                    first_instance,
-                }));
-                self.uniform_material_indices.soa_resize(first_instance as usize, false);
-                self.uniform_material_indices.push(uniforms::MaterialIds { material_id: draw.tag.material.material_id });
-                if let Some(JointsOffset(joints_offset)) = draw.joints {
-                    self.uniform_joints_offsets.soa_resize(first_instance as usize, false);
-                    self.uniform_joints_offsets.push(uniforms::JointsOffsets { joints_offset });
+                let first_instance = (transforms.len() / (4 * 3 + 3 * 3)) as u32;
+                let normal_transform = draw.transform.matrix3.inverse().transpose();
+                transforms.extend_from_slice(&draw.transform.to_cols_array());
+                transforms.extend_from_slice(&normal_transform.to_cols_array());
+
+                if Some(draw.tag) == prev_tag && Some(draw.joints) == prev_joints {
+                    indirect_draw_set.last_mut().unwrap().0.instance_count += 1;
+                } else {
+                    indirect_draw_set.push(DrawIndexedIndirectCommand(vk::DrawIndexedIndirectCommand {
+                        index_count,
+                        instance_count: 1,
+                        first_index,
+                        vertex_offset,
+                        first_instance,
+                    }));
+                    self.uniform_material_indices.soa_resize(first_instance as usize, false);
+                    self.uniform_material_indices.push(uniforms::MaterialIds { material_id: draw.tag.material.material_id });
+                    if let Some(JointsOffset(joints_offset)) = draw.joints {
+                        self.uniform_joints_offsets.soa_resize(first_instance as usize, false);
+                        self.uniform_joints_offsets.push(uniforms::JointsOffsets { joints_offset });
+                    }
+                    prev_tag = Some(draw.tag);
+                    prev_joints = Some(draw.joints);
                 }
-                prev_tag = Some(draw.tag);
-                prev_joints = Some(draw.joints);
             }
         }
 
