@@ -7,10 +7,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      - run: cargo build --target x86_64-unknown-linux-gnu
+      - run: cargo build --target x86_64-unknown-linux-gnu --workspace
   build-windows:
     runs-on: windows-x86_64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      - run: cargo build --target x86_64-pc-windows-msvc
+        # make-ntex is only needed for compressing textures offline, so not for
+        # building/running the existing examples, and it runs into linking
+        # issues on Windows.
+      - run: cargo build --target x86_64-pc-windows-msvc --workspace --exclude make-ntex
