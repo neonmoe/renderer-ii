@@ -1,10 +1,10 @@
+use core::error::Error;
 use core::ffi::CStr;
 use core::fmt::{self, Display, Formatter};
-use std::error::Error;
 
 use arrayvec::ArrayVec;
 use ash::extensions::khr;
-use ash::{vk, Entry, Instance};
+use ash::{Entry, Instance, vk};
 
 use crate::renderer::pipeline_parameters::render_passes::AttachmentFormats;
 
@@ -184,7 +184,7 @@ fn filter_capable_device(
     let req_vk_version = vk::API_VERSION_1_2;
     if props.api_version < req_vk_version {
         reject(PhysicalDeviceRejectionReason::VulkanVersion(vk::api_version_major(req_vk_version), vk::api_version_minor(req_vk_version)));
-    };
+    }
 
     let extensions = get_extensions(instance, physical_device);
     for c_name in physical_device_features::REQUIRED_DEVICE_EXTENSIONS {

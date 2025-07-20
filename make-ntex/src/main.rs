@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use argh::FromArgs;
-use image::imageops::FilterType;
 use image::DynamicImage;
+use image::imageops::FilterType;
 use rayon::prelude::*;
 
 const VK_FORMAT_BC7_UNORM_BLOCK: u32 = 145;
@@ -79,7 +79,7 @@ fn main() -> ExitCode {
         .map(|path| (path, convert(&opts, path, &counter, count)))
         .map(|(path, result)| {
             if let Err(err) = result {
-                print(&opts, format_args!("Failed to convert {}, {}.", path, err));
+                print(&opts, format_args!("Failed to convert {path}, {err}."));
                 1
             } else {
                 0
@@ -112,11 +112,11 @@ enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Error::ReadFile(err) => write!(fmt, "error reading file: {}", err),
-            Error::WriteFile(err) => write!(fmt, "error writing file: {}", err),
-            Error::ImageDecode(err) => write!(fmt, "error decoding image: {}", err),
+            Error::ReadFile(err) => write!(fmt, "error reading file: {err}"),
+            Error::WriteFile(err) => write!(fmt, "error writing file: {err}"),
+            Error::ImageDecode(err) => write!(fmt, "error decoding image: {err}"),
             Error::OverwriteCheckStdinRead(err) => {
-                write!(fmt, "error reading stdin for overwriting check: {}", err)
+                write!(fmt, "error reading stdin for overwriting check: {err}")
             }
             Error::ImageSmallerThanBlock => write!(fmt, "image is smaller than 4px on at least one axis"),
         }

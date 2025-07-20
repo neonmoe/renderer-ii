@@ -2,7 +2,7 @@ use alloc::rc::Rc;
 use core::fmt::Arguments;
 
 use arrayvec::ArrayVec;
-use ash::{vk, Instance};
+use ash::{Instance, vk};
 
 use crate::arena::{MemoryProps, VulkanArena};
 use crate::physical_device::PhysicalDevice;
@@ -148,7 +148,7 @@ impl Framebuffers {
         ]
     }
 
-    pub(crate) fn swapchain_write_barrier(&self, i: usize) -> [vk::ImageMemoryBarrier2; 1] {
+    pub(crate) fn swapchain_write_barrier(&self, i: usize) -> [vk::ImageMemoryBarrier2<'_>; 1] {
         let color_subresource_range =
             vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR).level_count(1).layer_count(1);
         [vk::ImageMemoryBarrier2::default()
@@ -162,7 +162,7 @@ impl Framebuffers {
             .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)]
     }
 
-    pub(crate) fn swapchain_present_barrier(&self, i: usize) -> [vk::ImageMemoryBarrier2; 1] {
+    pub(crate) fn swapchain_present_barrier(&self, i: usize) -> [vk::ImageMemoryBarrier2<'_>; 1] {
         let color_subresource_range =
             vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR).level_count(1).layer_count(1);
         [vk::ImageMemoryBarrier2::default()

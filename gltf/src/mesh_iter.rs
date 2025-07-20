@@ -18,7 +18,7 @@ pub(crate) struct MeshIter<'a> {
 }
 
 impl MeshIter<'_> {
-    pub(crate) fn new(gltf: &Gltf, node_queue: Vec<usize>) -> MeshIter {
+    pub(crate) fn new(gltf: &Gltf, node_queue: Vec<usize>) -> MeshIter<'_> {
         MeshIter { gltf, node_queue, current_sub_iter: None }
     }
 }

@@ -20,7 +20,7 @@ pub enum NtexDecodeError {
 }
 
 #[profiling::function]
-pub fn decode(bytes: &[u8]) -> Result<ImageData, NtexDecodeError> {
+pub fn decode(bytes: &[u8]) -> Result<ImageData<'_>, NtexDecodeError> {
     let ImageData { width, height, format, pixels: _, mip_ranges } = decode_header(bytes)?;
 
     let pixels_len = mip_ranges[mip_ranges.len() - 1].end;

@@ -1,5 +1,3 @@
-use core::ffi::CStr;
-
 use arrayvec::ArrayString;
 use bytemuck::cast_slice;
 use glam::{Affine3A, Vec2, Vec3, Vec4};
@@ -15,7 +13,7 @@ fn main() {
     let time = sdl.timer().unwrap();
     let video = sdl.video().unwrap();
     let mut window = video.window("Hello, Triangles!", 640, 480).vulkan().allow_highdpi().resizable().build().unwrap();
-    let app_name = unsafe { CStr::from_bytes_with_nul_unchecked(b"triangle example application\0") };
+    let app_name = c"triangle example application";
     let instance = renderer::Instance::new(&window, app_name, 0, 1, 0).unwrap();
     let surface = renderer::create_surface(&instance.entry, &instance.inner, &window, &window).unwrap();
 

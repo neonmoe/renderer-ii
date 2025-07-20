@@ -138,7 +138,6 @@ impl Renderer {
                     Err(vk::Result::TIMEOUT | vk::Result::NOT_READY) => {
                         // This shouldn't ever happen, given the u64::MAX timeout, but this is better than panicking.
                         thread::sleep(Duration::from_millis(500));
-                        continue;
                     }
                     Err(err) => panic!("acquiring vulkan swapchain images should not fail: {err}"),
                 }
@@ -179,8 +178,8 @@ impl Renderer {
         Ok(FrameIndex::new(image_index as usize))
     }
 
-    /// Starts rendering the frame. Returns a VulkanArenaError if the internal
-    /// temporary memory arena fills up.
+    /// Starts rendering the frame. Returns a [`VulkanArenaError`] if the
+    /// internal temporary memory arena fills up.
     #[profiling::function]
     pub fn render_frame(
         &mut self,
@@ -245,7 +244,7 @@ impl Renderer {
                         first_instance,
                     }));
                     self.uniform_material_indices.soa_resize(first_instance as usize, false);
-                    self.uniform_material_indices.push(uniforms::MaterialIds { material_id: draw.tag.material.material_id });
+                    self.uniform_material_indices.push(uniforms::MaterialIds { material_id: draw.tag.material.id });
                     if let Some(JointsOffset(joints_offset)) = draw.joints {
                         self.uniform_joints_offsets.soa_resize(first_instance as usize, false);
                         self.uniform_joints_offsets.push(uniforms::JointsOffsets { joints_offset });

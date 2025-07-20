@@ -110,10 +110,10 @@ impl Uploader {
         F: Fn(&Device, &Buffer, vk::CommandBuffer),
         G: Fn(&Device, vk::CommandBuffer),
     {
-        self._start_upload(staging_buffer, debug_identifier, &queue_transfer_commands, &queue_graphics_commands);
+        self.start_upload_impl(staging_buffer, debug_identifier, &queue_transfer_commands, &queue_graphics_commands);
     }
 
-    fn _start_upload(
+    fn start_upload_impl(
         &mut self,
         staging_buffer: Buffer,
         debug_identifier: Arguments,

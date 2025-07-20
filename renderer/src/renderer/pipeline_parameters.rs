@@ -45,7 +45,7 @@ pub enum PipelineIndex {
     PbrSkinnedBlended,
     /// Post-processing pass before MSAA resolve and up/downsampling.
     RenderResolutionPostProcess,
-    /// ImGui pass after MSAA resolve.
+    /// Imgui pass after MSAA resolve.
     ImGui,
 }
 

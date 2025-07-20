@@ -74,10 +74,10 @@ impl Default for PbrMaterialParameters {
 pub struct Material {
     pub name: ArrayString<64>,
     /// The number passed into the per-draw-call uniform. In the case of the pbr
-    /// pipelines, this is an index to PbrFactors, which in turn have indices to
+    /// pipelines, this is an index to [`PbrFactors`], which in turn have indices to
     /// the textures array, while in the imgui pipeline, this is just the
     /// texture index directly.
-    pub(crate) material_id: u32,
+    pub(crate) id: u32,
     /// The data referred to by the shader, so that keeping this [`Material`]
     /// around keeps the textures around.
     pub(crate) data: PipelineSpecificData,
@@ -85,6 +85,7 @@ pub struct Material {
 
 impl Material {
     pub fn for_pbr(descriptors: &mut Descriptors, name: ArrayString<64>, params: PbrMaterialParameters) -> Option<Rc<Material>> {
+        #[allow(clippy::ref_option)]
         fn allocate_texture_slot(descriptors: &mut Descriptors, tex: &Option<Rc<ImageView>>, fallback: u32) -> Option<u32> {
             if let Some(tex) = tex { descriptors.texture_slots.try_allocate_slot(Rc::downgrade(tex)) } else { Some(fallback) }
         }
@@ -114,7 +115,7 @@ impl Material {
             _factors: factors,
             alpha_mode: params.alpha_mode,
         };
-        Some(Rc::new(Material { name, material_id, data }))
+        Some(Rc::new(Material { name, id: material_id, data }))
     }
 
     pub fn for_imgui(
@@ -128,7 +129,7 @@ impl Material {
         let cmd = Rc::new(ImGuiDrawCmd { clip_rect, texture_index });
         let material_id = descriptors.imgui_cmd_slots.try_allocate_slot(Rc::downgrade(&cmd))?;
         let data = PipelineSpecificData::ImGui { texture, cmd };
-        Some(Rc::new(Material { name, material_id, data }))
+        Some(Rc::new(Material { name, id: material_id, data }))
     }
 
     pub fn from_existing_imgui_texture(
@@ -143,7 +144,7 @@ impl Material {
         let cmd = Rc::new(ImGuiDrawCmd { clip_rect, texture_index: cmd.texture_index });
         let material_id = descriptors.imgui_cmd_slots.try_allocate_slot(Rc::downgrade(&cmd))?;
         let data = PipelineSpecificData::ImGui { texture: texture.clone(), cmd };
-        Some(Rc::new(Material { name, material_id, data }))
+        Some(Rc::new(Material { name, id: material_id, data }))
     }
 
     pub fn pipeline(&self, vertex_layout: VertexLayout) -> PipelineIndex {
@@ -164,7 +165,7 @@ impl Material {
 
 impl PartialEq for Material {
     fn eq(&self, other: &Self) -> bool {
-        self.material_id == other.material_id && material_id_class(&self.data).eq(&material_id_class(&other.data))
+        self.id == other.id && material_id_class(&self.data).eq(&material_id_class(&other.data))
     }
 }
 
@@ -172,7 +173,7 @@ impl Eq for Material {}
 
 impl Ord for Material {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.material_id.cmp(&other.material_id).then_with(|| material_id_class(&self.data).cmp(&material_id_class(&other.data)))
+        self.id.cmp(&other.id).then_with(|| material_id_class(&self.data).cmp(&material_id_class(&other.data)))
     }
 }
 

@@ -3,7 +3,7 @@ use hashbrown::HashMap;
 
 use crate::renderer::descriptors::Descriptors;
 use crate::renderer::pipeline_parameters::render_passes::{AttachmentFormats, AttachmentVec};
-use crate::renderer::pipeline_parameters::{PipelineMap, Shader, PIPELINE_PARAMETERS};
+use crate::renderer::pipeline_parameters::{PIPELINE_PARAMETERS, PipelineMap, Shader};
 use crate::vulkan_raii::{self, Device, PipelineCache, PipelineLayout};
 
 pub struct Pipelines {

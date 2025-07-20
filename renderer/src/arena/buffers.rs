@@ -65,8 +65,9 @@ impl VulkanArena<ForBuffers> {
         self.pinned_buffers.push(buffer);
     }
 
-    /// Creates an empty buffer with the given create info, returns a MappedBuffer which allows
-    /// writing to the backing data. Errors if called on a non-mapped arena.
+    /// Creates an empty buffer with the given create info, returns a
+    /// [`MappedBuffer`] which allows writing to the backing data. Errors if
+    /// called on a non-mapped arena.
     #[profiling::function]
     pub fn create_staging_buffer(
         &mut self,

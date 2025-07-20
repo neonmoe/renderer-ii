@@ -34,7 +34,8 @@
     clippy::cast_lossless,
     clippy::too_many_lines,
     clippy::similar_names,
-    clippy::wildcard_imports
+    clippy::wildcard_imports,
+    clippy::struct_field_names
 )]
 // TODO: #![no_std]
 
@@ -59,7 +60,7 @@ mod debug_utils;
 mod debug_utils {
     use core::fmt::Arguments;
 
-    use ash::{vk, Device};
+    use ash::{Device, vk};
 
     #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn name_vulkan_object<H: vk::Handle>(_device: &Device, _object: H, _name: Arguments) {}
@@ -143,23 +144,23 @@ pub use memory_measurement::VulkanArenaMeasurer;
 
 mod physical_device;
 
-pub use physical_device::{get_physical_devices, GpuId, PhysicalDevice};
+pub use physical_device::{GpuId, PhysicalDevice, get_physical_devices};
 
 mod renderer;
 
+pub use renderer::Renderer;
 pub use renderer::descriptors::material::{AlphaMode, Material, PbrMaterialParameters};
 pub use renderer::descriptors::{Descriptors, PbrDefaults};
 pub use renderer::framebuffers::Framebuffers;
+pub use renderer::pipeline_parameters::PipelineIndex;
 pub use renderer::pipeline_parameters::constants::{MAX_DRAW_CALLS, MAX_JOINT_COUNT};
 pub use renderer::pipeline_parameters::vertex_buffers::{VertexBinding, VertexBindingMap, VertexLayout};
-pub use renderer::pipeline_parameters::PipelineIndex;
 pub use renderer::pipelines::Pipelines;
 pub use renderer::scene::camera::Camera;
 pub use renderer::scene::coordinate_system::CoordinateSystem;
 pub use renderer::scene::mesh::{IndexType, Mesh};
 pub use renderer::scene::{JointsOffset, Scene};
 pub use renderer::swapchain::{Swapchain, SwapchainBase, SwapchainError, SwapchainSettings};
-pub use renderer::Renderer;
 
 mod surface {
     use ash::extensions::khr;
@@ -182,7 +183,7 @@ mod surface {
     }
 }
 
-pub use surface::{create_surface, Surface};
+pub use surface::{Surface, create_surface};
 
 mod uploader;
 

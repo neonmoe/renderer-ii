@@ -98,7 +98,7 @@ fn main_() {
 
     let instance = renderer::Instance::new(
         &window,
-        unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(b"sandbox example application\0") },
+        c"sandbox example application",
         env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
         env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
         env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),

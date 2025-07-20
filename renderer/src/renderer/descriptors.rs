@@ -364,7 +364,7 @@ impl Descriptors {
             dst_binding: binding,
             dst_array_element: array_index,
             descriptor_type: params.descriptor_type,
-            p_buffer_info: &*descriptor_buffer_info,
+            p_buffer_info: &raw const *descriptor_buffer_info,
             descriptor_count: 1,
             ..Default::default()
         };
@@ -388,8 +388,8 @@ impl Descriptors {
         }
     }
 
-    /// Uploads the image_views to the given set, starting at
-    /// first_binding.
+    /// Uploads the `image_views` to the given set, starting at
+    /// `first_binding`.
     #[profiling::function]
     fn set_uniform_images(
         &self,
@@ -411,7 +411,7 @@ impl Descriptors {
                 dst_binding: binding,
                 dst_array_element: array_index,
                 descriptor_type: params.descriptor_type,
-                p_image_info: &*descriptor_image_info,
+                p_image_info: &raw const *descriptor_image_info,
                 descriptor_count: 1,
                 ..Default::default()
             };
